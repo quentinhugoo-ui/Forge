@@ -54,6 +54,8 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("events=fs.list:/agent_list_");
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
+    expect(promptManifest).toContain("windows_reach=shell.full can use PowerShell/cmd");
+    expect(promptManifest).toContain("retry=If AGENT_ACTION_RESULT reports failure");
     expect(promptManifest).toContain("loop_stream=When local action is needed");
     expect(promptManifest).toContain("loop_style=Use varied, concrete progress notes");
     expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
@@ -65,6 +67,8 @@ describe("agent action host", () => {
     const hint = agentActionRoutingHint();
     expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
     expect(hint).toContain("families=fs.list fs.search");
+    expect(hint).toContain("windows_reach=shell.full can invoke PowerShell");
+    expect(hint).toContain("retry=If a tool fails");
     expect(hint).toContain("format=Emit AGENT_ACTION_JSON");
     expect(hint).toContain("loop_style=Write natural progress notes");
     expect(hint).toContain("must start its own line");

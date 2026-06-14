@@ -51,9 +51,11 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
 export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
-    "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, or run local commands on the workspace/computer.",
+    "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
     "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
+    "retry=If a tool fails, read AGENT_ACTION_RESULT and try another safe available route before concluding blocked.",
     "loop_style=Write natural progress notes with varied openings. Avoid repeating 'Je vais'; prefer present-tense observation, decision, then action."
   ].join("\n");
 }
@@ -281,10 +283,10 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       title: "Run confirmed command",
       status: "available",
       risk: "computer_write",
-      underlyingTools: ["PowerShell", "cmd", "bash", "native shell"],
+      underlyingTools: ["PowerShell", "cmd", "winget", "reg.exe", "schtasks", "netsh", "DISM", "rundll32", "Start-Process", "ms-settings", "native shell"],
       requiresApproval: true,
       writes: true,
-      description: "Execute an arbitrary local command only when confirmed:true is set. This is the escape hatch for settings and system tools."
+      description: "Execute an arbitrary local command only when confirmed:true is set. This is the universal Windows escape hatch for settings, installers, updates, downloads, CLIs, system tools and app automation."
     },
     {
       id: "browser.playwright",
@@ -351,8 +353,10 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `shell=${manifest.permissions.shell}`,
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    "windows_reach=shell.full can use PowerShell/cmd plus Windows-native tools such as winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process and ms-settings URIs when confirmed:true is warranted.",
     `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
     "loop_stream=When local action is needed, write one short progress paragraph first, then emit exactly one AGENT_ACTION_JSON line that starts with AGENT_ACTION_JSON at column 1. After the app returns AGENT_ACTION_RESULT, continue with another short paragraph plus another AGENT_ACTION_JSON if more work remains, or finish with a compact summary.",
+    "retry=If AGENT_ACTION_RESULT reports failure, inspect the error and try a different safe route before declaring the task blocked.",
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",

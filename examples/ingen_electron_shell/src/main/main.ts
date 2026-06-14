@@ -5603,6 +5603,7 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
       ? "OBLIGATION: l'objectif utilisateur implique une modification locale; une action de lecture seule ne suffit pas. Tu dois maintenant choisir la prochaine action concrete et emettre exactement une ligne AGENT_ACTION_JSON."
       : "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
     "Pour ranger/organiser un bureau: apres la liste, cree les dossiers utiles si necessaire, puis deplace ou copie les elements pertinents. Ne t'arrete pas apres un simple inventaire.",
+    "Principe universel d'agent local: apres chaque outil, lis le resultat, verifie que l'action demandee est vraiment faite, puis continue ou essaie une autre action locale si le resultat ne suffit pas.",
     "Style de progression: varie les ouvertures, evite de commencer chaque paragraphe par 'Je vais', et prefere le present concret: constat bref, decision, action.",
     "La ligne de controle doit commencer par AGENT_ACTION_JSON en colonne 1, sans prose avant.",
     mustContinueAfterDiscovery
@@ -5623,6 +5624,7 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
     "Le loop ne doit pas s'arreter ici: la derniere action etait seulement une action de decouverte, pas une modification.",
     "Ecris un court paragraphe de progression, puis exactement une ligne AGENT_ACTION_JSON qui execute la prochaine action locale concrete.",
     "Pour organiser un bureau, l'action suivante doit etre par exemple create_directory, move_path, copy_path ou rename_path selon les elements listes.",
+    "Principe universel: ne considere jamais une action comme reussie sans resultat d'outil accepte; si un outil echoue, utilise le message d'erreur pour tenter une variante plus adaptee.",
     "Style: ne commence pas par 'Je vais'. Varie avec une observation ou une decision concrete, puis passe directement a l'action.",
     "La ligne AGENT_ACTION_JSON doit commencer en colonne 1. Ne donne pas de resume final dans ce tour.",
     "",
@@ -5632,8 +5634,30 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
   ].join("\n");
 }
 
+function agentActionFailureContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
+  return [
+    "AGENT_ACTION_FAILURE_CONTINUATION v1",
+    `step=${step + 1}`,
+    `failed_request=${JSON.stringify(request)}`,
+    `failed_result=${compactAgentActionResult(result)}`,
+    "",
+    "La derniere action locale a echoue ou a ete refusee. Ne conclus pas trop vite.",
+    "Lis l'erreur, puis tente une autre strategie si elle est raisonnable et autorisee: autre action fichier, commande PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, start ms-settings, ou un outil Windows natif accessible par shell.full.",
+    "Si l'echec vient d'un chemin relatif, d'une destination deja existante, d'un outil indisponible, d'une commande mal formee ou d'une limite d'un backend, choisis une variante plus robuste.",
+    "Si l'echec indique une racine protegee, une action dangereuse non autorisee, un manque de permission utilisateur, ou une operation impossible sans confirmation humaine, explique le blocage clairement et n'emets pas AGENT_ACTION_JSON.",
+    "Si une alternative existe, ecris un court paragraphe naturel puis exactement une ligne AGENT_ACTION_JSON en colonne 1.",
+    "Ne pretends jamais que l'action est faite sans AGENT_ACTION_RESULT accepte.",
+    "",
+    `Objectif utilisateur initial:\n${originalUserText}`
+  ].join("\n");
+}
+
 const AGENT_ACTION_ORGANIZE_CATEGORY_NAMES = new Set(["Documents", "Images", "Videos", "Audio", "Archives", "Code", "Applications", "Dossiers", "Autres"]);
-const AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS = new Set([".exe", ".msi", ".lnk", ".url", ".appref-ms"]);
+const AGENT_ACTION_VISIBLE_SHORTCUT_EXTENSIONS = new Set([".exe", ".msi", ".lnk", ".url", ".appref-ms"]);
+const AGENT_ACTION_IGNORED_SYSTEM_FILENAMES = new Set(["desktop.ini", "thumbs.db"]);
+const AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME = "Classement";
+const AGENT_ACTION_DETERMINISTIC_FALLBACK_MAX_REQUESTS = 48;
+const AGENT_ACTION_DETERMINISTIC_STEP_DELAY_MS = 280;
 
 function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   if (item.kind === "directory") {
@@ -5650,11 +5674,11 @@ function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   return "Autres";
 }
 
-function agentActionShouldStayVisibleOnDesktop(item: AgentActionPathEntry): boolean {
+function agentActionShouldLeaveLegacyPathInPlace(item: AgentActionPathEntry): boolean {
   if (item.kind !== "file") {
     return true;
   }
-  return AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS.has(extname(item.name).toLowerCase());
+  return AGENT_ACTION_VISIBLE_SHORTCUT_EXTENSIONS.has(extname(item.name).toLowerCase());
 }
 
 function agentActionPathInBase(basePath: string, ...parts: string[]): string {
@@ -5675,7 +5699,7 @@ function deterministicOrganizationRequestsFromList(request: AgentActionRequest, 
   );
   const movableItems = result.items
     .filter((item) => !item.name.startsWith("."))
-    .filter((item) => !agentActionShouldStayVisibleOnDesktop(item))
+    .filter((item) => !agentActionShouldLeaveLegacyPathInPlace(item))
     .filter((item) => !(item.kind === "directory" && AGENT_ACTION_ORGANIZE_CATEGORY_NAMES.has(item.name)));
   const requests: AgentActionRequest[] = [];
   const plannedDirectories = new Set(existingDirectories);
@@ -5719,6 +5743,117 @@ function deterministicOrganizationProgressText(request: AgentActionRequest, inde
   }
 }
 
+function agentActionUserWantsCollectionRoot(text: string): boolean {
+  return /\b(dossier\s+principal|principal\s+folder|ultra\s+(?:propre|epur|epure|clean)|tout\s+regrouper|tous\s+les\s+dossiers|reunis|r[eé]unis|group[eé]s?)\b/i.test(text);
+}
+
+function agentActionDisplayName(value?: string): string {
+  const fileName = (value ?? "").replace(/[\\/]+$/g, "").split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  if (!fileName) {
+    return "cet element";
+  }
+  return fileName.length > 54 ? `${fileName.slice(0, 43)}...${fileName.slice(-8)}` : fileName;
+}
+
+function agentActionShouldLeavePathInPlace(item: AgentActionPathEntry, moveDirectories: boolean): boolean {
+  const normalizedName = item.name.trim().toLowerCase();
+  if (AGENT_ACTION_IGNORED_SYSTEM_FILENAMES.has(normalizedName)) {
+    return true;
+  }
+  if (item.kind === "directory") {
+    return !moveDirectories || normalizedName === AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME.toLowerCase();
+  }
+  return AGENT_ACTION_VISIBLE_SHORTCUT_EXTENSIONS.has(extname(item.name).toLowerCase());
+}
+
+function waitAgentActionVisualStep(): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, AGENT_ACTION_DETERMINISTIC_STEP_DELAY_MS));
+}
+
+function agentActionFileOrganizationRequests(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): AgentActionRequest[] {
+  if (!result.accepted || request.action !== "list" || !result.items?.length) {
+    return [];
+  }
+  const wantsPrincipalFolder = agentActionUserWantsCollectionRoot(originalUserText);
+  const existingDirectories = new Set(
+    result.items
+      .filter((item) => item.kind === "directory")
+      .map((item) => item.name.toLowerCase())
+  );
+  const basePath = result.path ?? request.path ?? ".";
+  const organizationRoot = wantsPrincipalFolder ? agentActionPathInBase(basePath, AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME) : basePath;
+  const movableItems = result.items
+    .filter((item) => !item.name.startsWith("."))
+    .filter((item) => !agentActionShouldLeavePathInPlace(item, wantsPrincipalFolder))
+    .filter((item) => wantsPrincipalFolder || !(item.kind === "directory" && AGENT_ACTION_ORGANIZE_CATEGORY_NAMES.has(item.name)));
+  const requests: AgentActionRequest[] = [];
+  const plannedDirectories = new Set(existingDirectories);
+  if (wantsPrincipalFolder && !plannedDirectories.has(AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME.toLowerCase())) {
+    requests.push({
+      action: "create_directory",
+      scope: request.scope,
+      path: organizationRoot,
+      confirmed: request.scope === "computer" ? true : undefined
+    });
+    plannedDirectories.add(AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME.toLowerCase());
+  }
+  for (const item of movableItems.slice(0, 24)) {
+    const category = agentActionOrganizeCategory(item);
+    const categoryPath = agentActionPathInBase(organizationRoot, category);
+    const plannedKey = `${wantsPrincipalFolder ? AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME : ""}/${category}`.toLowerCase();
+    if (!plannedDirectories.has(plannedKey)) {
+      requests.push({
+        action: "create_directory",
+        scope: request.scope,
+        path: categoryPath,
+        confirmed: request.scope === "computer" ? true : undefined
+      });
+      plannedDirectories.add(plannedKey);
+    }
+    requests.push({
+      action: "move_path",
+      scope: request.scope,
+      path: item.path,
+      toPath: agentActionPathInBase(categoryPath, item.name),
+      confirmed: request.scope === "computer" ? true : undefined
+    });
+  }
+  return requests.slice(0, AGENT_ACTION_DETERMINISTIC_FALLBACK_MAX_REQUESTS);
+}
+
+function agentActionFileOrganizationProgressText(request: AgentActionRequest, index: number, total: number): string {
+  const position = total > 1 ? `Etape ${index + 1}/${total}. ` : "";
+  const sourceName = agentActionDisplayName(request.path);
+  const targetName = agentActionDisplayName(request.toPath ?? request.path);
+  switch (request.action) {
+    case "create_directory":
+      return `${position}Je prepare le dossier ${targetName} pour que le bureau reste lisible.`;
+    case "move_path":
+      return `${position}Je range ${sourceName} dans son dossier, sans toucher aux raccourcis d'application.`;
+    case "copy_path":
+      return `${position}Je copie ${sourceName} vers ${targetName} en gardant l'original.`;
+    case "rename_path":
+      return `${position}Je renomme ${sourceName} en ${targetName} pour le rendre plus clair.`;
+    default:
+      return `${position}J'applique l'action locale necessaire, puis je verifie le resultat.`;
+  }
+}
+
+function agentActionFileOrganizationFinalText(results: AgentActionResult[]): string {
+  const accepted = results.filter((result) => result.accepted);
+  const failed = results.find((result) => !result.accepted);
+  const created = accepted.filter((result) => result.action === "create_directory").length;
+  const moved = accepted.filter((result) => result.action === "move_path").length;
+  const parts = [
+    created ? `${created} dossier${created > 1 ? "s" : ""} prepare${created > 1 ? "s" : ""}` : "",
+    moved ? `${moved} element${moved > 1 ? "s" : ""} deplace${moved > 1 ? "s" : ""}` : ""
+  ].filter(Boolean);
+  if (parts.length === 0) {
+    return `Conclusion: aucune modification locale n'a ete appliquee.${failed ? ` Blocage: ${failed.error?.message ?? "action refusee par le host"}.` : ""}`;
+  }
+  return `Conclusion: ${parts.join(", ")}.${failed ? ` La suite s'est arretee sur un blocage: ${failed.error?.message ?? "action refusee par le host"}.` : ""}`;
+}
+
 function deterministicOrganizationFinalText(results: AgentActionResult[]): string {
   const accepted = results.filter((result) => result.accepted);
   const failed = results.find((result) => !result.accepted);
@@ -5749,13 +5884,14 @@ async function applyDeterministicOrganizationFallback(params: {
   if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
     return params.assistantMessage;
   }
-  const requests = deterministicOrganizationRequestsFromList(params.request, params.result);
+  const requests = agentActionFileOrganizationRequests(params.originalUserText, params.request, params.result);
   if (requests.length === 0) {
     const assistantMessage = {
       ...params.assistantMessage,
       text: `${params.assistantMessage.text.trimEnd()}\n\nConclusion: aucun élément non-application n'a été déplacé; les applications, raccourcis et dossiers visibles restent en place.`.trim(),
       proofHash: hashJson({ deterministicAgentActionFallbackNoop: true, previousProofHash: params.assistantMessage.proofHash })
     };
+    assistantMessage.text = `${params.assistantMessage.text.trimEnd()}\n\nConclusion: aucun fichier a classer n'a ete trouve. Les raccourcis d'application et les fichiers systeme visibles restent en place.`.trim();
     params.commitProgress?.(assistantMessage);
     return assistantMessage;
   }
@@ -5764,6 +5900,15 @@ async function applyDeterministicOrganizationFallback(params: {
     text: [
       params.assistantMessage.text,
       "La liste est suffisante pour lancer un premier tri borné: je crée les dossiers de catégories nécessaires, puis je déplace quelques éléments évidents sans rien supprimer."
+    ].filter((part) => part.trim().length > 0).join("\n\n")
+  };
+  assistantMessage = {
+    ...assistantMessage,
+    text: [
+      params.assistantMessage.text,
+      agentActionUserWantsCollectionRoot(params.originalUserText)
+        ? "Je passe a un rangement plus net: je cree un dossier principal pour le bureau, puis je classe les fichiers et dossiers dedans par categorie."
+        : "J'ai assez d'elements pour commencer: je cree seulement les dossiers utiles, puis je range les fichiers evidents sans rien supprimer."
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
   const results: AgentActionResult[] = [];
@@ -5779,12 +5924,13 @@ async function applyDeterministicOrganizationFallback(params: {
       ...assistantMessage,
       text: [
         assistantMessage.text,
-        deterministicOrganizationProgressText(request, index, requests.length),
+        agentActionFileOrganizationProgressText(request, index, requests.length),
         agentActionEventCommandForRequest(request)
       ].filter((part) => part.trim().length > 0).join("\n\n"),
       proofHash: hashJson({ deterministicAgentActionFallbackPending: true, previousProofHash: assistantMessage.proofHash, request })
     };
     params.commitProgress?.(assistantMessage);
+    await waitAgentActionVisualStep();
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
     emitAgentRuntimeToolResult({
       agentEvents: params.agentEvents,
@@ -5799,13 +5945,14 @@ async function applyDeterministicOrganizationFallback(params: {
       proofHash: hashJson({ deterministicAgentActionFallback: true, previousProofHash: assistantMessage.proofHash, request, result })
     };
     params.commitProgress?.(assistantMessage);
+    await waitAgentActionVisualStep();
     if (!result.accepted) {
       break;
     }
   }
   assistantMessage = {
     ...assistantMessage,
-    text: `${assistantMessage.text.trimEnd()}\n\n${deterministicOrganizationFinalText(results)}`.trim(),
+    text: `${assistantMessage.text.trimEnd()}\n\n${agentActionFileOrganizationFinalText(results)}`.trim(),
     proofHash: hashJson({ deterministicAgentActionFallbackFinal: true, previousProofHash: assistantMessage.proofHash, results })
   };
   params.commitProgress?.(assistantMessage);
@@ -5864,6 +6011,34 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
+      if (step + 1 < AGENT_ACTION_LOOP_MAX_STEPS) {
+        const failureLiveSink = createAssistantLiveTextSink({
+          baseTranscript: params.baseTranscript,
+          assistantMessageId: assistantMessage.id,
+          agentEvents: params.agentEvents,
+          commitTranscript: params.commitTranscript,
+          prefixText: assistantMessage.text
+        });
+        const failureContinuation = await buildAssistantTranscriptMessage(
+          agentActionFailureContinuationUserText(params.originalUserText, extracted.request, result, step),
+          params.providerAttachments,
+          params.userMessageId,
+          params.moduleId,
+          transcriptWithMessage(params.baseTranscript, assistantMessage),
+          failureLiveSink,
+          assistantMessage.id
+        );
+        assistantMessage = {
+          ...failureContinuation,
+          id: assistantMessage.id,
+          text: [assistantMessage.text, failureContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
+          proofHash: hashJson({ agentActionLoopFailureContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: failureContinuation.proofHash })
+        };
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        if (extractAgentActionJsonRequest(assistantMessage.text)) {
+          continue;
+        }
+      }
       emitAgentLoopDiagnosticSummary({
         agentEvents: params.agentEvents,
         messageId: assistantMessage.id,

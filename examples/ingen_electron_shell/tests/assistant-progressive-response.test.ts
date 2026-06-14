@@ -140,15 +140,25 @@ describe("assistant progressive response feed", () => {
 
   it("has diagnostics for desktop organization, tool-result resumption, compaction, and event/prompt separation", () => {
     expect(mainSource).toContain("function deterministicOrganizationRequestsFromList");
-    expect(mainSource).toContain("AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS");
-    expect(mainSource).toContain("function agentActionShouldStayVisibleOnDesktop");
-    expect(mainSource).toContain("function deterministicOrganizationProgressText");
-    expect(mainSource).toContain("function deterministicOrganizationFinalText");
+    expect(mainSource).toContain("function agentActionFileOrganizationRequests");
+    expect(mainSource).toContain("AGENT_ACTION_VISIBLE_SHORTCUT_EXTENSIONS");
+    expect(mainSource).toContain("AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME");
+    expect(mainSource).toContain("AGENT_ACTION_DETERMINISTIC_STEP_DELAY_MS");
+    expect(mainSource).toContain("function agentActionShouldLeavePathInPlace");
+    expect(mainSource).toContain("function agentActionFileOrganizationProgressText");
+    expect(mainSource).toContain("function agentActionFileOrganizationFinalText");
+    expect(mainSource).toContain("await waitAgentActionVisualStep()");
+    expect(mainSource).toContain("Principe universel d'agent local");
+    expect(mainSource).toContain("si un outil echoue");
+    expect(mainSource).toContain("Je range ${sourceName} dans son dossier");
     expect(mainSource).toContain("agentActionOrganizeCategory(item)");
     expect(mainSource).toContain("action: \"create_directory\"");
     expect(mainSource).toContain("action: \"move_path\"");
     expect(mainSource).toContain("agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)");
     expect(mainSource).toContain("agentActionLoopContinuationUserText(params.originalUserText, extracted.request, result, step)");
+    expect(mainSource).toContain("function agentActionFailureContinuationUserText");
+    expect(mainSource).toContain("PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM");
+    expect(mainSource).toContain("agentActionLoopFailureContinuationStep");
     expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
     expect(mainSource).toContain("compactAgentActionResult(result)");
     expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");
