@@ -9115,9 +9115,8 @@ ol.assistantText__list li::before {
 }
 
 .hardwareDashboard {
-  display: grid;
-  gap: 14px;
-  max-width: 1120px;
+  display: block;
+  width: min(100%, 920px);
   min-width: 0;
 }
 
@@ -9131,251 +9130,135 @@ ol.assistantText__list li::before {
   font-size: 12px;
 }
 
-.hardwareSummary,
-.hardwareGovernor,
-.hardwareGpuPanel,
-.hardwareNotes,
-.hardwareProcessPanel {
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 38%);
-  background: color-mix(in oklab, var(--forge-surface), transparent 62%);
-}
-
-.hardwareSummary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding: 12px 14px;
-}
-
-.hardwareSummary__identity {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-width: 0;
-}
-
-.hardwareSummary__mark {
+.hardwareGaugeBoard {
   display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in oklab, var(--forge-accent), transparent 50%);
-  color: var(--forge-accent);
-  background: color-mix(in oklab, var(--forge-accent), transparent 90%);
-}
-
-.hardwareSummary strong,
-.hardwareGpuPanel__head strong,
-.hardwareProcessPanel header strong {
-  display: block;
-  min-width: 0;
-  color: var(--forge-text);
-  font-size: 13px;
-  font-weight: 680;
-}
-
-.hardwareSummary code,
-.hardwareSummary__proof code,
-.hardwareGpuPanel__head code,
-.hardwareProcessRow code {
-  color: var(--forge-muted);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 10.5px;
-}
-
-.hardwareSummary__proof {
-  display: grid;
-  justify-items: end;
-  gap: 2px;
-  color: var(--forge-muted);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 10.5px;
-}
-
-.hardwareGovernor {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  overflow: hidden;
-}
-
-.hardwareGovernor div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 11px 12px;
-  background: color-mix(in oklab, var(--forge-panel), transparent 72%);
-}
-
-.hardwareGovernor span,
-.hardwareMetric__label {
-  color: var(--forge-muted);
-  font-size: 10.5px;
-  line-height: 1.25;
-}
-
-.hardwareGovernor strong,
-.hardwareMetric strong,
-.hardwareProcessRow strong {
-  color: var(--forge-text);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 720;
-  line-height: 1.1;
-}
-
-.hardwareGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  min-width: 0;
-}
-
-.hardwareGrid--core {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-.hardwareMetric {
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  align-items: center;
-  gap: 6px 9px;
-  min-width: 0;
-  min-height: 76px;
-  padding: 10px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 42%);
-  background: color-mix(in oklab, var(--forge-panel), transparent 74%);
-}
-
-.hardwareMetric__icon {
-  display: grid;
-  grid-row: 1 / 3;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  color: var(--forge-muted);
-}
-
-.hardwareMetric__body {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.hardwareMetric__bar {
-  grid-column: 2;
-  display: block;
-  width: 100%;
-  height: 3px;
-  overflow: hidden;
-  background: color-mix(in oklab, var(--forge-line), transparent 40%);
-}
-
-.hardwareMetric__bar i {
-  display: block;
-  height: 100%;
-  background: var(--forge-accent);
-}
-
-.hardwareMetric--warning .hardwareMetric__icon,
-.hardwareMetric--warning strong {
-  color: #f1c15e;
-}
-
-.hardwareMetric--warning .hardwareMetric__bar i {
-  background: #f1c15e;
-}
-
-.hardwareMetric--critical .hardwareMetric__icon,
-.hardwareMetric--critical strong {
-  color: #ff6b6b;
-}
-
-.hardwareMetric--critical .hardwareMetric__bar i {
-  background: #ff6b6b;
-}
-
-.hardwareMetric--unavailable {
-  opacity: 0.62;
-}
-
-.hardwareGpuStack {
-  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   min-width: 0;
 }
 
-.hardwareGpuPanel {
+.hardwareGauge {
+  position: relative;
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 78px 12px;
+  align-items: stretch;
+  gap: 12px;
   min-width: 0;
-  padding: 12px;
-}
-
-.hardwareGpuPanel__head,
-.hardwareProcessPanel header {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-
-.hardwareGpuPanel__head code {
-  margin-left: auto;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 42%);
-}
-
-.hardwareProcessPanel {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 12px;
-}
-
-.hardwareNotes {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 44%);
-  background: color-mix(in oklab, var(--forge-panel), transparent 78%);
-}
-
-.hardwareNotes p {
-  margin: 0;
-  color: var(--forge-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.hardwareProcessRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 52%);
-}
-
-.hardwareProcessRow span {
-  min-width: 0;
+  min-height: 154px;
   overflow: hidden;
+  padding: 14px 14px 12px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 42%);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--forge-panel), transparent 70%), color-mix(in oklab, var(--forge-surface), transparent 62%)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 8px);
+  color: var(--forge-accent);
+}
+
+.hardwareGauge--warning {
+  color: #f1c15e;
+}
+
+.hardwareGauge--critical {
+  color: #ff4f70;
+}
+
+.hardwareGauge--unavailable {
+  color: color-mix(in oklab, var(--forge-muted), transparent 22%);
+}
+
+.hardwareGauge__plot {
+  align-self: end;
+  min-width: 0;
+  height: 98px;
+  color: currentColor;
+}
+
+.hardwareGauge__plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hardwareGauge__gridLine {
+  fill: none;
+  stroke: color-mix(in oklab, var(--forge-line), transparent 62%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.hardwareGauge__area {
+  opacity: 0.86;
+}
+
+.hardwareGauge__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 8px color-mix(in oklab, currentColor, transparent 48%));
+}
+
+.hardwareGauge__readout {
+  display: grid;
+  align-content: start;
+  justify-items: end;
+  gap: 3px;
+  min-width: 0;
+  color: var(--forge-text);
+  text-align: right;
+}
+
+.hardwareGauge__readout span {
   color: var(--forge-muted);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 680;
+  line-height: 1.2;
+}
+
+.hardwareGauge__readout strong {
+  color: currentColor;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.hardwareGauge__readout em {
+  color: color-mix(in oklab, currentColor, var(--forge-muted) 30%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.hardwareGauge__level {
+  position: relative;
+  align-self: stretch;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, currentColor, transparent 56%);
+  background: color-mix(in oklab, var(--forge-line), transparent 64%);
+}
+
+.hardwareGauge__level i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  min-height: 2px;
+  background: currentColor;
+  box-shadow: 0 0 14px color-mix(in oklab, currentColor, transparent 38%);
+  transition: height 180ms ease-out;
 }
 
 @container (max-width: 1040px) {
-  .hardwareGrid--core {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .hardwareGaugeBoard {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -9385,23 +9268,9 @@ ol.assistantText__list li::before {
     gap: 10px 18px;
   }
 
-  .hardwareSummary {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .hardwareSummary__proof {
-    justify-items: start;
-  }
-
-  .hardwareGovernor,
-  .hardwareGrid,
-  .hardwareGrid--core {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .hardwareProcessRow {
-    grid-template-columns: minmax(0, 1fr);
+  .hardwareGauge {
+    grid-template-columns: minmax(0, 1fr) 66px 10px;
+    min-height: 132px;
   }
 }
 

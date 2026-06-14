@@ -3,7 +3,6 @@ import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
   type BrainCodeActCommand,
-  type HardwareGpuSnapshot,
   type HardwareMetric,
   type HardwareTelemetrySnapshot,
   type SidebarSessionItem
@@ -828,44 +827,25 @@ function MemorySpace() {
   );
 }
 
-const HARDWARE_POLL_MS = 1800;
+const HARDWARE_POLL_MS = 1000;
 const HARDWARE_REQUEST_TIMEOUT_MS = 6500;
+const HARDWARE_GAUGE_HISTORY_LIMIT = 48;
 
-function metricValue(metric: HardwareMetric): string {
-  if (metric.value === null) return "Unavailable";
-  if (metric.unit === "text") return String(metric.value);
-  return `${metric.value}${metric.unit === "count" ? "" : ` ${metric.unit}`}`;
-}
+type HardwareGaugeSample = {
+  sampledAt: number;
+  value: number | null;
+};
 
-function metricPercent(metric: HardwareMetric): number {
-  if (metric.value === null) return 0;
-  if (metric.unit === "%") return Math.max(0, Math.min(100, metric.value));
-  return 0;
-}
+type HardwareGaugeView = {
+  id: "gpu-utilization" | "cpu-temperature" | "system-temperature" | "ram-utilization";
+  label: string;
+  metric: HardwareMetric;
+  min: number;
+  max: number;
+};
 
-function metricClassName(metric: HardwareMetric): string {
-  return ["hardwareMetric", `hardwareMetric--${metric.status}`].join(" ");
-}
-
-function hardwareSourceLabel(source: HardwareGpuSnapshot["source"] | HardwareTelemetrySnapshot["thermal"]["source"]): string {
-  if (source === "nvidia-smi") return "NVIDIA driver";
-  if (source === "linux-drm") return "Linux DRM";
-  if (source === "windows-acpi") return "Windows ACPI";
-  if (source === "linux-thermal") return "Linux thermal";
-  if (source === "system") return "System";
-  return "Unavailable";
-}
-
-function hardwareAgeSeconds(sampledAt: string, now: Date): number {
-  const sampled = new Date(sampledAt).getTime();
-  if (!Number.isFinite(sampled)) return 0;
-  return Math.max(0, Math.floor((now.getTime() - sampled) / 1000));
-}
-
-function hardwareAgeLabel(sampledAt: string, now: Date): string {
-  const seconds = hardwareAgeSeconds(sampledAt, now);
-  if (seconds <= 1) return "sample now";
-  return `sample ${seconds}s ago`;
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function hardwareFallbackMetric(label: string, value: number | null, unit: HardwareMetric["unit"]): HardwareMetric {
@@ -875,6 +855,85 @@ function hardwareFallbackMetric(label: string, value: number | null, unit: Hardw
     unit,
     status: value === null ? "unavailable" : "ok"
   };
+}
+
+function cpuTemperatureGaugeMetric(snapshot: HardwareTelemetrySnapshot): HardwareMetric {
+  if (snapshot.thermal.source === "linux-thermal") {
+    return { ...snapshot.thermal.systemTemperature, label: "CPU" };
+  }
+  return hardwareFallbackMetric("CPU", null, "C");
+}
+
+function hardwareGaugeViews(snapshot: HardwareTelemetrySnapshot): HardwareGaugeView[] {
+  const primaryGpu = snapshot.gpus[0];
+  return [
+    {
+      id: "gpu-utilization",
+      label: "GPU",
+      metric: primaryGpu ? { ...primaryGpu.utilization, label: "GPU" } : hardwareFallbackMetric("GPU", null, "%"),
+      min: 0,
+      max: 100
+    },
+    {
+      id: "cpu-temperature",
+      label: "CPU",
+      metric: cpuTemperatureGaugeMetric(snapshot),
+      min: 25,
+      max: 105
+    },
+    {
+      id: "system-temperature",
+      label: "System",
+      metric: { ...snapshot.thermal.systemTemperature, label: "System" },
+      min: 25,
+      max: 105
+    },
+    {
+      id: "ram-utilization",
+      label: "RAM",
+      metric: { ...snapshot.memory.utilization, label: "RAM" },
+      min: 0,
+      max: 100
+    }
+  ];
+}
+
+function compactGaugeValue(metric: HardwareMetric): string {
+  if (metric.value === null) return "--";
+  if (metric.unit === "%" || metric.unit === "C") return String(Math.round(metric.value));
+  return String(metric.value);
+}
+
+function compactGaugeUnit(metric: HardwareMetric): string {
+  if (metric.value === null || metric.unit === "count" || metric.unit === "text") return "";
+  return metric.unit;
+}
+
+function hardwareGaugeLevel(metric: HardwareMetric, min: number, max: number): number {
+  if (metric.value === null || max <= min) return 0;
+  return clampNumber(((metric.value - min) / (max - min)) * 100, 0, 100);
+}
+
+function hardwareGaugePath(samples: HardwareGaugeSample[], min: number, max: number, width = 278, height = 82): string {
+  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+  if (visible.length === 0) return "";
+  const denominator = Math.max(1, visible.length - 1);
+  return visible
+    .map((sample, index) => {
+      const value = sample.value === null ? min : clampNumber(sample.value, min, max);
+      const x = (index / denominator) * width;
+      const y = height - ((value - min) / (max - min)) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function hardwareGaugeAreaPath(samples: HardwareGaugeSample[], min: number, max: number, width = 278, height = 82): string {
+  const line = hardwareGaugePath(samples, min, max, width, height);
+  if (!line) return "";
+  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+  const lastX = visible.length <= 1 ? 0 : width;
+  return `M 0 ${height} ${line.replace(/^M/, "L")} L ${lastX} ${height} Z`;
 }
 
 function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnapshot {
@@ -950,68 +1009,47 @@ async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
   }
 }
 
-function HardwareMetricTile({ glyph, metric, unavailableHint = "" }: { glyph: string; metric: HardwareMetric; unavailableHint?: string }) {
-  const percent = metricPercent(metric);
+function HardwareGaugeCard({ gauge, samples }: { gauge: HardwareGaugeView; samples: HardwareGaugeSample[] }) {
+  const level = hardwareGaugeLevel(gauge.metric, gauge.min, gauge.max);
+  const linePath = hardwareGaugePath(samples, gauge.min, gauge.max);
+  const areaPath = hardwareGaugeAreaPath(samples, gauge.min, gauge.max);
+  const isUnavailable = gauge.metric.value === null;
   return (
-    <div className={metricClassName(metric)}>
-      <span className="hardwareMetric__icon">
-        <Glyph kind={glyph} size={17} />
-      </span>
-      <span className="hardwareMetric__body">
-        <span className="hardwareMetric__label">{metric.label}</span>
-        <strong>{metricValue(metric)}</strong>
-        {metric.value === null && unavailableHint ? (
-          <span className="hardwareMetric__label">{unavailableHint}</span>
-        ) : null}
-      </span>
-      {metric.unit === "%" ? (
-        <span className="hardwareMetric__bar" aria-hidden="true">
-          <i style={{ width: `${percent}%` }} />
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function HardwareGpuPanel({ gpu }: { gpu: HardwareGpuSnapshot }) {
-  return (
-    <section className="hardwareGpuPanel" aria-label={gpu.name}>
-      <header className="hardwareGpuPanel__head">
-        <span>
-          <Glyph kind="gauge" size={16} />
-        </span>
-        <strong>{gpu.name}</strong>
-        <code>{gpu.source}</code>
-      </header>
-      <div className="hardwareGrid">
-        <HardwareMetricTile glyph="gauge" metric={gpu.utilization} />
-        <HardwareMetricTile glyph="memory" metric={gpu.memoryUsed} />
-        <HardwareMetricTile glyph="memory" metric={gpu.memoryTotal} />
-        <HardwareMetricTile glyph="thermometer" metric={gpu.temperature} />
-        <HardwareMetricTile glyph="fan" metric={gpu.fanSpeed} unavailableHint="No public OS/driver fan sensor" />
-        <HardwareMetricTile glyph="zap" metric={gpu.powerDraw} />
+    <article className={["hardwareGauge", `hardwareGauge--${gauge.metric.status}`].join(" ")} aria-label={gauge.label}>
+      <div className="hardwareGauge__plot" aria-hidden="true">
+        <svg viewBox="0 0 278 82" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id={`hardwareGaugeFill-${gauge.id}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="currentColor" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
+          {areaPath ? <path className="hardwareGauge__area" d={areaPath} fill={`url(#hardwareGaugeFill-${gauge.id})`} /> : null}
+          {linePath ? <path className="hardwareGauge__line" d={linePath} /> : null}
+        </svg>
       </div>
-    </section>
+      <div className="hardwareGauge__readout">
+        <span>{gauge.label}</span>
+        <strong>{compactGaugeValue(gauge.metric)}</strong>
+        {compactGaugeUnit(gauge.metric) ? <em>{compactGaugeUnit(gauge.metric)}</em> : null}
+      </div>
+      <div className="hardwareGauge__level" aria-hidden="true">
+        <i style={{ height: `${isUnavailable ? 0 : level}%` }} />
+      </div>
+    </article>
   );
-}
-
-function hardwareVisibleNotes(snapshot: HardwareTelemetrySnapshot): string[] {
-  const notes = snapshot.governor.notes
-    .filter((note) => !note.toLowerCase().includes("fan and power-profile writes"))
-    .map((note) => note.replace("locked", "unavailable"));
-  if (snapshot.thermal.systemTemperature.value === null) {
-    notes.push("System temperature is unavailable when the OS or driver does not expose a safe read-only sensor.");
-  }
-  if (snapshot.gpus.some((gpu) => gpu.fanSpeed.value === null)) {
-    notes.push("Fan speed is unavailable when the OS, kernel driver, or GPU driver does not expose a public read-only tachometer sensor.");
-  }
-  return Array.from(new Set(notes));
 }
 
 function HardwareSpace() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
   const [error, setError] = useState("");
-  const [clock, setClock] = useState(() => new Date());
+  const [history, setHistory] = useState<Record<HardwareGaugeView["id"], HardwareGaugeSample[]>>({
+    "gpu-utilization": [],
+    "cpu-temperature": [],
+    "system-temperature": [],
+    "ram-utilization": []
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -1022,6 +1060,24 @@ function HardwareSpace() {
           if (cancelled) return;
           setSnapshot(next ?? null);
           setError(next ? "" : "Telemetry unavailable");
+          if (next) {
+            const sampledAt = new Date(next.sampledAt).getTime();
+            const sampleTime = Number.isFinite(sampledAt) ? sampledAt : Date.now();
+            const gauges = hardwareGaugeViews(next);
+            setHistory((current) => {
+              const updated = { ...current };
+              for (const gauge of gauges) {
+                updated[gauge.id] = [
+                  ...(updated[gauge.id] ?? []),
+                  {
+                    sampledAt: sampleTime,
+                    value: gauge.metric.value
+                  }
+                ].slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+              }
+              return updated;
+            });
+          }
         })
         .catch((caught) => {
           if (cancelled) return;
@@ -1042,11 +1098,6 @@ function HardwareSpace() {
     };
   }, []);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   if (!snapshot) {
     return (
       <div className="brainCanvas__space">
@@ -1057,96 +1108,14 @@ function HardwareSpace() {
     );
   }
 
-  const primaryGpu = snapshot.gpus[0];
-  const telemetrySource = primaryGpu?.source && primaryGpu.source !== "unavailable"
-    ? hardwareSourceLabel(primaryGpu.source)
-    : hardwareSourceLabel(snapshot.thermal.source);
-  const notes = hardwareVisibleNotes(snapshot);
+  const gauges = hardwareGaugeViews(snapshot);
 
   return (
     <div className="brainCanvas__space">
       <div className="hardwareDashboard">
-        <section className="hardwareSummary" aria-label="Hardware summary">
-          <div className="hardwareSummary__identity">
-            <span className="hardwareSummary__mark">
-              <Glyph kind="gauge" size={20} />
-            </span>
-            <span>
-              <strong>{snapshot.hostname}</strong>
-              <code>CPU {snapshot.cpu.model} / GPU {snapshot.gpus[0]?.name ?? "unavailable"}</code>
-            </span>
-          </div>
-          <div className="hardwareSummary__proof">
-            <span>{clock.toLocaleTimeString()}</span>
-            <code>{hardwareAgeLabel(snapshot.sampledAt, clock)}</code>
-          </div>
-        </section>
-
-        <section className="hardwareGovernor" aria-label="Compute budget">
-          <div>
-            <span>Monster budget</span>
-            <strong>{snapshot.governor.monsterBudgetPercent}%</strong>
-          </div>
-          <div>
-            <span>Banger budget</span>
-            <strong>{snapshot.governor.bangerBudgetPercent}%</strong>
-          </div>
-          <div>
-            <span>Data source</span>
-            <strong>{telemetrySource}</strong>
-          </div>
-          <div>
-            <span>Refresh</span>
-            <strong>{hardwareAgeLabel(snapshot.sampledAt, clock)}</strong>
-          </div>
-        </section>
-
-        <div className="hardwareGrid hardwareGrid--core">
-          <HardwareMetricTile glyph="cpu" metric={snapshot.cpu.utilization} />
-          <HardwareMetricTile glyph="gauge" metric={snapshot.cpu.loadAverage} />
-          <HardwareMetricTile glyph="memory" metric={snapshot.memory.utilization} />
-          <HardwareMetricTile glyph="memory" metric={snapshot.memory.used} />
-          <HardwareMetricTile
-            glyph="thermometer"
-            metric={snapshot.thermal.systemTemperature}
-            unavailableHint={snapshot.thermal.source === "unavailable" ? "OS/OEM sensor not exposed" : ""}
-          />
-          <div className="hardwareMetric hardwareMetric--ok">
-            <span className="hardwareMetric__icon">
-              <Glyph kind="cpu" size={17} />
-            </span>
-            <span className="hardwareMetric__body">
-              <span className="hardwareMetric__label">CPU cores</span>
-              <strong>{snapshot.cpu.cores}</strong>
-            </span>
-          </div>
-        </div>
-
-        <div className="hardwareGpuStack">
-          {snapshot.gpus.map((gpu) => (
-            <HardwareGpuPanel gpu={gpu} key={`${gpu.name}-${gpu.source}`} />
-          ))}
-        </div>
-
-        {notes.length > 0 ? (
-          <section className="hardwareNotes" aria-label="Hardware telemetry notes">
-            {notes.map((note) => (
-              <p key={note}>{note}</p>
-            ))}
-          </section>
-        ) : null}
-
-        <section className="hardwareProcessPanel" aria-label="InGen process">
-          <header>
-            <Glyph kind="terminal" size={16} />
-            <strong>InGen process</strong>
-          </header>
-          {snapshot.topProcesses.map((item) => (
-            <div className="hardwareProcessRow" key={item.pid}>
-              <span>{item.name}</span>
-              <code>pid {item.pid}</code>
-              <strong>{item.memoryMb} MB</strong>
-            </div>
+        <section className="hardwareGaugeBoard" aria-label="Hardware surveillance">
+          {gauges.map((gauge) => (
+            <HardwareGaugeCard gauge={gauge} samples={history[gauge.id] ?? []} key={gauge.id} />
           ))}
         </section>
       </div>
