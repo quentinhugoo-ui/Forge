@@ -8478,11 +8478,11 @@ ol.assistantText__list li::before {
 .shell--widget-mode .bottomControls button::before {
   content: "";
   position: absolute;
-  inset: -3px -7px;
+  inset: -4px -11px -5px;
   z-index: -1;
   border-radius: 999px !important;
   background:
-    radial-gradient(ellipse at center, rgba(4, 5, 6, 0.36) 0%, rgba(4, 5, 6, 0.22) 42%, rgba(4, 5, 6, 0) 74%);
+    radial-gradient(ellipse at center, rgba(4, 5, 6, 0.32) 0%, rgba(4, 5, 6, 0.2) 38%, rgba(4, 5, 6, 0.08) 64%, rgba(4, 5, 6, 0) 86%);
   opacity: 0;
   pointer-events: none;
   transform: scale(0.9);
@@ -8491,9 +8491,25 @@ ol.assistantText__list li::before {
     transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.shell--widget-mode .bottomControls__flipButton::before {
+  content: none;
+}
+
+.shell--widget-mode .bottomControls__modelButton::before {
+  inset: -4px -14px -5px -24px;
+}
+
+.shell--widget-mode .bottomControls__reasoningButton::before {
+  inset: -4px -24px -5px -14px;
+}
+
 .shell--widget-mode .bottomControls button:hover::before,
 .shell--widget-mode .bottomControls button:focus-visible::before,
-.shell--widget-mode .bottomControls button[aria-expanded="true"]::before {
+.shell--widget-mode .bottomControls button[aria-expanded="true"]::before,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--model:hover) .bottomControls__modelButton::before,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--model:focus-visible) .bottomControls__modelButton::before,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--reasoning:hover) .bottomControls__reasoningButton::before,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--reasoning:focus-visible) .bottomControls__reasoningButton::before {
   opacity: 1;
   transform: scale(1);
 }
@@ -8504,7 +8520,11 @@ ol.assistantText__list li::before {
 
 .shell--widget-mode .bottomControls button:hover,
 .shell--widget-mode .bottomControls button:focus-visible,
-.shell--widget-mode .bottomControls button[aria-expanded="true"] {
+.shell--widget-mode .bottomControls button[aria-expanded="true"],
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--model:hover) .bottomControls__modelButton,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--model:focus-visible) .bottomControls__modelButton,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--reasoning:hover) .bottomControls__reasoningButton,
+.shell--widget-mode .bottomControls__models:has(.bottomControls__flipButton--reasoning:focus-visible) .bottomControls__reasoningButton {
   color: color-mix(in oklab, var(--forge-chat-text), transparent 8%) !important;
   text-shadow: 0 1px 5px rgba(0, 0, 0, 0.58);
 }
