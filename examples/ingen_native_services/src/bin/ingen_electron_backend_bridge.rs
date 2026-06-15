@@ -250,6 +250,7 @@ struct BangerMapsRootIngestProjection {
     asset_version: String,
     traversal_seed_hash: String,
     traversal_seed: BangerMapsTraversalSeed,
+    content_cache: BangerMapsContentCacheProjection,
     verifier: BangerMapsRootIngestVerifier,
     error: Option<BangerNativeError>,
 }
@@ -282,6 +283,39 @@ struct BangerMapsTraversalTile {
     transform_hash: String,
     content_uris: Vec<String>,
     priority_key: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsContentCacheProjection {
+    schema: &'static str,
+    enabled: bool,
+    cache_dir: String,
+    max_fetch_count: usize,
+    requested_content_count: usize,
+    fetched_content_count: usize,
+    cache_hit_count: usize,
+    failed_content_count: usize,
+    skipped_content_count: usize,
+    total_byte_count: usize,
+    cache_manifest_hash: String,
+    records: Vec<BangerMapsContentCacheRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsContentCacheRecord {
+    tile_id: String,
+    source_uri: String,
+    resolved_url: String,
+    cache_path: String,
+    extension: String,
+    content_type: &'static str,
+    cache_hit: bool,
+    fetched: bool,
+    byte_count: usize,
+    content_hash: String,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -409,8 +443,13 @@ fn main() {
         println!("{}", serde_json::to_string(&frame).expect("serialize banger preview frame"));
         return;
     }
+    if env::args().any(|argument| argument == "--banger-maps-content-cache") {
+        let ingest = banger_maps_root_ingest(Some(true));
+        println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps content cache"));
+        return;
+    }
     if env::args().any(|argument| argument == "--banger-maps-root-ingest") {
-        let ingest = banger_maps_root_ingest();
+        let ingest = banger_maps_root_ingest(None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps root ingest"));
         return;
     }
@@ -646,7 +685,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn banger_maps_root_ingest() -> BangerMapsRootIngestProjection {
+fn banger_maps_root_ingest(force_content_fetch: Option<bool>) -> BangerMapsRootIngestProjection {
     let url = env::var("FORGE_BANGER_MAPS_ROOT_URL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -683,6 +722,7 @@ fn banger_maps_root_ingest() -> BangerMapsRootIngestProjection {
                     asset_version: String::new(),
                     traversal_seed_hash: proof_hash.clone(),
                     traversal_seed: empty_banger_maps_traversal_seed(),
+                    content_cache: empty_banger_maps_content_cache(&cache_dir),
                     verifier: banger_maps_root_ingest_verifier(),
                     error: Some(BangerNativeError {
                         code: "root_fetch_failed",
@@ -693,7 +733,7 @@ fn banger_maps_root_ingest() -> BangerMapsRootIngestProjection {
             }
         },
     };
-    summarize_banger_maps_root(&url, &cache_dir, &cache_path, &bytes, source, cache_hit, error)
+    summarize_banger_maps_root(&url, &cache_dir, &cache_path, &bytes, source, cache_hit, error, force_content_fetch)
 }
 
 fn banger_maps_cache_dir() -> PathBuf {
@@ -745,6 +785,7 @@ fn summarize_banger_maps_root(
     source: &'static str,
     cache_hit: bool,
     error: Option<BangerNativeError>,
+    force_content_fetch: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
     let root_hash = sha256_hex(bytes);
     let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
@@ -754,6 +795,7 @@ fn summarize_banger_maps_root(
     let content_uri_count = root.map(count_banger_tile_content_uris).unwrap_or(0);
     let geometric_error = root.and_then(|value| value.get("geometricError")).and_then(Value::as_f64);
     let traversal_seed = build_banger_maps_traversal_seed(root);
+    let content_cache = build_banger_maps_content_cache(url, cache_dir, &traversal_seed, force_content_fetch);
     let asset_version = parsed
         .as_ref()
         .and_then(|value| value.get("asset"))
@@ -785,6 +827,7 @@ fn summarize_banger_maps_root(
         asset_version,
         traversal_seed_hash,
         traversal_seed,
+        content_cache,
         verifier: banger_maps_root_ingest_verifier(),
         error,
     }
@@ -953,6 +996,221 @@ fn banger_value_hash(value: Option<&Value>) -> String {
         .and_then(|value| serde_json::to_vec(value).ok())
         .map(|bytes| sha256_hex(&bytes))
         .unwrap_or_else(|| sha256_hex(b"none"))
+}
+
+fn empty_banger_maps_content_cache(cache_dir: &std::path::Path) -> BangerMapsContentCacheProjection {
+    BangerMapsContentCacheProjection {
+        schema: "forge.banger.native_3d_tiles_content_cache.v1",
+        enabled: false,
+        cache_dir: cache_dir.join("contents").display().to_string(),
+        max_fetch_count: 0,
+        requested_content_count: 0,
+        fetched_content_count: 0,
+        cache_hit_count: 0,
+        failed_content_count: 0,
+        skipped_content_count: 0,
+        total_byte_count: 0,
+        cache_manifest_hash: sha256_hex(b"empty_banger_maps_content_cache"),
+        records: Vec::new(),
+    }
+}
+
+fn build_banger_maps_content_cache(
+    root_url: &str,
+    cache_dir: &std::path::Path,
+    traversal_seed: &BangerMapsTraversalSeed,
+    force_content_fetch: Option<bool>,
+) -> BangerMapsContentCacheProjection {
+    let enabled = force_content_fetch.unwrap_or_else(|| {
+        env::var("FORGE_BANGER_MAPS_FETCH_TILE_CONTENT")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    });
+    let max_fetch_count = env::var("FORGE_BANGER_MAPS_CONTENT_FETCH_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8);
+    let content_cache_dir = cache_dir.join("contents");
+    let _ = fs::create_dir_all(&content_cache_dir);
+    let requested_content_count = traversal_seed
+        .tiles
+        .iter()
+        .map(|tile| tile.content_uris.len())
+        .sum::<usize>();
+    let mut records = Vec::new();
+    let mut attempted_count = 0usize;
+    for tile in &traversal_seed.tiles {
+        for source_uri in &tile.content_uris {
+            let resolved_url = resolve_banger_tile_content_url(root_url, source_uri);
+            let extension = banger_content_extension(source_uri);
+            let cache_path = content_cache_dir.join(format!("{}.{}", sha256_hex(resolved_url.as_bytes()), extension));
+            let content_type = banger_content_type(&extension);
+            if !enabled || attempted_count >= max_fetch_count {
+                records.push(BangerMapsContentCacheRecord {
+                    tile_id: tile.tile_id.clone(),
+                    source_uri: source_uri.clone(),
+                    resolved_url: redact_url_secret(&resolved_url),
+                    cache_path: cache_path.display().to_string(),
+                    extension,
+                    content_type,
+                    cache_hit: false,
+                    fetched: false,
+                    byte_count: 0,
+                    content_hash: String::new(),
+                    error: None,
+                });
+                continue;
+            }
+            attempted_count += 1;
+            match fs::read(&cache_path) {
+                Ok(bytes) => {
+                    records.push(BangerMapsContentCacheRecord {
+                        tile_id: tile.tile_id.clone(),
+                        source_uri: source_uri.clone(),
+                        resolved_url: redact_url_secret(&resolved_url),
+                        cache_path: cache_path.display().to_string(),
+                        extension,
+                        content_type,
+                        cache_hit: true,
+                        fetched: false,
+                        byte_count: bytes.len(),
+                        content_hash: sha256_hex(&bytes),
+                        error: None,
+                    });
+                }
+                Err(_) => match fetch_banger_maps_root(&resolved_url) {
+                    Ok(bytes) => {
+                        let _ = fs::write(&cache_path, &bytes);
+                        records.push(BangerMapsContentCacheRecord {
+                            tile_id: tile.tile_id.clone(),
+                            source_uri: source_uri.clone(),
+                            resolved_url: redact_url_secret(&resolved_url),
+                            cache_path: cache_path.display().to_string(),
+                            extension,
+                            content_type,
+                            cache_hit: false,
+                            fetched: true,
+                            byte_count: bytes.len(),
+                            content_hash: sha256_hex(&bytes),
+                            error: None,
+                        });
+                    }
+                    Err(error) => {
+                        records.push(BangerMapsContentCacheRecord {
+                            tile_id: tile.tile_id.clone(),
+                            source_uri: source_uri.clone(),
+                            resolved_url: redact_url_secret(&resolved_url),
+                            cache_path: cache_path.display().to_string(),
+                            extension,
+                            content_type,
+                            cache_hit: false,
+                            fetched: false,
+                            byte_count: 0,
+                            content_hash: String::new(),
+                            error: Some(error),
+                        });
+                    }
+                },
+            }
+        }
+    }
+    let fetched_content_count = records.iter().filter(|record| record.fetched).count();
+    let cache_hit_count = records.iter().filter(|record| record.cache_hit).count();
+    let failed_content_count = records.iter().filter(|record| record.error.is_some()).count();
+    let skipped_content_count = records
+        .iter()
+        .filter(|record| !record.fetched && !record.cache_hit && record.error.is_none())
+        .count();
+    let total_byte_count = records.iter().map(|record| record.byte_count).sum();
+    let cache_manifest_hash = sha256_hex(
+        records
+            .iter()
+            .map(|record| {
+                format!(
+                    "{}:{}:{}:{}:{};",
+                    record.tile_id,
+                    record.source_uri,
+                    record.cache_path,
+                    record.byte_count,
+                    record.content_hash
+                )
+            })
+            .collect::<String>()
+            .as_bytes(),
+    );
+    BangerMapsContentCacheProjection {
+        schema: "forge.banger.native_3d_tiles_content_cache.v1",
+        enabled,
+        cache_dir: content_cache_dir.display().to_string(),
+        max_fetch_count,
+        requested_content_count,
+        fetched_content_count,
+        cache_hit_count,
+        failed_content_count,
+        skipped_content_count,
+        total_byte_count,
+        cache_manifest_hash,
+        records,
+    }
+}
+
+fn resolve_banger_tile_content_url(root_url: &str, content_uri: &str) -> String {
+    if content_uri.starts_with("http://") || content_uri.starts_with("https://") || content_uri.starts_with("file://") {
+        return content_uri.to_string();
+    }
+    if root_url.starts_with("http://") || root_url.starts_with("https://") {
+        if let Ok(base) = reqwest::Url::parse(root_url) {
+            if let Ok(mut resolved) = base.join(content_uri) {
+                if resolved.query().is_none() {
+                    resolved.set_query(base.query());
+                }
+                return resolved.to_string();
+            }
+        }
+    }
+    if let Some(path) = root_url.strip_prefix("file://") {
+        let local_path = if cfg!(windows) { path.trim_start_matches('/') } else { path };
+        return std::path::Path::new(local_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""))
+            .join(content_uri)
+            .display()
+            .to_string();
+    }
+    std::path::Path::new(root_url)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""))
+        .join(content_uri)
+        .display()
+        .to_string()
+}
+
+fn banger_content_extension(uri: &str) -> String {
+    let path = uri.split('?').next().unwrap_or(uri).trim_end_matches('/');
+    let extension = path
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.rsplit_once('.').map(|(_, extension)| extension))
+        .unwrap_or("bin")
+        .to_ascii_lowercase();
+    if extension.chars().all(|character| character.is_ascii_alphanumeric()) && extension.len() <= 8 {
+        extension
+    } else {
+        "bin".to_string()
+    }
+}
+
+fn banger_content_type(extension: &str) -> &'static str {
+    match extension {
+        "b3dm" => "batched_3d_model",
+        "i3dm" => "instanced_3d_model",
+        "pnts" => "point_cloud",
+        "cmpt" => "composite",
+        "glb" => "binary_gltf",
+        "gltf" => "json_gltf",
+        _ => "opaque_tile_content",
+    }
 }
 
 fn count_banger_tiles(tile: &Value) -> usize {
@@ -2228,6 +2486,7 @@ mod tests {
             "test",
             false,
             None,
+            Some(false),
         );
         assert!(projection.ok);
         assert_eq!(projection.schema, "forge.banger.native_3d_tiles_root_ingest.v1");
@@ -2260,6 +2519,45 @@ mod tests {
             projection.root_tileset_url,
             "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted&foo=bar"
         );
+        assert!(!projection.content_cache.enabled);
+        assert_eq!(projection.content_cache.requested_content_count, 3);
+        assert_eq!(projection.content_cache.skipped_content_count, 3);
+    }
+
+    #[test]
+    fn fetches_and_caches_traversal_tile_content_from_relative_uri() {
+        let cache_dir = env::temp_dir().join(format!(
+            "forge-banger-content-cache-test-{}",
+            sha256_hex(format!("{:?}", SystemTime::now()).as_bytes())
+        ));
+        let source_dir = cache_dir.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let root_path = source_dir.join("tileset.json");
+        let content_path = source_dir.join("tile.glb");
+        fs::write(&content_path, b"glb-bytes").unwrap();
+        fs::write(&root_path, br#"{"asset":{"version":"1.1"},"root":{"geometricError":1,"content":{"uri":"tile.glb"}}}"#).unwrap();
+        let bytes = fs::read(&root_path).unwrap();
+        let projection = summarize_banger_maps_root(
+            root_path.to_str().unwrap(),
+            &cache_dir,
+            &cache_dir.join("root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+            Some(true),
+        );
+        assert!(projection.ok);
+        assert!(projection.content_cache.enabled);
+        assert_eq!(projection.content_cache.requested_content_count, 1);
+        assert_eq!(projection.content_cache.fetched_content_count, 1);
+        assert_eq!(projection.content_cache.cache_hit_count, 0);
+        assert_eq!(projection.content_cache.failed_content_count, 0);
+        assert_eq!(projection.content_cache.total_byte_count, 9);
+        assert_eq!(projection.content_cache.records[0].extension, "glb");
+        assert_eq!(projection.content_cache.records[0].content_type, "binary_gltf");
+        assert_eq!(projection.content_cache.records[0].content_hash, sha256_hex(b"glb-bytes"));
+        assert!(std::path::Path::new(&projection.content_cache.records[0].cache_path).exists());
     }
 }
 

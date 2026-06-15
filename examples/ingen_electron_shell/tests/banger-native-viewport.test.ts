@@ -90,12 +90,18 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("Cesium3DTileset_style_native_streamer");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_streamer.v1");
     expect(nativeBridgeSource).toContain("--banger-maps-root-ingest");
+    expect(nativeBridgeSource).toContain("--banger-maps-content-cache");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_root_ingest.v1");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_content_cache.v1");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_ROOT_URL");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_TILE_CACHE_DIR");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_FETCH_TILE_CONTENT");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_CONTENT_FETCH_LIMIT");
     expect(nativeBridgeSource).toContain("BangerMapsRootIngestProjection");
     expect(nativeBridgeSource).toContain("BangerMapsTraversalSeed");
     expect(nativeBridgeSource).toContain("BangerMapsTraversalTile");
+    expect(nativeBridgeSource).toContain("BangerMapsContentCacheProjection");
+    expect(nativeBridgeSource).toContain("BangerMapsContentCacheRecord");
     expect(nativeBridgeSource).toContain("reqwest::blocking::Client");
     expect(nativeBridgeSource).toContain("traversal_seed_hash");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_traversal_seed.v1");
