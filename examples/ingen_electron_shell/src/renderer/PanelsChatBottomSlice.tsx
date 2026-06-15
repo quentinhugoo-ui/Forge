@@ -17,10 +17,12 @@ import {
   BRAIN_GOOGLE_AGENDA_COMMAND,
   BRAIN_NAMED_COMPUTE_COMMAND,
   BRAIN_NEWCOMPUTE_COMMAND,
+  BRAIN_NEWBRAIN_COMMAND,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_EDITIMAGE_COMMAND,
+  BRAIN_MODIFY_NAMED_BRAIN_COMMAND,
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
   BRAIN_NEWOBJECT_COMMAND,
@@ -1283,6 +1285,8 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],
   [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
   [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
+  [BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"],
+  [BRAIN_MODIFY_NAMED_BRAIN_COMMAND, "Specialized Brain update prepared"],
   [BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"],
   [BRAIN_WORKSPACE_COMMAND, "workspace folder required"],
   [BRAIN_NEWCOMPUTE_COMMAND, "opens the Monster template selector"],
@@ -2750,6 +2754,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
   if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
+  if (command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND) return <BrainSegmentCodeActIcon phase="changed" />;
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
   if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
@@ -2762,6 +2767,10 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
 
 function isBrainSegmentCommand(command: TranscriptCodeActCommand): boolean {
   return command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND;
+}
+
+function isBrainStyledCommand(command: TranscriptCodeActCommand): boolean {
+  return isBrainSegmentCommand(command) || command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND;
 }
 
 function isContextCompactionCommand(command: TranscriptCodeActCommand): command is typeof CONTEXT_COMPACTION_COMMAND {
@@ -2952,6 +2961,7 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
     return <TranscriptContextCompactionEventLine event={event} />;
   }
   const isBrainSegment = isBrainSegmentCommand(event.command);
+  const isBrainStyled = isBrainStyledCommand(event.command);
   const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const isPendingAgentEvent = writing && Boolean(agentCommand) && !event.detail;
   const fileModification = agentCommand ? agentFileModificationSummary(event, agentCommand) : undefined;
@@ -2966,7 +2976,7 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
     return () => window.clearTimeout(timeout);
   }, [event.command, isBrainSegment]);
 
-  const eventClassName = isBrainSegment
+  const eventClassName = isBrainStyled
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
     : agentCommand
       ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${fileModification ? " transcriptCodeActEvent--fileModification" : ""}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`

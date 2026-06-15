@@ -202,6 +202,17 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("archiveTranscriptMessage(session, continuationMessage)");
   });
 
+  it("renders domain Brain CodeActs with the blue Brain event treatment", () => {
+    expect(animationSource).toContain("BRAIN_NEWBRAIN_COMMAND");
+    expect(animationSource).toContain("BRAIN_MODIFY_NAMED_BRAIN_COMMAND");
+    expect(animationSource).toContain('[BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"]');
+    expect(animationSource).toContain('[BRAIN_MODIFY_NAMED_BRAIN_COMMAND, "Specialized Brain update prepared"]');
+    expect(animationSource).toContain("function isBrainStyledCommand");
+    expect(animationSource).toContain("command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND");
+    expect(animationSource).toContain('<BrainSegmentCodeActIcon phase="changed" />');
+    expect(animationSource).toContain("transcriptCodeActEvent--brainSegment");
+  });
+
   it("keeps loop continuation results compact before reinjection", () => {
     expect(mainSource).toContain("const AGENT_ACTION_RESULT_ITEM_LIMIT = 10");
     expect(mainSource).toContain("const AGENT_ACTION_RESULT_MATCH_LIMIT = 8");
