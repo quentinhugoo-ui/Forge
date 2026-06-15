@@ -4664,13 +4664,14 @@ export function PanelsChatBottomSlice({
   const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
   const widgetTranscriptMessages = useMemo(
-    () => canvasMessages.filter((message) => message.role === "user" || message.role === "assistant"),
+    () =>
+      canvasMessages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({ ...message, attachments: [] }))
+        .filter((message) => message.text.trim().length > 0),
     [canvasMessages]
   );
-  const widgetTranscriptHasConversation = useMemo(
-    () => widgetTranscriptMessages.some((message) => message.text.trim().length > 0 || (message.attachments ?? []).length > 0),
-    [widgetTranscriptMessages]
-  );
+  const widgetTranscriptHasConversation = widgetTranscriptMessages.length > 0;
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
