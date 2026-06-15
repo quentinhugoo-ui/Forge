@@ -182,6 +182,9 @@ describe("assistant learning interrupts", () => {
     expect(manifest).toContain("newbrain_template_example=/newbrain_");
     expect(manifest).toContain('brain_name="marketing"');
     expect(manifest).toContain('token_budget="1200"');
+    expect(manifest).toContain('modifybrain_template_example=/modify"marketing"brain_');
+    expect(manifest).toContain('entry_kind="lesson"');
+    expect(manifest).toContain('output="append_to_specialized_brain"');
     expect(manifest).toContain("specialized_brain[1]");
     expect(manifest).toContain("active_specialized_brain");
     expect(manifest).toContain('name="musician"');
