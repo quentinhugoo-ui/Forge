@@ -16006,6 +16006,166 @@ async function submitChatDraftForSession(
   }
 }
 
+interface UniversalLoopOrchestratorPassResult {
+  assistantMessage: TranscriptMessage;
+  previousBrainSegment: BrainSegmentId;
+  activatedBrainSegment?: ActiveBrainSegmentId;
+}
+
+async function executeUniversalLoopOrchestratorPass(params: {
+  assistantMessage: TranscriptMessage;
+  baseTranscript: TranscriptMessage[];
+  originalUserText: string;
+  providerAttachments: ProviderAttachment[];
+  userMessageId: string;
+  moduleId: string;
+  parallelSessionIndex: number;
+  session: SidebarSessionItem;
+  agentEvents: AgentRuntimeEventQueue;
+  assistantRun: AssistantRunControl;
+  commitTranscript: (transcript: TranscriptMessage[]) => void;
+  replaceAssistantMessageId?: string;
+}): Promise<UniversalLoopOrchestratorPassResult> {
+  let assistantMessage = await executeAssistantAgentActionLoop({
+    assistantMessage: params.assistantMessage,
+    baseTranscript: params.baseTranscript,
+    originalUserText: params.originalUserText,
+    providerAttachments: params.providerAttachments,
+    userMessageId: params.userMessageId,
+    moduleId: params.moduleId,
+    agentEvents: params.agentEvents,
+    assistantRun: params.assistantRun,
+    commitTranscript: params.commitTranscript
+  });
+  throwIfAssistantRunCancelled(params.assistantRun);
+  assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, params.originalUserText, params.moduleId);
+  assistantMessage = await applyGeographicMapsFallback(assistantMessage, params.originalUserText, params.moduleId, params.parallelSessionIndex);
+  throwIfAssistantRunCancelled(params.assistantRun);
+  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex);
+  assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, params.session);
+  assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
+  assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
+  assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
+  const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
+  const activatedBrainSegment = brainSegmentFromAssistantText(assistantMessage.text);
+  assistantMessage = executeAssistantBrainSegmentCodeAct(assistantMessage);
+  assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
+  if (params.replaceAssistantMessageId) {
+    assistantMessage = {
+      ...assistantMessage,
+      id: params.replaceAssistantMessageId,
+      proofHash: hashJson({ replaceAssistantMessageId: params.replaceAssistantMessageId, text: assistantMessage.text, previousProofHash: assistantMessage.proofHash })
+    };
+  }
+  await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage);
+  return {
+    assistantMessage,
+    previousBrainSegment,
+    activatedBrainSegment
+  };
+}
+
+function universalLoopContinuationUserText(params: {
+  originalUserText: string;
+  assistantText: string;
+  searchArchiveActive: boolean;
+  previousBrainSegment: BrainSegmentId;
+  activatedBrainSegment?: ActiveBrainSegmentId;
+}): { text: string; idSuffix: string } | undefined {
+  if (params.searchArchiveActive) {
+    return undefined;
+  }
+  if (params.activatedBrainSegment && params.activatedBrainSegment !== params.previousBrainSegment) {
+    return {
+      text: brainSegmentContinuationUserText(params.originalUserText, params.activatedBrainSegment),
+      idSuffix: params.activatedBrainSegment
+    };
+  }
+  if (
+    shouldContinueAfterBrainCodeAct({
+      originalUserText: params.originalUserText,
+      assistantText: params.assistantText,
+      activatedBrainSegment: params.activatedBrainSegment,
+      previousBrainSegment: params.previousBrainSegment
+    })
+  ) {
+    return {
+      text: brainCodeActLoopContinuationUserText(
+        params.originalUserText,
+        params.assistantText,
+        brainCodeActCommandsFromAssistantText(params.assistantText)
+      ),
+      idSuffix: "brain-codeact"
+    };
+  }
+  return undefined;
+}
+
+async function executeUniversalLoopContinuation(params: {
+  nextTranscript: TranscriptMessage[];
+  requestSessionId: string;
+  originalUserText: string;
+  providerAttachments: ProviderAttachment[];
+  userMessageId: string;
+  moduleId: string;
+  parallelSessionIndex: number;
+  session: SidebarSessionItem;
+  agentEvents: AgentRuntimeEventQueue;
+  assistantRun: AssistantRunControl;
+  commitTranscript: (transcript: TranscriptMessage[]) => void;
+  searchArchiveActive: boolean;
+  pass: UniversalLoopOrchestratorPassResult;
+}): Promise<TranscriptMessage[]> {
+  const continuation = universalLoopContinuationUserText({
+    originalUserText: params.originalUserText,
+    assistantText: params.pass.assistantMessage.text,
+    searchArchiveActive: params.searchArchiveActive,
+    previousBrainSegment: params.pass.previousBrainSegment,
+    activatedBrainSegment: params.pass.activatedBrainSegment
+  });
+  if (!continuation) {
+    return params.nextTranscript;
+  }
+  const continuationAssistantMessageId = `assistant-response-${Date.now()}-${continuation.idSuffix}`;
+  const continuationLiveSink = createAssistantLiveTextSink({
+    baseTranscript: params.nextTranscript,
+    assistantMessageId: continuationAssistantMessageId,
+    agentEvents: params.agentEvents,
+    commitTranscript: params.commitTranscript,
+    assistantRun: params.assistantRun
+  });
+  const rawContinuationMessage = await buildAssistantTranscriptMessage(
+    continuation.text,
+    params.providerAttachments,
+    params.userMessageId,
+    params.moduleId,
+    params.nextTranscript,
+    continuationLiveSink,
+    continuationAssistantMessageId
+  );
+  const continuationPass = await executeUniversalLoopOrchestratorPass({
+    assistantMessage: rawContinuationMessage,
+    baseTranscript: params.nextTranscript,
+    originalUserText: continuation.text,
+    providerAttachments: params.providerAttachments,
+    userMessageId: params.userMessageId,
+    moduleId: params.moduleId,
+    parallelSessionIndex: params.parallelSessionIndex,
+    session: params.session,
+    agentEvents: params.agentEvents,
+    assistantRun: params.assistantRun,
+    commitTranscript: params.commitTranscript
+  });
+  const nextTranscript = await commitAssistantMessageWithProgressiveSeed(
+    params.nextTranscript,
+    continuationPass.assistantMessage,
+    params.requestSessionId,
+    params.commitTranscript
+  );
+  archiveTranscriptMessage(params.session, continuationPass.assistantMessage);
+  return nextTranscript;
+}
+
 async function submitChatDraftForSessionInner(
   draft: string,
   moduleId: string,
@@ -16110,38 +16270,21 @@ async function submitChatDraftForSessionInner(
     );
     throwIfAssistantRunCancelled(assistantRun);
   }
-  assistantMessage = await executeAssistantAgentActionLoop({
+  const orchestratorPass = await executeUniversalLoopOrchestratorPass({
     assistantMessage,
     baseTranscript: nextTranscript,
     originalUserText: draft,
     providerAttachments,
     userMessageId: message.id,
     moduleId,
+    parallelSessionIndex,
+    session,
     agentEvents,
     assistantRun,
-    commitTranscript
+    commitTranscript,
+    replaceAssistantMessageId
   });
-  throwIfAssistantRunCancelled(assistantRun);
-  assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
-  assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
-  throwIfAssistantRunCancelled(assistantRun);
-  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
-  assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
-  assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
-  assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
-  assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
-  const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
-  const activatedBrainSegment = brainSegmentFromAssistantText(assistantMessage.text);
-  assistantMessage = executeAssistantBrainSegmentCodeAct(assistantMessage);
-  assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
-  if (replaceAssistantMessageId) {
-    assistantMessage = {
-      ...assistantMessage,
-      id: replaceAssistantMessageId,
-      proofHash: hashJson({ replaceAssistantMessageId, text: assistantMessage.text, previousProofHash: assistantMessage.proofHash })
-    };
-  }
-  await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage);
+  assistantMessage = orchestratorPass.assistantMessage;
   nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTranscript);
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithReplacedMessage(nextTranscript, contextCompactionEventMessage("compressed", contextCompactionSeed));
@@ -16159,98 +16302,21 @@ async function submitChatDraftForSessionInner(
   }
   // Audit anchor: archiveTranscriptMessage(activeSession, assistantMessage)
   archiveTranscriptMessage(session, assistantMessage);
-  if (!searchArchiveRequest && activatedBrainSegment && activatedBrainSegment !== previousBrainSegment) {
-    const continuationUserText = brainSegmentContinuationUserText(draft, activatedBrainSegment);
-    const continuationAssistantMessageId = `assistant-response-${Date.now()}-${activatedBrainSegment}`;
-    const continuationLiveSink = createAssistantLiveTextSink({
-      baseTranscript: nextTranscript,
-      assistantMessageId: continuationAssistantMessageId,
-      agentEvents,
-      commitTranscript,
-      assistantRun
-    });
-    let continuationMessage = await buildAssistantTranscriptMessage(
-      continuationUserText,
-      providerAttachments,
-      message.id,
-      moduleId,
-      nextTranscript,
-      continuationLiveSink,
-      continuationAssistantMessageId
-    );
-    continuationMessage = await executeAssistantAgentActionLoop({
-      assistantMessage: continuationMessage,
-      baseTranscript: nextTranscript,
-      originalUserText: continuationUserText,
-      providerAttachments,
-      userMessageId: message.id,
-      moduleId,
-      agentEvents,
-      assistantRun,
-      commitTranscript
-    });
-    throwIfAssistantRunCancelled(assistantRun);
-    continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
-    continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
-    continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);
-    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
-    continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
-    continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
-    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
-    await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(continuationMessage);
-    nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, continuationMessage, requestSessionId, commitTranscript);
-    archiveTranscriptMessage(session, continuationMessage);
-  } else if (
-    !searchArchiveRequest &&
-    shouldContinueAfterBrainCodeAct({
-      originalUserText: draft,
-      assistantText: assistantMessage.text,
-      activatedBrainSegment,
-      previousBrainSegment
-    })
-  ) {
-    const commands = brainCodeActCommandsFromAssistantText(assistantMessage.text);
-    const continuationUserText = brainCodeActLoopContinuationUserText(draft, assistantMessage.text, commands);
-    const continuationAssistantMessageId = `assistant-response-${Date.now()}-brain-codeact`;
-    const continuationLiveSink = createAssistantLiveTextSink({
-      baseTranscript: nextTranscript,
-      assistantMessageId: continuationAssistantMessageId,
-      agentEvents,
-      commitTranscript,
-      assistantRun
-    });
-    let continuationMessage = await buildAssistantTranscriptMessage(
-      continuationUserText,
-      providerAttachments,
-      message.id,
-      moduleId,
-      nextTranscript,
-      continuationLiveSink,
-      continuationAssistantMessageId
-    );
-    continuationMessage = await executeAssistantAgentActionLoop({
-      assistantMessage: continuationMessage,
-      baseTranscript: nextTranscript,
-      originalUserText: continuationUserText,
-      providerAttachments,
-      userMessageId: message.id,
-      moduleId,
-      agentEvents,
-      assistantRun,
-      commitTranscript
-    });
-    throwIfAssistantRunCancelled(assistantRun);
-    continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
-    continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
-    continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);
-    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
-    continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
-    continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
-    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
-    await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(continuationMessage);
-    nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, continuationMessage, requestSessionId, commitTranscript);
-    archiveTranscriptMessage(session, continuationMessage);
-  }
+  nextTranscript = await executeUniversalLoopContinuation({
+    nextTranscript,
+    requestSessionId,
+    originalUserText: draft,
+    providerAttachments,
+    userMessageId: message.id,
+    moduleId,
+    parallelSessionIndex,
+    session,
+    agentEvents,
+    assistantRun,
+    commitTranscript,
+    searchArchiveActive: Boolean(searchArchiveRequest),
+    pass: orchestratorPass
+  });
 }
 
 async function submitParallelPanelsChatDraft(

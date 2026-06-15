@@ -195,6 +195,8 @@ Status: implemented for the planned scope. The normal path now carries `AgentAct
 
 Update 2026-06-15: Brain CodeActs are now treated as loop-stream event boundaries, not merely visible prompt text. General, Science and Coding Brain prompts tell the model to use CodeActs as progress events for non-trivial work. After a non-terminal Brain CodeAct on an actionable request, the host can automatically issue a hidden `BRAIN_CODEACT_LOOP_CONTINUATION` turn so the next concrete CodeAct or `AGENT_ACTION_JSON` action happens inside the same agentic flow instead of ending as a normal chatbot answer. User-pause CodeActs such as questionnaire/workspace/image and surface-opening CodeActs remain allowed to stop cleanly while waiting for user or UI state.
 
+Update 2026-06-15: the chat submit path now uses a single `executeUniversalLoopOrchestratorPass` followed by `executeUniversalLoopContinuation` instead of separate continuation blocks for Brain switching and Brain CodeActs. Each pass runs the same ordered circuit: agent actions, fallback projections, module CodeActs, Brain rules/events, questionnaire pause enforcement, Brain segment execution and verified display injection. The continuation selector can resume after a Brain switch, resume after an actionable CodeAct, pause cleanly for `/workspace_` and `/questionnaire_`, or stop and leave the assistant response as a normal single answer when no loop continuation is needed.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.

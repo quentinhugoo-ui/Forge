@@ -216,13 +216,23 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function isBrainCodeActSurfaceCommand");
     expect(mainSource).toContain("function shouldContinueAfterBrainCodeAct");
     expect(mainSource).toContain("function brainCodeActLoopContinuationUserText");
+    expect(mainSource).toContain("interface UniversalLoopOrchestratorPassResult");
+    expect(mainSource).toContain("async function executeUniversalLoopOrchestratorPass");
+    expect(mainSource).toContain("function universalLoopContinuationUserText");
+    expect(mainSource).toContain("async function executeUniversalLoopContinuation");
     expect(mainSource).toContain("BRAIN_CODEACT_LOOP_CONTINUATION v1");
     expect(mainSource).toContain("Le ou les CodeActs Brain precedents sont des evenements de loop stream");
     expect(mainSource).toContain("previous_visible_progress=");
-    expect(mainSource).toContain("assistant-response-${Date.now()}-brain-codeact");
+    expect(mainSource).toContain("assistant-response-${Date.now()}-${continuation.idSuffix}");
+    expect(mainSource).toContain("command === BRAIN_QUESTIONNAIRE_COMMAND");
+    expect(mainSource).toContain("command === BRAIN_WORKSPACE_COMMAND");
+    expect(mainSource).toContain("searchArchiveActive: Boolean(searchArchiveRequest)");
+    expect(mainSource).toContain("const orchestratorPass = await executeUniversalLoopOrchestratorPass({");
+    expect(mainSource).toContain("nextTranscript = await executeUniversalLoopContinuation({");
     expect(mainSource).toContain("shouldContinueAfterBrainCodeAct({");
-    expect(mainSource).toContain("continuationMessage = await executeAssistantAgentActionLoop({");
-    expect(mainSource).toContain("archiveTranscriptMessage(session, continuationMessage)");
+    expect(mainSource).toContain("const continuationPass = await executeUniversalLoopOrchestratorPass({");
+    expect(mainSource).toContain("archiveTranscriptMessage(params.session, continuationPass.assistantMessage)");
+    expect(mainSource).not.toContain("continuationMessage = await executeAssistantAgentActionLoop({");
   });
 
   it("renders domain Brain CodeActs with the blue Brain event treatment", () => {

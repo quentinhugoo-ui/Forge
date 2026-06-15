@@ -148,14 +148,19 @@ type WidgetHitRegion = {
 
 type WidgetMinimizingPhase = "" | "sides" | "header" | "canvas";
 
-const WIDGET_HIT_REGION_TARGETS = [
+type WidgetHitPadding = number | { left?: number; right?: number; top?: number; bottom?: number };
+
+const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: WidgetHitPadding }> = [
   { selector: ".composer", padding: 6 },
-  { selector: ".widgetWindowsButton", padding: 1 },
+  /* Asymmetric: stretch left so the hover tooltip stays inside the native
+     window shape, and add vertical margin so the icon's delayed translateY
+     entrance never leaves it cropped before the next region sync. */
+  { selector: ".widgetWindowsButton", padding: { left: 104, right: 10, top: 14, bottom: 14 } },
   { selector: ".bottomControls button", padding: 1 },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".permissionModeMenu", padding: 1 }
-] as const;
+];
 
 function readWidgetLayoutLock(): WidgetLayoutLock | null {
   const composerRect = document.querySelector(".composer")?.getBoundingClientRect();
@@ -173,15 +178,19 @@ function readWidgetLayoutLock(): WidgetLayoutLock | null {
   };
 }
 
-function widgetHitRegionForElement(element: Element, padding: number): WidgetHitRegion | null {
+function widgetHitRegionForElement(element: Element, padding: WidgetHitPadding): WidgetHitRegion | null {
   const rect = element.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) {
     return null;
   }
-  const left = Math.max(0, Math.floor(rect.left - padding));
-  const top = Math.max(0, Math.floor(rect.top - padding));
-  const right = Math.min(window.innerWidth, Math.ceil(rect.right + padding));
-  const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padding));
+  const padLeft = typeof padding === "number" ? padding : padding.left ?? 0;
+  const padRight = typeof padding === "number" ? padding : padding.right ?? 0;
+  const padTop = typeof padding === "number" ? padding : padding.top ?? 0;
+  const padBottom = typeof padding === "number" ? padding : padding.bottom ?? 0;
+  const left = Math.max(0, Math.floor(rect.left - padLeft));
+  const top = Math.max(0, Math.floor(rect.top - padTop));
+  const right = Math.min(window.innerWidth, Math.ceil(rect.right + padRight));
+  const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padBottom));
   if (right - left < 8 || bottom - top < 8) {
     return null;
   }
