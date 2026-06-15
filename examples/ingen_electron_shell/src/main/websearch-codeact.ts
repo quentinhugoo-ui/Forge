@@ -1,0 +1,324 @@
+import { createHash } from "node:crypto";
+import {
+  BRAIN_WEBSEARCH_COMMAND,
+  BRAIN_WEBSEARCH_RESULT_SCHEMA
+} from "../shared/ipc-contract.js";
+
+export const WEBSEARCH_COMMAND = BRAIN_WEBSEARCH_COMMAND;
+export const WEBSEARCH_RESULT_SCHEMA = BRAIN_WEBSEARCH_RESULT_SCHEMA;
+
+const MAX_QUERY_CHARS = 800;
+const MAX_GOAL_CHARS = 300;
+const MAX_DOMAINS = 16;
+const MAX_DOMAIN_CHARS = 120;
+
+export type WebSearchProviderId = "openai" | "claude";
+export type WebSearchProviderRoute =
+  | "auto"
+  | "openai"
+  | "claude"
+  | "openai_then_claude"
+  | "claude_then_openai"
+  | "both_parallel";
+export type WebSearchStatus = "ok" | "partial" | "error";
+
+export interface WebSearchCodeActRequest {
+  schema: "forge.websearch.request.v1";
+  command: typeof WEBSEARCH_COMMAND;
+  query: string;
+  goal:
+    | "source_backed_answer_and_ranked_urls"
+    | "url_discovery_for_scrapers"
+    | "citation_verification"
+    | "comparative_research"
+    | "latest_status_check";
+  providers: WebSearchProviderRoute;
+  toolChoice: "auto" | "required";
+  freshness: "auto" | "latest" | "past_day" | "past_week" | "past_month" | "past_year" | "any_time";
+  allowedDomains: string[];
+  blockedDomains: string[];
+  maxSearches: number;
+  topKUrls: number;
+  searchContextSize: "low" | "medium" | "high";
+  userLocation: string;
+  locale: "fr" | "en" | "auto";
+  extractIntent: "none" | "suggest_scrapers_urls" | "next_loop_scrapers";
+  output: "compact_answer_url_citation_manifest" | "url_manifest_only" | "comparison_matrix" | "verification_report";
+  source: "explicit_codeact";
+  proofHash: string;
+}
+
+export interface WebSearchUrlCandidate {
+  url: string;
+  title?: string;
+  snippet?: string;
+  pageAge?: string;
+  provider: WebSearchProviderId;
+}
+
+export interface WebSearchCitation {
+  url: string;
+  title?: string;
+  citedText?: string;
+  provider: WebSearchProviderId;
+}
+
+export interface WebSearchProviderResult {
+  provider: WebSearchProviderId;
+  status: WebSearchStatus;
+  durationMs: number;
+  model?: string;
+  searchedQueries: string[];
+  answer: string;
+  urls: WebSearchUrlCandidate[];
+  citations: WebSearchCitation[];
+  warnings: string[];
+  error?: string;
+}
+
+export interface WebSearchBridgeResult {
+  schema: typeof WEBSEARCH_RESULT_SCHEMA;
+  command: typeof WEBSEARCH_COMMAND;
+  status: WebSearchStatus;
+  requestHash: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  providers: WebSearchProviderResult[];
+  answer: string;
+  urls: WebSearchUrlCandidate[];
+  citations: WebSearchCitation[];
+  suggestedScraperUrls: string[];
+  warnings: string[];
+  proofHash: string;
+}
+
+export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | undefined {
+  const trimmed = input.trim();
+  if (!readWebSearchCommand(trimmed)) {
+    return undefined;
+  }
+  const body = trimmed.slice(WEBSEARCH_COMMAND.length).trim();
+  const fields = parseTemplateFields(body);
+  const freeform = fields.size === 0 ? body : "";
+  const query = clampText(fields.get("query") ?? fields.get("q") ?? fields.get("topic") ?? freeform, MAX_QUERY_CHARS);
+  if (!query) {
+    return undefined;
+  }
+  const request: WebSearchCodeActRequest = {
+    schema: "forge.websearch.request.v1",
+    command: WEBSEARCH_COMMAND,
+    query,
+    goal: readChoice(fields.get("goal"), [
+      "source_backed_answer_and_ranked_urls",
+      "url_discovery_for_scrapers",
+      "citation_verification",
+      "comparative_research",
+      "latest_status_check"
+    ], "source_backed_answer_and_ranked_urls"),
+    providers: readChoice(fields.get("providers") ?? fields.get("provider"), [
+      "auto",
+      "openai",
+      "claude",
+      "openai_then_claude",
+      "claude_then_openai",
+      "both_parallel"
+    ], "auto"),
+    toolChoice: readChoice(fields.get("tool_choice"), ["auto", "required"], "required"),
+    freshness: readChoice(fields.get("freshness") ?? fields.get("recency"), [
+      "auto",
+      "latest",
+      "past_day",
+      "past_week",
+      "past_month",
+      "past_year",
+      "any_time"
+    ], "auto"),
+    allowedDomains: parseDomains(fields.get("allowed_domains") ?? fields.get("domains")),
+    blockedDomains: parseDomains(fields.get("blocked_domains")),
+    maxSearches: clampNumber(fields.get("max_searches"), 1, 20, 5),
+    topKUrls: clampNumber(fields.get("top_k_urls") ?? fields.get("top_k"), 1, 30, 8),
+    searchContextSize: readChoice(fields.get("search_context_size"), ["low", "medium", "high"], "medium"),
+    userLocation: clampText(fields.get("user_location") ?? "", 240),
+    locale: readChoice(fields.get("locale") ?? fields.get("lang"), ["fr", "en", "auto"], "fr"),
+    extractIntent: readChoice(fields.get("extract_intent"), [
+      "none",
+      "suggest_scrapers_urls",
+      "next_loop_scrapers"
+    ], "none"),
+    output: readChoice(fields.get("output"), [
+      "compact_answer_url_citation_manifest",
+      "url_manifest_only",
+      "comparison_matrix",
+      "verification_report"
+    ], "compact_answer_url_citation_manifest"),
+    source: "explicit_codeact",
+    proofHash: ""
+  };
+  request.proofHash = stableHash({ ...request, proofHash: "" });
+  return request;
+}
+
+export function extractWebSearchCodeAct(input: string): WebSearchCodeActRequest | undefined {
+  const explicit = parseWebSearchCodeAct(input);
+  if (explicit) {
+    return explicit;
+  }
+  const lines = input.split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => Boolean(readWebSearchCommand(line)));
+  if (startIndex < 0) {
+    return undefined;
+  }
+  const block: string[] = [];
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index]?.trim() ?? "";
+    if (index > startIndex && (!line || line.startsWith("/") || /^[A-Z_]+_RESULT\b/.test(line))) {
+      break;
+    }
+    block.push(line);
+  }
+  return parseWebSearchCodeAct(block.join("\n"));
+}
+
+export function renderWebSearchCodeActResult(result: WebSearchBridgeResult): string {
+  const providerSummary = result.providers.map((provider) => ({
+    provider: provider.provider,
+    status: provider.status,
+    model: provider.model,
+    duration_ms: provider.durationMs,
+    queries: provider.searchedQueries,
+    urls: provider.urls.length,
+    citations: provider.citations.length,
+    error: provider.error
+  }));
+  return [
+    "WEBSEARCH_RESULT",
+    `schema=${WEBSEARCH_RESULT_SCHEMA}`,
+    `command=${WEBSEARCH_COMMAND}`,
+    `status=${result.status}`,
+    `request_hash=sha256:${result.requestHash}`,
+    `duration_ms=${result.durationMs}`,
+    `providers=${JSON.stringify(providerSummary)}`,
+    `answer=${JSON.stringify(result.answer)}`,
+    `urls=${JSON.stringify(result.urls.slice(0, 30))}`,
+    `citations=${JSON.stringify(result.citations.slice(0, 30))}`,
+    `suggested_scraper_urls=${JSON.stringify(result.suggestedScraperUrls.slice(0, 30))}`,
+    `warnings=${JSON.stringify(result.warnings)}`,
+    `proof_hash=sha256:${result.proofHash}`
+  ].join("\n");
+}
+
+export function stableWebSearchHash(value: unknown): string {
+  return stableHash(value);
+}
+
+function parseTemplateFields(body: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([\s\S]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = fieldRegex.exec(body)) !== null) {
+    const key = match[1]?.trim();
+    if (!key) continue;
+    const value = decodeTemplateValue(match[2] ?? match[3] ?? match[4] ?? "").trim();
+    fields.set(key, value);
+  }
+  return fields;
+}
+
+function readWebSearchCommand(value: string): typeof WEBSEARCH_COMMAND | undefined {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === WEBSEARCH_COMMAND) {
+    return WEBSEARCH_COMMAND;
+  }
+  if (trimmed.startsWith(WEBSEARCH_COMMAND) && /\s/u.test(trimmed.charAt(WEBSEARCH_COMMAND.length))) {
+    return WEBSEARCH_COMMAND;
+  }
+  return undefined;
+}
+
+function decodeTemplateValue(value: string): string {
+  return value
+    .replace(/\\"/gu, "\"")
+    .replace(/\\'/gu, "'")
+    .replace(/\\n/gu, "\n")
+    .replace(/\\t/gu, "\t")
+    .replace(/\\\\/gu, "\\");
+}
+
+function parseDomains(value: unknown): string[] {
+  const values = parseStringList(value);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of values) {
+    const clean = normalizeDomain(item);
+    if (!clean || seen.has(clean)) {
+      continue;
+    }
+    seen.add(clean);
+    result.push(clean);
+    if (result.length >= MAX_DOMAINS) {
+      break;
+    }
+  }
+  return result;
+}
+
+function parseStringList(value: unknown): string[] {
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+  const text = value.trim();
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is string => typeof item === "string");
+      }
+    } catch {
+      // Fall back to separator parsing.
+    }
+  }
+  return text.split(/[,|;\n]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeDomain(value: string): string {
+  const clean = clampText(value, MAX_DOMAIN_CHARS).replace(/^https?:\/\//i, "").split("/")[0]?.trim().toLowerCase() ?? "";
+  return clean.replace(/^\.+|\.+$/g, "");
+}
+
+function readChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  return choices.find((choice) => choice === normalized) ?? fallback;
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.trunc(numeric)));
+}
+
+function clampText(text: string | undefined, maxChars: number): string {
+  const clean = (text ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= maxChars) return clean;
+  return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function stableHash(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
+}

@@ -28,6 +28,7 @@ import {
   BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
+  BRAIN_WEBSEARCH_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
@@ -160,6 +161,11 @@ import {
   renderGoogleWebCodeActResult,
   type GoogleWebCodeActRequest
 } from "./google-web-codeact.js";
+import {
+  extractWebSearchCodeAct,
+  renderWebSearchCodeActResult
+} from "./websearch-codeact.js";
+import { runWebSearchBridge } from "./websearch-bridge.js";
 import {
   createMapsCodeActRequest,
   extractMapsCodeAct,
@@ -4917,6 +4923,7 @@ function shouldContinueAfterBrainCodeAct(params: {
         command === BRAIN_NEWOBJECT_COMMAND ||
         command === BRAIN_FRONTDESIGN_COMMAND ||
         command === BRAIN_GOOGLE_AGENDA_COMMAND ||
+        command === BRAIN_WEBSEARCH_COMMAND ||
         command === BRAIN_SCRAPERS_COMMAND ||
         command === BRAIN_BRAIN_COMMAND ||
         command === BRAIN_NEWMODULE_COMMAND ||
@@ -14490,6 +14497,27 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
   };
 }
 
+async function executeAssistantWebSearchCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (message.role !== "assistant" || message.text.includes("WEBSEARCH_RESULT")) {
+    return message;
+  }
+  const request = extractWebSearchCodeAct(message.text);
+  if (!request) {
+    return message;
+  }
+  const result = await runWebSearchBridge(request);
+  const executionText = renderWebSearchCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: request,
+      webSearchResult: result
+    })
+  };
+}
+
 async function executeAssistantScrapersCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
   if (message.role !== "assistant" || message.text.includes("SCRAPERS_RESULT")) {
     return message;
@@ -14729,6 +14757,7 @@ async function executeAssistantModuleCodeActs(
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
   }
   let next = executeAssistantGoogleWebCodeAct(message, parallelSessionIndex);
+  next = await executeAssistantWebSearchCodeAct(next);
   next = await executeAssistantScrapersCodeAct(next);
   const shouldOpenAirbnbAfterMaps =
     next.text.includes(BRAIN_MAPS_COMMAND) &&
