@@ -161,7 +161,10 @@ button {
 .shell .brainMcpSuite,
 .shell .brainMcpSuite::before,
 .shell .brainMemoryIdentity,
-.shell .brainMemoryIdentity::before {
+.shell .brainMemoryIdentity::before,
+.shell .brainLearningRegistry,
+.shell .brainLearningRegistry::before,
+.shell .brainLearningRegistry__composer {
   border-radius: 8px !important;
 }
 
@@ -9857,10 +9860,9 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__head,
 .brainCustomCodeActs__head {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  display: inline-flex;
+  align-items: center;
   gap: 7px;
-  align-items: start;
   min-width: 0;
 }
 
@@ -9889,6 +9891,12 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__head span span {
   display: none;
+}
+
+.brainLearningRegistry__head .brainRow__icon {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
 }
 
 .brainCustomCodeActs__soonBadge {
@@ -9983,12 +9991,13 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__composer,
 .brainCustomCodeActs__editor label {
+  position: relative;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
-.brainLearningRegistry__composer span,
+.brainLearningRegistry__composerLabel,
 .brainCustomCodeActs__editor label span {
   color: var(--forge-muted);
   font-family: "Geist Mono", ui-monospace, monospace;
@@ -10013,11 +10022,29 @@ ol.assistantText__list li::before {
   outline: 0;
 }
 
+.brainLearningRegistry__composer {
+  min-height: 112px;
+  padding: 8px 78px 32px 10px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 70%);
+  background: color-mix(in oklab, #ffbf48, transparent 96%);
+}
+
 .brainLearningRegistry__composer textarea,
 .brainCustomCodeActs__editor textarea {
   resize: vertical;
   min-height: 72px;
   padding: 9px 0;
+}
+
+.brainLearningRegistry__composer textarea {
+  min-height: 62px;
+  padding: 0;
+  border: 0;
+  resize: none;
+}
+
+.brainLearningRegistry__composer textarea::placeholder {
+  color: color-mix(in oklab, var(--forge-muted), transparent 18%);
 }
 
 .brainCustomCodeActs__editor input {
@@ -10042,6 +10069,9 @@ ol.assistantText__list li::before {
 }
 
 .brainLearningRegistry__actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
   justify-items: start;
 }
 
@@ -10053,9 +10083,9 @@ ol.assistantText__list li::before {
   gap: 6px;
   min-height: 28px;
   width: fit-content;
-  padding: 0 9px;
+  padding: 0 11px;
   border: 1px solid color-mix(in oklab, #ffbf48, transparent 62%);
-  border-radius: 0;
+  border-radius: 6px !important;
   color: #f1d596;
   background: color-mix(in oklab, #ffbf48, transparent 94%);
   font-family: "Geist Mono", ui-monospace, monospace;
@@ -10064,7 +10094,16 @@ ol.assistantText__list li::before {
   cursor: pointer;
 }
 
+.brainLearningRegistry__actions button:hover,
+.brainLearningRegistry__actions button:focus-visible {
+  border-color: color-mix(in oklab, #ffbf48, transparent 36%);
+  color: #fff0b9;
+  background: color-mix(in oklab, #ffbf48, transparent 90%);
+  outline: 0;
+}
+
 .brainCustomCodeActs__head {
+  display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 10px;
 }
@@ -11023,6 +11062,7 @@ ol.assistantText__list li::before {
   .brainCanvas__mark,
   .brainActivators::before,
   .brainMemoryIdentity::before,
+  .brainLearningRegistry::before,
   .brainActivators .brainRow__icon,
   .brainActivators .brainRow code,
   .brainMemoryIdentity__label .brainGlyph,

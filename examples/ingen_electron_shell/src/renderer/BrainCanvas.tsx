@@ -829,26 +829,24 @@ function BrainLearningRegistry() {
           </button>
         ))}
       </div>
-      <label className="brainLearningRegistry__composer">
-        <span>{category.title}</span>
+      <div className="brainLearningRegistry__composer">
+        <span className="brainLearningRegistry__composerLabel">{category.title}</span>
         <textarea
           value={draft}
+          aria-label={category.title}
           placeholder={category.placeholder}
           rows={3}
           spellCheck={false}
           onChange={(event) => setDraft(event.currentTarget.value)}
         />
-      </label>
-      <div className="brainLearningRegistry__actions">
-        <button type="button" disabled={!draft.trim()} onClick={addEntry}>
-          <Glyph kind="plus" size={13} />
-          Add to Brain
-        </button>
+        <div className="brainLearningRegistry__actions">
+          <button type="button" disabled={!draft.trim()} onClick={addEntry}>
+            Save
+          </button>
+        </div>
       </div>
       <div className="brainLearningRegistry__entries" role="list" aria-label={category.title}>
-        {categoryEntries.length === 0 ? (
-          <p className="brainLearningRegistry__empty">No entries in this category yet.</p>
-        ) : categoryEntries.map((entry) => (
+        {categoryEntries.map((entry) => (
           <article className="brainLearningRegistry__entry" key={entry.id} role="listitem">
             <p>{entry.text}</p>
             <footer>
