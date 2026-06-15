@@ -53,10 +53,15 @@ import {
 } from "./agent-action-events";
 import {
   BRAIN_AGENT_MEMORY_UPDATED_EVENT,
+  activateBrainSpecializedBrain,
   appendBrainCustomCodeAct,
   appendBrainLearningMemoryEntry,
+  appendBrainSpecializedBrainItem,
+  brainSpecializedBrainNameFromActivationCommand,
   dispatchBrainResearchParallelRequest,
   readBrainAgentMemory,
+  readBrainSpecializedBrainByActivationCommand,
+  upsertBrainSpecializedBrain,
   upsertBrainCustomCodeAct
 } from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
@@ -72,6 +77,7 @@ import {
   brainLearningResearchPrompt,
   brainLearningSavedLabel,
   brainLearningTypeLabel,
+  brainSpecializedBrainModificationsFromText,
   brainSpecializedCodeActsFromNewBrainText,
   parseBrainLearningInterruptLine,
   stripBrainLearningInterruptMarkup,
@@ -1201,6 +1207,12 @@ function prefersReducedMotion() {
   return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
+const TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
+
+function transcriptIsNearBottom(container: HTMLElement) {
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX;
+}
+
 function followTranscriptLatest(container: HTMLElement | null, behavior: ScrollBehavior = "auto") {
   if (!container) {
     return;
@@ -1237,7 +1249,8 @@ type AssistantMarkdownBlock =
 const CONTEXT_COMPACTION_COMMAND = "/context_compaction_";
 
 type TranscriptContextCompactionState = "compressing" | "compressed";
-type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_` | typeof CONTEXT_COMPACTION_COMMAND;
+type SpecializedBrainActivationCommand = `/${string}brain_`;
+type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_` | SpecializedBrainActivationCommand | typeof CONTEXT_COMPACTION_COMMAND;
 type AssistantTableAlignment = "left" | "center" | "right";
 type AssistantCalloutTone = "info" | "warning" | "success" | "assumption";
 
@@ -1380,6 +1393,10 @@ function domainBrainEventText(command: TranscriptCodeActCommand, line = ""): str
     }
     return /brain$/i.test(name) ? `${name} ${verb}` : `${name} Brain ${verb}`;
   }
+  const specializedBrain = readBrainSpecializedBrainByActivationCommand(command);
+  if (specializedBrain) {
+    return `Activated ${specializedBrain.title}`;
+  }
   return "";
 }
 
@@ -1393,6 +1410,10 @@ function dynamicComputeLabel(command: string): string {
 
 function isDynamicComputeCommand(value: string): value is `/compute_${string}_` {
   return /^\/compute_[a-zA-Z0-9][a-zA-Z0-9_]*_$/.test(value) && value !== BRAIN_NAMED_COMPUTE_COMMAND;
+}
+
+function isSpecializedBrainActivationCommand(value: string): value is SpecializedBrainActivationCommand {
+  return Boolean(brainSpecializedBrainNameFromActivationCommand(value) && readBrainSpecializedBrainByActivationCommand(value));
 }
 
 function codeActEventText(command: TranscriptCodeActCommand): string {
@@ -1425,6 +1446,9 @@ function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined
   if (/^\/modify(?:"[^"]+"|'[^']+')brain_$/.test(trimmed)) {
     return BRAIN_MODIFY_NAMED_BRAIN_COMMAND;
   }
+  if (isSpecializedBrainActivationCommand(trimmed)) {
+    return trimmed;
+  }
   if (isDynamicComputeCommand(trimmed)) {
     return trimmed;
   }
@@ -1453,6 +1477,10 @@ function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined 
   const containedCommand = BRAIN_CODEACT_COMMANDS_BY_LENGTH.find((command) => trimmed.includes(command));
   if (containedCommand) {
     return transcriptCodeActEvent(containedCommand, trimmed);
+  }
+  const specializedBrainActivation = /\/[a-zA-Z0-9_]+brain_/.exec(trimmed)?.[0];
+  if (specializedBrainActivation && isSpecializedBrainActivationCommand(specializedBrainActivation)) {
+    return transcriptCodeActEvent(specializedBrainActivation, trimmed);
   }
   const dynamicCompute = /\/compute_[a-zA-Z0-9][a-zA-Z0-9_]*_/.exec(trimmed)?.[0];
   if (dynamicCompute && isDynamicComputeCommand(dynamicCompute)) {
@@ -2827,9 +2855,10 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
   if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
   if (command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND) return <BrainSegmentCodeActIcon phase="changed" />;
+  if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
+  if (isSpecializedBrainActivationCommand(command)) return <BrainSegmentCodeActIcon phase="changed" />;
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
-  if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
   if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <SearchArchiveCodeActIcon />;
   if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
@@ -2842,7 +2871,7 @@ function isBrainSegmentCommand(command: TranscriptCodeActCommand): boolean {
 }
 
 function isBrainStyledCommand(command: TranscriptCodeActCommand): boolean {
-  return isBrainSegmentCommand(command) || command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND;
+  return isBrainSegmentCommand(command) || command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND || isSpecializedBrainActivationCommand(command);
 }
 
 function isContextCompactionCommand(command: TranscriptCodeActCommand): command is typeof CONTEXT_COMPACTION_COMMAND {
@@ -3234,6 +3263,23 @@ function AssistantLearningInterruptCard({
   );
 }
 
+function specializedBrainActivationCommandsFromText(text: string): string[] {
+  const commands = new Set<string>();
+  for (const match of text.matchAll(/\/[a-zA-Z0-9_]+brain_/g)) {
+    const command = match[0] ?? "";
+    if (
+      command !== BRAIN_SCIENCE_COMMAND &&
+      command !== BRAIN_CODING_COMMAND &&
+      command !== BRAIN_NEWBRAIN_COMMAND &&
+      command !== BRAIN_MODIFY_NAMED_BRAIN_COMMAND &&
+      brainSpecializedBrainNameFromActivationCommand(command)
+    ) {
+      commands.add(command);
+    }
+  }
+  return [...commands];
+}
+
 function AssistantMarkdownText({
   agentName,
   text,
@@ -3255,6 +3301,20 @@ function AssistantMarkdownText({
     }
     const drafts = brainSpecializedCodeActsFromNewBrainText(text);
     drafts.forEach((draft, index) => {
+      upsertBrainSpecializedBrain({
+        brainName: draft.brainName,
+        title: draft.title,
+        purpose: draft.purpose,
+        activationTriggers: draft.activationTriggers,
+        tokenBudget: draft.tokenBudget,
+        lessons: [draft.initialLessons, draft.initialRules].filter(Boolean).join("|"),
+        skills: draft.initialSkills,
+        tasks: draft.initialTasks,
+        codeActs: draft.initialCodeActs,
+        source: "host_generated_newbrain",
+        trust: "agent_candidate",
+        evidence: `assistant_newbrain:${messageId}:${draft.brainName}:${index}`
+      });
       upsertBrainCustomCodeAct({
         command: draft.command,
         description: draft.description,
@@ -3263,6 +3323,20 @@ function AssistantMarkdownText({
         trust: "agent_candidate",
         evidence: `assistant_newbrain:${messageId}:${draft.brainName}:${index}`
       });
+      activateBrainSpecializedBrain(draft.brainName, `assistant_newbrain_activation:${messageId}:${draft.brainName}:${index}`);
+    });
+    brainSpecializedBrainModificationsFromText(text).forEach((modification, index) => {
+      appendBrainSpecializedBrainItem({
+        brainName: modification.brainName,
+        kind: modification.kind,
+        content: modification.content,
+        source: "agent_learning_interrupt",
+        trust: "agent_candidate",
+        evidence: `assistant_modify_brain:${messageId}:${modification.brainName}:${index}`
+      });
+    });
+    specializedBrainActivationCommandsFromText(text).forEach((command, index) => {
+      activateBrainSpecializedBrain(command, `assistant_brain_activation:${messageId}:${command}:${index}`);
     });
   }, [messageId, text, writing]);
 
@@ -3682,6 +3756,7 @@ function TranscriptCanvas({
   const [pins, setPins] = useState<PinnedChapter[]>(() => loadPins(storageKey));
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const followLatestTranscriptRef = useRef(true);
   const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; queue: string[]; hadPending: boolean } | null>(null);
   const [, setAssistantAnimationQueueVersion] = useState(0);
   const latestMessage = messages.at(-1);
@@ -3763,7 +3838,33 @@ function TranscriptCanvas({
   }, [storageKey, visiblePins]);
 
   useEffect(() => {
-    followTranscriptLatest(messagesRef.current, "smooth");
+    followLatestTranscriptRef.current = true;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container) {
+      return undefined;
+    }
+    const updateFollowMode = () => {
+      followLatestTranscriptRef.current = transcriptIsNearBottom(container);
+    };
+    container.addEventListener("scroll", updateFollowMode, { passive: true });
+    return () => container.removeEventListener("scroll", updateFollowMode);
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container) {
+      return;
+    }
+    if (latestMessage?.role === "user") {
+      followLatestTranscriptRef.current = true;
+    }
+    if (!followLatestTranscriptRef.current && !transcriptIsNearBottom(container)) {
+      return;
+    }
+    followTranscriptLatest(container, "smooth");
   }, [latestMessage?.id, latestMessage?.text]);
 
   const pinnedIds = new Set(visiblePins.map((pin) => pin.id));

@@ -13,6 +13,7 @@ import {
 import {
   BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
   BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
+  BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT,
   brainDurableMemoryManifest,
   readBrainAgentMemory,
   readBrainUserLocationMemory,
@@ -514,6 +515,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
     };
     window.addEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncDurableBrainMemory);
     window.addEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncDurableBrainMemory);
+    window.addEventListener(BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT, syncDurableBrainMemory);
     window.setTimeout(syncDurableBrainMemory, 0);
   }
 

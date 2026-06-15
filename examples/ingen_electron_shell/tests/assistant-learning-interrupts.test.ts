@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   brainDurableMemoryManifestFromEntries,
   type BrainCustomCodeActEntry,
-  type BrainLearningMemoryEntry
+  type BrainLearningMemoryEntry,
+  type BrainSpecializedBrainEntry
 } from "../src/renderer/brain-user-memory-store";
 import {
+  brainSpecializedBrainModificationsFromText,
   brainSpecializedCodeActsFromNewBrainText,
   brainLearningCodeActCommand,
   brainLearningMemoryCategoryForPromotion,
@@ -22,6 +24,7 @@ const mainSource = readFileSync(join(root, "src", "main", "main.ts"), "utf8");
 const rendererSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const learningSource = readFileSync(join(root, "src", "renderer", "assistant-learning-interrupts.ts"), "utf8");
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
+const memoryStoreSource = readFileSync(join(root, "src", "renderer", "brain-user-memory-store.ts"), "utf8");
 const ipcSource = readFileSync(join(root, "src", "shared", "generated", "forge-ipc.generated.ts"), "utf8");
 const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 
@@ -82,12 +85,32 @@ describe("assistant learning interrupts", () => {
     expect(specializedBrainCodeActCommand("musician")).toBe("/musicianbrain_");
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.command).toBe("/musicianbrain_");
+    expect(drafts[0]?.brainName).toBe("musician");
+    expect(drafts[0]?.title).toBe("Musician Brain");
+    expect(drafts[0]?.activationTriggers).toBe("songwriting, harmony, arrangement");
+    expect(drafts[0]?.initialSkills).toBe("turn motif into arrangement");
+    expect(drafts[0]?.tokenBudget).toBe("900");
     expect(drafts[0]?.description).toContain("Host-generated from explicit /newbrain_ fields");
     expect(drafts[0]?.description).toContain("root catalog stays read-only");
     expect(drafts[0]?.description).not.toContain("General Brain");
     expect(drafts[0]?.template).not.toContain("General Brain");
     expect(drafts[0]?.template).toContain('generated_by="host_from_newbrain"');
     expect(drafts[0]?.template).toContain('initial_skills="turn motif into arrangement"');
+  });
+
+  it("parses named specialized Brain updates from /modify templates", () => {
+    const modifications = brainSpecializedBrainModificationsFromText([
+      '/modify"musician"brain_ entry_kind="lesson"',
+      'observation="We over-arrange before preserving the motif."',
+      'replacement_rule="Preserve the motif in one bare pass before arranging."',
+      'trigger="song arrangement critique"'
+    ].join("\n"));
+
+    expect(modifications).toHaveLength(1);
+    expect(modifications[0]?.brainName).toBe("musician");
+    expect(modifications[0]?.kind).toBe("lesson");
+    expect(modifications[0]?.content).toContain("Observed error");
+    expect(modifications[0]?.content).toContain("Replacement rule");
   });
 
   it("formats durable Brain learning memory for boot manifest injection", () => {
@@ -130,11 +153,39 @@ describe("assistant learning interrupts", () => {
         updatedAt: now
       }
     ];
-    const manifest = brainDurableMemoryManifestFromEntries(learningEntries, codeActs);
+    const specializedBrains: BrainSpecializedBrainEntry[] = [
+      {
+        schema: "ingen.brain.memory.specialized_brain.v1",
+        id: "specialized-brain-1",
+        brainName: "musician",
+        title: "Musician Brain",
+        purpose: "Store durable composition, arrangement and practice lessons.",
+        activationTriggers: ["songwriting", "harmony", "arrangement"],
+        activationCommand: "/musicianbrain_",
+        tokenBudget: 900,
+        lessons: ["Preserve the motif before arranging."],
+        skills: ["Turn motif into arrangement."],
+        tasks: ["Draft a harmony checklist."],
+        codeActs: ["/motif_arrange_ motif=\"...\" output=\"arrangement_steps\""],
+        source: "host_generated_newbrain",
+        trust: "agent_candidate",
+        evidence: "test",
+        activeAt: now,
+        createdAt: now,
+        updatedAt: now
+      }
+    ];
+    const manifest = brainDurableMemoryManifestFromEntries(learningEntries, codeActs, specializedBrains);
     expect(manifest).toContain("BRAIN_DURABLE_MEMORY_MANIFEST v1");
     expect(manifest).toContain("injection_policy=session_boot_and_after_context_compaction");
+    expect(manifest).toContain("specialized_brain_policy=The root catalog is read-only");
+    expect(manifest).toContain("specialized_brain[1]");
+    expect(manifest).toContain("active_specialized_brain");
+    expect(manifest).toContain('name="musician"');
+    expect(manifest).toContain('command="/musicianbrain_"');
     expect(manifest).toContain("lessons[1]");
     expect(manifest).toContain("skills[1]");
+    expect(manifest).toContain("codeact[1]");
     expect(manifest).toContain("codeact_draft[1]");
     expect(manifest).toContain("source=host_generated_newbrain");
     expect(manifest).toContain("research_policy=Research branches are live work only");
@@ -152,12 +203,17 @@ describe("assistant learning interrupts", () => {
     expect(learningSource).toContain("root catalog stays read-only");
     expect(learningSource).not.toContain("General Brain stays read-only");
     expect(rendererSource).toContain("brainSpecializedCodeActsFromNewBrainText(text)");
+    expect(rendererSource).toContain("brainSpecializedBrainModificationsFromText(text)");
+    expect(rendererSource).toContain("activateBrainSpecializedBrain(command");
     expect(rendererSource).toContain("source: \"host_generated_newbrain\"");
     expect(rendererSource).toContain("parseBrainLearningInterruptLine(rawLine)");
     expect(rendererSource).toContain("AssistantLearningInterruptCard");
     expect(rendererSource).toContain("appendBrainLearningMemoryEntry");
     expect(rendererSource).toContain("dispatchBrainResearchParallelRequest");
     expect(storeSource).toContain("brainDurableMemoryManifest()");
+    expect(storeSource).toContain("BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT");
+    expect(memoryStoreSource).toContain("ingen.brain.memory.specialized_brain.v1");
+    expect(memoryStoreSource).toContain("active_specialized_brain");
     expect(storeSource).toContain("BRAIN_LEARNING_MEMORY_UPDATED_EVENT");
     expect(stylesSource).toContain(".assistantText__learningInterrupt");
   });

@@ -1,4 +1,4 @@
-import type { BrainLearningMemoryCategory } from "./brain-user-memory-store";
+import type { BrainLearningMemoryCategory, BrainSpecializedBrainEntryKind } from "./brain-user-memory-store";
 import { BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
 
 export type BrainLearningInterruptType =
@@ -23,8 +23,23 @@ export interface BrainLearningInterrupt {
 export interface BrainSpecializedCodeActDraft {
   brainName: string;
   command: string;
+  title: string;
+  purpose: string;
+  activationTriggers: string;
+  initialLessons: string;
+  initialRules: string;
+  initialSkills: string;
+  initialTasks: string;
+  initialCodeActs: string;
+  tokenBudget: string;
   description: string;
   template: string;
+}
+
+export interface BrainSpecializedBrainModification {
+  brainName: string;
+  kind: BrainSpecializedBrainEntryKind;
+  content: string;
 }
 
 const LEARNING_INTERRUPT_PATTERN = /^\s*\[\[learn\b([^\]]*)\]\]([\s\S]{1,1400}?)\[\[\/learn\]\]\s*$/;
@@ -105,6 +120,15 @@ function isNewBrainInvocationLine(line: string): boolean {
   return (commandAssignment?.[2] ?? commandAssignment?.[3] ?? commandAssignment?.[4] ?? "") === BRAIN_NEWBRAIN_COMMAND;
 }
 
+function isModifyBrainInvocationLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (/^\/modify(?:"[^"]+"|'[^']+')brain_/.test(trimmed)) {
+    return true;
+  }
+  const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
+  return /^\/modify(?:"[^"]+"|'[^']+')brain_$/.test(commandAssignment?.[2] ?? commandAssignment?.[3] ?? commandAssignment?.[4] ?? "");
+}
+
 function isFieldContinuationLine(line: string): boolean {
   return /^[a-zA-Z_][\w-]*\s*=/.test(line.trim());
 }
@@ -127,6 +151,12 @@ function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedC
   const title = cleanNewBrainField(fields.get("title"), 160) || titleFromBrainName(brainName);
   const purpose = cleanNewBrainField(fields.get("purpose"), 420);
   const activationTriggers = cleanNewBrainField(fields.get("activation_triggers") ?? fields.get("triggers"), 420);
+  const initialLessons = cleanNewBrainField(fields.get("initial_lessons"), 840);
+  const initialRules = cleanNewBrainField(fields.get("initial_rules"), 840);
+  const initialSkills = cleanNewBrainField(fields.get("initial_skills"), 840);
+  const initialTasks = cleanNewBrainField(fields.get("initial_tasks"), 840);
+  const initialCodeActs = cleanNewBrainField(fields.get("initial_codeacts"), 840);
+  const tokenBudget = cleanNewBrainField(fields.get("token_budget"), 32);
   const description = [
     `Activate ${title} as a specialized Brain scope created by ${BRAIN_NEWBRAIN_COMMAND}.`,
     activationTriggers ? `Use when: ${activationTriggers}.` : "",
@@ -158,15 +188,23 @@ function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedC
   return {
     brainName,
     command,
+    title,
+    purpose,
+    activationTriggers,
+    initialLessons,
+    initialRules,
+    initialSkills,
+    initialTasks,
+    initialCodeActs,
+    tokenBudget,
     description,
     template
   };
 }
 
-export function brainSpecializedCodeActsFromNewBrainText(text: string): BrainSpecializedCodeActDraft[] {
+function codeActFieldBlocksFromText(text: string, isInvocationLine: (line: string) => boolean): string[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const drafts: BrainSpecializedCodeActDraft[] = [];
-  const seenCommands = new Set<string>();
+  const blocks: string[] = [];
   let insideFence: string | null = null;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
@@ -176,7 +214,7 @@ export function brainSpecializedCodeActsFromNewBrainText(text: string): BrainSpe
       insideFence = insideFence ? null : fence;
       continue;
     }
-    if (insideFence || !isNewBrainInvocationLine(trimmed)) {
+    if (insideFence || !isInvocationLine(trimmed)) {
       continue;
     }
     const blockLines = [trimmed];
@@ -191,13 +229,66 @@ export function brainSpecializedCodeActsFromNewBrainText(text: string): BrainSpe
       blockLines.push(nextLine);
       lineIndex = nextIndex;
     }
-    const draft = newBrainDraftFromFields(parseLearningAttributes(blockLines.join(" ")));
+    blocks.push(blockLines.join(" "));
+  }
+  return blocks;
+}
+
+export function brainSpecializedCodeActsFromNewBrainText(text: string): BrainSpecializedCodeActDraft[] {
+  const drafts: BrainSpecializedCodeActDraft[] = [];
+  const seenCommands = new Set<string>();
+  for (const block of codeActFieldBlocksFromText(text, isNewBrainInvocationLine)) {
+    const draft = newBrainDraftFromFields(parseLearningAttributes(block));
     if (draft && !seenCommands.has(draft.command)) {
       seenCommands.add(draft.command);
       drafts.push(draft);
     }
   }
   return drafts;
+}
+
+function brainNameFromModifyBlock(block: string, fields: Map<string, string>): string {
+  const commandMatch = /\/modify(?:"([^"]+)"|'([^']+)')brain_/.exec(block);
+  return specializedBrainSlug(commandMatch?.[1] ?? commandMatch?.[2] ?? fields.get("brain_name") ?? "");
+}
+
+function modificationKind(value: string | undefined): BrainSpecializedBrainEntryKind {
+  const token = safeLearningToken(value ?? "", "lesson").toLowerCase();
+  if (token === "skill") return "skill";
+  if (token === "task") return "task";
+  if (token === "codeact" || token === "code_act") return "codeact";
+  return "lesson";
+}
+
+function modificationContent(fields: Map<string, string>, kind: BrainSpecializedBrainEntryKind): string {
+  const content = cleanNewBrainField(fields.get("content") ?? fields.get("text") ?? fields.get("template"), 1200);
+  if (content) {
+    return content;
+  }
+  const observation = cleanNewBrainField(fields.get("observation") ?? fields.get("evidence"), 520);
+  const replacementRule = cleanNewBrainField(fields.get("replacement_rule") ?? fields.get("rule"), 520);
+  const trigger = cleanNewBrainField(fields.get("trigger"), 220);
+  if (kind === "lesson" && observation && replacementRule) {
+    return `Observed error: ${observation} -> Replacement rule: ${replacementRule}${trigger ? ` Trigger: ${trigger}.` : ""}`;
+  }
+  return replacementRule || observation || trigger;
+}
+
+export function brainSpecializedBrainModificationsFromText(text: string): BrainSpecializedBrainModification[] {
+  const modifications: BrainSpecializedBrainModification[] = [];
+  for (const block of codeActFieldBlocksFromText(text, isModifyBrainInvocationLine)) {
+    const fields = parseLearningAttributes(block);
+    const kind = modificationKind(fields.get("entry_kind") ?? fields.get("kind") ?? fields.get("type"));
+    const modification = {
+      brainName: brainNameFromModifyBlock(block, fields),
+      kind,
+      content: modificationContent(fields, kind)
+    };
+    if (modification.brainName && modification.content) {
+      modifications.push(modification);
+    }
+  }
+  return modifications;
 }
 
 function parseLearningType(value: string | undefined): BrainLearningInterruptType {

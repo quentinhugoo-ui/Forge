@@ -55,6 +55,29 @@ export interface BrainCustomCodeActEntry {
   updatedAt: string;
 }
 
+export type BrainSpecializedBrainEntryKind = "lesson" | "skill" | "task" | "codeact";
+
+export interface BrainSpecializedBrainEntry {
+  schema: "ingen.brain.memory.specialized_brain.v1";
+  id: string;
+  brainName: string;
+  title: string;
+  purpose: string;
+  activationTriggers: string[];
+  activationCommand: string;
+  tokenBudget: number;
+  lessons: string[];
+  skills: string[];
+  tasks: string[];
+  codeActs: string[];
+  source: BrainDurableCandidateSource;
+  trust: "user_confirmed" | "agent_candidate";
+  evidence: string;
+  activeAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BrainResearchParallelRequestDetail {
   schema: "ingen.brain.research.parallel_request.v1";
   topic: string;
@@ -68,9 +91,11 @@ const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
 const USER_LOCATION_STORAGE_KEY = "ingen.brain.memory.user_location.v1";
 const LEARNING_REGISTRY_STORAGE_KEY = "ingen.brain.memory.learning_registry.v1";
 const CUSTOM_CODEACT_REGISTRY_STORAGE_KEY = "ingen.brain.codeact.custom_registry.v1";
+const SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY = "ingen.brain.memory.specialized_brain_registry.v1";
 export const BRAIN_AGENT_MEMORY_UPDATED_EVENT = "ingen:brain-agent-memory-updated";
 export const BRAIN_LEARNING_MEMORY_UPDATED_EVENT = "ingen:brain-learning-memory-updated";
 export const BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT = "ingen:brain-custom-codeacts-updated";
+export const BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT = "ingen:brain-specialized-brains-updated";
 export const BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT = "ingen:brain-research-parallel-request";
 
 const LEARNING_MEMORY_CATEGORIES = new Set<BrainLearningMemoryStoredCategory>([
@@ -83,9 +108,12 @@ const LEARNING_MEMORY_CATEGORIES = new Set<BrainLearningMemoryStoredCategory>([
 
 const MAX_LEARNING_MEMORY_ENTRIES = 120;
 const MAX_CUSTOM_CODEACT_ENTRIES = 80;
+const MAX_SPECIALIZED_BRAIN_ENTRIES = 48;
+const MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES = 24;
 const MAX_LEARNING_TEXT_LENGTH = 1200;
 const MAX_CODEACT_FIELD_LENGTH = 2200;
-const MAX_DURABLE_MANIFEST_LENGTH = 7000;
+const MAX_SPECIALIZED_BRAIN_FIELD_LENGTH = 1600;
+const MAX_DURABLE_MANIFEST_LENGTH = 9000;
 const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["lesson", "skill", "task"];
 const DURABLE_MANIFEST_CATEGORY_KEYS: Record<BrainLearningMemoryCategory, string> = {
   lesson: "lessons",
@@ -249,6 +277,111 @@ function isBrainCustomCodeActEntry(value: unknown): value is BrainCustomCodeActE
     typeof candidate.createdAt === "string" &&
     typeof candidate.updatedAt === "string"
   );
+}
+
+export function normalizeBrainSpecializedBrainName(value: string): string {
+  return trimmedSingleLine(value, 96)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+}
+
+export function brainSpecializedBrainActivationCommand(brainName: string): string {
+  const slug = normalizeBrainSpecializedBrainName(brainName);
+  if (!slug) {
+    return "";
+  }
+  return `/${slug.endsWith("brain") ? slug : `${slug}brain`}_`;
+}
+
+export function brainSpecializedBrainNameFromActivationCommand(command: string): string {
+  const trimmed = normalizeBrainCustomCodeActCommand(command);
+  const match = /^\/([a-z0-9_]+)brain_$/.exec(trimmed);
+  return match ? normalizeBrainSpecializedBrainName(match[1] ?? "") : "";
+}
+
+function splitSpecializedBrainList(value: string | string[] | undefined): string[] {
+  const rawItems = Array.isArray(value) ? value : (value ?? "").split("|");
+  return rawItems
+    .map((item) => trimmedMultiline(item, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH))
+    .filter(Boolean)
+    .slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+}
+
+function splitSpecializedBrainTriggers(value: string | string[] | undefined): string[] {
+  const rawItems = Array.isArray(value) ? value : (value ?? "").split(/[|,]/);
+  return rawItems
+    .map((item) => trimmedSingleLine(item, 160))
+    .filter(Boolean)
+    .slice(0, 16);
+}
+
+function titleFromSpecializedBrainName(brainName: string): string {
+  const words = (normalizeBrainSpecializedBrainName(brainName) || "specialized_brain").split("_").filter(Boolean);
+  return `${words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")} Brain`;
+}
+
+function normalizeSpecializedBrainItemList(items: unknown): string[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => trimmedMultiline(item, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH))
+    .filter(Boolean)
+    .slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+}
+
+function mergeSpecializedBrainItems(existing: string[], incoming: string[]): string[] {
+  return [...incoming, ...existing.filter((item) => !incoming.includes(item))].slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+}
+
+function normalizeBrainSpecializedBrainEntry(value: unknown): BrainSpecializedBrainEntry | null {
+  const candidate = value as Partial<BrainSpecializedBrainEntry>;
+  const brainName = normalizeBrainSpecializedBrainName(candidate?.brainName ?? "");
+  const activationCommand = normalizeBrainCustomCodeActCommand(candidate?.activationCommand ?? brainSpecializedBrainActivationCommand(brainName));
+  if (
+    candidate?.schema === "ingen.brain.memory.specialized_brain.v1" &&
+    typeof candidate.id === "string" &&
+    brainName &&
+    activationCommand &&
+    typeof candidate.title === "string" &&
+    typeof candidate.purpose === "string" &&
+    typeof candidate.source === "string" &&
+    typeof candidate.trust === "string" &&
+    typeof candidate.evidence === "string" &&
+    typeof candidate.createdAt === "string" &&
+    typeof candidate.updatedAt === "string"
+  ) {
+    return {
+      schema: "ingen.brain.memory.specialized_brain.v1",
+      id: candidate.id,
+      brainName,
+      title: trimmedSingleLine(candidate.title, 160) || titleFromSpecializedBrainName(brainName),
+      purpose: trimmedMultiline(candidate.purpose, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH),
+      activationTriggers: splitSpecializedBrainTriggers(candidate.activationTriggers),
+      activationCommand,
+      tokenBudget: Math.max(240, Math.min(4000, Math.round(Number(candidate.tokenBudget) || 1200))),
+      lessons: normalizeSpecializedBrainItemList(candidate.lessons),
+      skills: normalizeSpecializedBrainItemList(candidate.skills),
+      tasks: normalizeSpecializedBrainItemList(candidate.tasks),
+      codeActs: normalizeSpecializedBrainItemList(candidate.codeActs),
+      source: candidate.source as BrainDurableCandidateSource,
+      trust: candidate.trust === "user_confirmed" ? "user_confirmed" : "agent_candidate",
+      evidence: candidate.evidence,
+      activeAt: typeof candidate.activeAt === "string" ? candidate.activeAt : "",
+      createdAt: candidate.createdAt,
+      updatedAt: candidate.updatedAt
+    };
+  }
+  return null;
+}
+
+function isBrainSpecializedBrainEntry(value: unknown): value is BrainSpecializedBrainEntry {
+  return Boolean(normalizeBrainSpecializedBrainEntry(value));
 }
 
 export function readBrainUserMemory(): BrainUserMemorySlot {
@@ -426,6 +559,152 @@ export function removeBrainCustomCodeAct(id: string): BrainCustomCodeActEntry[] 
   return writeBrainCustomCodeActs(readBrainCustomCodeActs().filter((entry) => entry.id !== id));
 }
 
+export function readBrainSpecializedBrains(): BrainSpecializedBrainEntry[] {
+  return readJsonArray(SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY, isBrainSpecializedBrainEntry)
+    .map(normalizeBrainSpecializedBrainEntry)
+    .filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry));
+}
+
+export function writeBrainSpecializedBrains(entries: BrainSpecializedBrainEntry[]): BrainSpecializedBrainEntry[] {
+  const next = writeJsonArray(
+    SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY,
+    entries
+      .map(normalizeBrainSpecializedBrainEntry)
+      .filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry))
+      .slice(0, MAX_SPECIALIZED_BRAIN_ENTRIES)
+  );
+  dispatchBrainStoreEvent(BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT, next);
+  return next;
+}
+
+export function readBrainSpecializedBrainByName(brainName: string): BrainSpecializedBrainEntry | null {
+  const normalizedName = normalizeBrainSpecializedBrainName(brainName);
+  return readBrainSpecializedBrains().find((entry) => entry.brainName === normalizedName) ?? null;
+}
+
+export function readBrainSpecializedBrainByActivationCommand(command: string): BrainSpecializedBrainEntry | null {
+  const normalizedCommand = normalizeBrainCustomCodeActCommand(command);
+  return readBrainSpecializedBrains().find((entry) => entry.activationCommand === normalizedCommand) ?? null;
+}
+
+export function upsertBrainSpecializedBrain(input: {
+  brainName: string;
+  title?: string;
+  purpose?: string;
+  activationTriggers?: string | string[];
+  tokenBudget?: number | string;
+  lessons?: string | string[];
+  skills?: string | string[];
+  tasks?: string | string[];
+  codeActs?: string | string[];
+  source: BrainDurableCandidateSource;
+  evidence?: string;
+  trust?: BrainSpecializedBrainEntry["trust"];
+}): BrainSpecializedBrainEntry[] {
+  const brainName = normalizeBrainSpecializedBrainName(input.brainName);
+  if (!brainName) {
+    return readBrainSpecializedBrains();
+  }
+  const current = readBrainSpecializedBrains();
+  const existing = current.find((entry) => entry.brainName === brainName);
+  const timestamp = nowIso();
+  const nextEntry: BrainSpecializedBrainEntry = {
+    schema: "ingen.brain.memory.specialized_brain.v1",
+    id: existing?.id ?? localId("specialized_brain"),
+    brainName,
+    title: trimmedSingleLine(input.title ?? existing?.title ?? titleFromSpecializedBrainName(brainName), 160),
+    purpose: trimmedMultiline(input.purpose ?? existing?.purpose ?? "", MAX_SPECIALIZED_BRAIN_FIELD_LENGTH),
+    activationTriggers: splitSpecializedBrainTriggers(input.activationTriggers ?? existing?.activationTriggers ?? []),
+    activationCommand: brainSpecializedBrainActivationCommand(brainName),
+    tokenBudget: Math.max(240, Math.min(4000, Math.round(Number(input.tokenBudget ?? existing?.tokenBudget ?? 1200) || 1200))),
+    lessons: mergeSpecializedBrainItems(existing?.lessons ?? [], splitSpecializedBrainList(input.lessons)),
+    skills: mergeSpecializedBrainItems(existing?.skills ?? [], splitSpecializedBrainList(input.skills)),
+    tasks: mergeSpecializedBrainItems(existing?.tasks ?? [], splitSpecializedBrainList(input.tasks)),
+    codeActs: mergeSpecializedBrainItems(existing?.codeActs ?? [], splitSpecializedBrainList(input.codeActs)),
+    source: input.source,
+    trust: input.trust ?? existing?.trust ?? (input.source === "manual" ? "user_confirmed" : "agent_candidate"),
+    evidence: input.evidence ?? existing?.evidence ?? `brain_specialized_registry:${input.source}`,
+    activeAt: existing?.activeAt ?? "",
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  };
+  return writeBrainSpecializedBrains([nextEntry, ...current.filter((entry) => entry.brainName !== brainName)]);
+}
+
+export function activateBrainSpecializedBrain(brainNameOrCommand: string, evidence = "brain_specialized_registry:activation"): BrainSpecializedBrainEntry[] {
+  const commandName = brainSpecializedBrainNameFromActivationCommand(brainNameOrCommand);
+  const brainName = commandName || normalizeBrainSpecializedBrainName(brainNameOrCommand);
+  if (!brainName) {
+    return readBrainSpecializedBrains();
+  }
+  const current = readBrainSpecializedBrains();
+  const existing = current.find((entry) => entry.brainName === brainName);
+  if (!existing) {
+    return current;
+  }
+  const timestamp = nowIso();
+  return writeBrainSpecializedBrains([
+    {
+      ...existing,
+      evidence,
+      activeAt: timestamp,
+      updatedAt: timestamp
+    },
+    ...current.filter((entry) => entry.brainName !== brainName)
+  ]);
+}
+
+export function appendBrainSpecializedBrainItem(input: {
+  brainName: string;
+  kind: BrainSpecializedBrainEntryKind;
+  content: string;
+  source: BrainDurableCandidateSource;
+  evidence?: string;
+  trust?: BrainSpecializedBrainEntry["trust"];
+}): BrainSpecializedBrainEntry[] {
+  const brainName = normalizeBrainSpecializedBrainName(input.brainName);
+  const content = trimmedMultiline(input.content, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH);
+  if (!brainName || !content) {
+    return readBrainSpecializedBrains();
+  }
+  const current = readBrainSpecializedBrains();
+  const existing = current.find((entry) => entry.brainName === brainName);
+  if (!existing) {
+    const seed: {
+      lessons?: string;
+      skills?: string;
+      tasks?: string;
+      codeActs?: string;
+    } = {};
+    if (input.kind === "lesson") seed.lessons = content;
+    if (input.kind === "skill") seed.skills = content;
+    if (input.kind === "task") seed.tasks = content;
+    if (input.kind === "codeact") seed.codeActs = content;
+    return upsertBrainSpecializedBrain({
+      brainName,
+      title: titleFromSpecializedBrainName(brainName),
+      ...seed,
+      source: input.source,
+      trust: input.trust,
+      evidence: input.evidence
+    });
+  }
+  const timestamp = nowIso();
+  const appendUnique = (items: string[]) => [content, ...items.filter((item) => item !== content)].slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+  const nextEntry: BrainSpecializedBrainEntry = {
+    ...existing,
+    lessons: input.kind === "lesson" ? appendUnique(existing.lessons) : existing.lessons,
+    skills: input.kind === "skill" ? appendUnique(existing.skills) : existing.skills,
+    tasks: input.kind === "task" ? appendUnique(existing.tasks) : existing.tasks,
+    codeActs: input.kind === "codeact" ? appendUnique(existing.codeActs) : existing.codeActs,
+    source: input.source,
+    trust: input.trust ?? existing.trust,
+    evidence: input.evidence ?? existing.evidence,
+    updatedAt: timestamp
+  };
+  return writeBrainSpecializedBrains([nextEntry, ...current.filter((entry) => entry.brainName !== brainName)]);
+}
+
 function durableManifestMemoryLine(entry: BrainLearningMemoryEntry, index: number): string {
   const key = DURABLE_MANIFEST_CATEGORY_KEYS[entry.category];
   return `${key}[${index}]=trust=${entry.trust} source=${entry.source} text=${JSON.stringify(trimmedSingleLine(entry.text, 360))}`;
@@ -442,26 +721,66 @@ function durableManifestCodeActLine(entry: BrainCustomCodeActEntry, index: numbe
   ].filter(Boolean).join(" ");
 }
 
+function durableManifestSpecializedBrainCatalogLine(entry: BrainSpecializedBrainEntry, index: number): string {
+  return [
+    `specialized_brain[${index}]`,
+    `name=${JSON.stringify(entry.brainName)}`,
+    `command=${JSON.stringify(entry.activationCommand)}`,
+    `title=${JSON.stringify(trimmedSingleLine(entry.title, 120))}`,
+    entry.activationTriggers.length > 0 ? `triggers=${JSON.stringify(entry.activationTriggers.slice(0, 6).join(", "))}` : "",
+    entry.purpose ? `purpose=${JSON.stringify(trimmedSingleLine(entry.purpose, 240))}` : ""
+  ].filter(Boolean).join(" ");
+}
+
+function durableManifestSpecializedBrainItemLine(kind: BrainSpecializedBrainEntryKind, item: string, index: number): string {
+  return `${kind}[${index}]=${JSON.stringify(trimmedSingleLine(item, kind === "codeact" ? 520 : 360))}`;
+}
+
 export function brainDurableMemoryManifestFromEntries(
   learningEntries: BrainLearningMemoryEntry[],
-  customCodeActs: BrainCustomCodeActEntry[]
+  customCodeActs: BrainCustomCodeActEntry[],
+  specializedBrains: BrainSpecializedBrainEntry[] = []
 ): string {
   const validLearningEntries = learningEntries
     .map(normalizeBrainLearningMemoryEntry)
     .filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry));
   const validCodeActs = customCodeActs.filter(isBrainCustomCodeActEntry);
-  if (validLearningEntries.length === 0 && validCodeActs.length === 0) {
+  const validSpecializedBrains = specializedBrains
+    .map(normalizeBrainSpecializedBrainEntry)
+    .filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry));
+  if (validLearningEntries.length === 0 && validCodeActs.length === 0 && validSpecializedBrains.length === 0) {
     return "";
   }
+  const activeSpecializedBrain = [...validSpecializedBrains]
+    .filter((entry) => entry.activeAt)
+    .sort((left, right) => right.activeAt.localeCompare(left.activeAt))[0] ?? null;
   const lines = [
     "BRAIN_DURABLE_MEMORY_MANIFEST v1",
     "source=brain_page_learning_memory",
     "injection_policy=session_boot_and_after_context_compaction",
+    "specialized_brain_policy=The root catalog is read-only. Use /newbrain_ to create a named specialized Brain, /<name>brain_ to activate it, and /modify\"<name>\"brain_ to append explicit lessons, skills, tasks, or CodeAct drafts to that named Brain only.",
     "research_policy=Research branches are live work only; do not persist research unless it is later promoted into lessons, skills, tasks, or CodeAct drafts.",
     `learning_entries=${validLearningEntries.length}`,
     `codeact_drafts=${validCodeActs.length}`,
+    `specialized_brains=${validSpecializedBrains.length}`,
     "rule=Treat user_confirmed entries as durable user Brain context. Treat agent_candidate entries as useful but still revisable candidates; obey them unless the user overrides them."
   ];
+  validSpecializedBrains.slice(0, 8).forEach((entry, index) => lines.push(durableManifestSpecializedBrainCatalogLine(entry, index + 1)));
+  if (activeSpecializedBrain) {
+    lines.push(
+      [
+        "active_specialized_brain",
+        `name=${JSON.stringify(activeSpecializedBrain.brainName)}`,
+        `command=${JSON.stringify(activeSpecializedBrain.activationCommand)}`,
+        `title=${JSON.stringify(trimmedSingleLine(activeSpecializedBrain.title, 120))}`,
+        `token_budget=${activeSpecializedBrain.tokenBudget}`
+      ].join(" ")
+    );
+    activeSpecializedBrain.lessons.slice(0, 8).forEach((item, index) => lines.push(durableManifestSpecializedBrainItemLine("lesson", item, index + 1)));
+    activeSpecializedBrain.skills.slice(0, 8).forEach((item, index) => lines.push(durableManifestSpecializedBrainItemLine("skill", item, index + 1)));
+    activeSpecializedBrain.tasks.slice(0, 8).forEach((item, index) => lines.push(durableManifestSpecializedBrainItemLine("task", item, index + 1)));
+    activeSpecializedBrain.codeActs.slice(0, 6).forEach((item, index) => lines.push(durableManifestSpecializedBrainItemLine("codeact", item, index + 1)));
+  }
   for (const category of DURABLE_MANIFEST_CATEGORY_ORDER) {
     const categoryEntries = validLearningEntries.filter((entry) => entry.category === category).slice(0, 8);
     categoryEntries.forEach((entry, index) => lines.push(durableManifestMemoryLine(entry, index + 1)));
@@ -471,7 +790,7 @@ export function brainDurableMemoryManifestFromEntries(
 }
 
 export function brainDurableMemoryManifest(): string {
-  return brainDurableMemoryManifestFromEntries(readBrainLearningMemoryEntries(), readBrainCustomCodeActs());
+  return brainDurableMemoryManifestFromEntries(readBrainLearningMemoryEntries(), readBrainCustomCodeActs(), readBrainSpecializedBrains());
 }
 
 export function dispatchBrainResearchParallelRequest(detail: Omit<BrainResearchParallelRequestDetail, "schema" | "createdAt">) {
