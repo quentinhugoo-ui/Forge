@@ -43,8 +43,6 @@ pub const BRAIN_GOOGLEWEB_COMMAND: &str = "/googleweb_";
 pub const BRAIN_GOOGLEWEB_RESULT_SCHEMA: &str = "forge.webexplorer.googleweb.result.v1";
 pub const BRAIN_SCRAPERS_COMMAND: &str = "/scrapers_";
 pub const BRAIN_SCRAPERS_RESULT_SCHEMA: &str = "forge.scrapers.mcp.result.v1";
-pub const BRAIN_SCRAPLING_MCP_COMMAND: &str = "/scrapling_mcp_";
-pub const BRAIN_SCRAPLING_MCP_RESULT_SCHEMA: &str = "forge.scrapling.mcp.result.v1";
 pub const BRAIN_MAPS_COMMAND: &str = "/maps_";
 pub const BRAIN_MAPS_RESULT_SCHEMA: &str = "forge.webexplorer.maps.result.v1";
 pub const BRAIN_GMAIL_COMMAND: &str = "/gmail_";
@@ -87,8 +85,7 @@ pub const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION: &str = "Use /github_ for GitHub 
 pub const BRAIN_WEBACT_COMMAND_DESCRIPTION: &str = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation.";
 pub const BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION: &str = "Use /securityscan_ for Semgrep MCP security and static-analysis checks on code paths or snippets, especially before commits, PRs, generated code, dependency-facing adapters, auth, filesystem, shell, network or deserialization changes. It returns a compact SECURITYSCAN_RESULT with findings and evidence; do not treat a clean scan as a full proof of security.";
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants to visually browse or manually inspect web results. Prefer /websearch_ when the assistant must answer with cited sources, discover URLs, rank sources, verify current information or feed /scrapers_. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
-pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Use /scrapling_mcp_ only for low-level selector/session/screenshot work. Respect robots/terms/rate limits/privacy; stealth only for authorized targets.";
-pub const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION: &str = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_.";
+pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Scrapling selector/session/screenshot needs are handled inside this same command; do not expose a second Scrapling CodeAct. Respect robots/terms/rate limits/privacy; stealth only for authorized targets.";
 pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open Google Earth only for explicit map/localization/route/coordinates/where-is/local-weather/Google Earth intent. A place name in a cultural, historical, literary, vocabulary, table or explanation request is not enough; use /websearch_ then /scrapers_ for source/media enrichment. Bare /maps_ opens a neutral Earth view, never the saved home city. For travel/stay intent, open Maps first and Airbnb next. Never read device location without explicit permission.";
 pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail.";
 pub const BRAIN_GMAIL_COM_COMMAND_DESCRIPTION: &str = "Open the Gmail sign-in/mail entry URL directly in split-screen WebExplorer when the user asks to access or open Gmail. Use only for navigation to Gmail, not for generic mail reasoning or web search.";
@@ -591,7 +588,6 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_websearch_codeact_template(),
         brain_googleweb_codeact_template(),
         brain_scrapers_codeact_template(),
-        brain_scrapling_mcp_codeact_template(),
         brain_maps_codeact_template(),
         brain_gmail_codeact_template(),
         brain_gmail_com_codeact_template(),
@@ -1291,84 +1287,6 @@ pub fn brain_googleweb_codeact_template() -> BrainGeneralCodeActTemplate {
                 default_value: "conversation_and_navigation".to_string(),
                 allowed_values: vec!["conversation_and_navigation".to_string(), "navigation_only".to_string()],
                 description: "Default writes a bounded assistant status into the left transcript and navigates the WebExplorer on the right.".to_string(),
-            },
-        ],
-    };
-    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
-    template
-}
-
-pub fn brain_scrapling_mcp_codeact_template() -> BrainGeneralCodeActTemplate {
-    let mut template = BrainGeneralCodeActTemplate {
-        command: BRAIN_SCRAPLING_MCP_COMMAND.to_string(),
-        section: "mcp".to_string(),
-        purpose: "Route targeted web collection to Scrapling MCP when the user needs structured extraction, bulk URL scraping, dynamic or JavaScript-rendered content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of feeding full raw HTML to the LLM. The host must keep results bounded, selector-driven and manifest-sized, and must respect robots.txt, site terms, rate limits and privacy.".to_string(),
-        result_schema: BRAIN_SCRAPLING_MCP_RESULT_SCHEMA.to_string(),
-        proof_hash: String::new(),
-        slots: vec![
-            BrainCodeActTemplateSlot {
-                name: "mode".to_string(),
-                required: false,
-                default_value: "fetch".to_string(),
-                allowed_values: vec![
-                    "get".to_string(),
-                    "bulk_get".to_string(),
-                    "fetch".to_string(),
-                    "bulk_fetch".to_string(),
-                    "stealthy_fetch".to_string(),
-                    "bulk_stealthy_fetch".to_string(),
-                    "screenshot".to_string(),
-                    "open_session".to_string(),
-                    "close_session".to_string(),
-                    "list_sessions".to_string(),
-                ],
-                description: "Scrapling MCP operation. Prefer get/fetch and selectors first; use stealthy modes only for authorized targets or user-approved public-data collection.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "url".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Single target URL for get, fetch, stealthy_fetch or screenshot. Leave empty for bulk or session-list operations.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "urls".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Comma-separated or JSON-array target URLs for bulk_get, bulk_fetch or bulk_stealthy_fetch.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "selectors".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "CSS/XPath selectors or named fields to extract; keep the request targeted to reduce token cost.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "session".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Optional persistent Scrapling session id when cookies, navigation state or repeated requests must be reused.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "policy".to_string(),
-                required: false,
-                default_value: "respect_robots_terms_rate_limits_privacy".to_string(),
-                allowed_values: vec!["respect_robots_terms_rate_limits_privacy".to_string()],
-                description: "Collection guardrail. The host should refuse or ask for confirmation when target policy is unclear or sensitive.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "output".to_string(),
-                required: false,
-                default_value: "compact_manifest".to_string(),
-                allowed_values: vec![
-                    "compact_manifest".to_string(),
-                    "structured_items".to_string(),
-                    "screenshot_artifact".to_string(),
-                ],
-                description: "Return bounded extracted data, provenance, fetch metadata and artifact refs instead of full-page HTML.".to_string(),
             },
         ],
     };
@@ -3606,30 +3524,6 @@ mod tests {
     }
 
     #[test]
-    fn brain_exposes_scrapling_mcp_as_general_codeact_template() {
-        let template = brain_scrapling_mcp_codeact_template();
-
-        assert_eq!(template.command, BRAIN_SCRAPLING_MCP_COMMAND);
-        assert_eq!(template.section, "mcp");
-        assert_eq!(template.result_schema, BRAIN_SCRAPLING_MCP_RESULT_SCHEMA);
-        assert_eq!(template.proof_hash.len(), 40);
-        assert!(template.purpose.contains("Scrapling MCP"));
-        assert!(template.purpose.contains("compact provenance"));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "mode" && slot.allowed_values.contains(&"stealthy_fetch".to_string())
-        }));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "selectors" && slot.description.contains("token cost")
-        }));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "policy" && slot.default_value.contains("robots")
-        }));
-        assert!(brain_general_codeact_templates()
-            .iter()
-            .any(|candidate| candidate.command == BRAIN_SCRAPLING_MCP_COMMAND));
-    }
-
-    #[test]
     fn brain_exposes_scrapers_as_parallel_mcp_codeact_template() {
         let template = brain_scrapers_codeact_template();
 
@@ -3642,6 +3536,10 @@ mod tests {
         assert!(template.purpose.contains("same time"));
         assert!(template.purpose.contains("media metadata"));
         assert!(template.purpose.contains("MHTML"));
+        assert!(BRAIN_SCRAPERS_COMMAND_DESCRIPTION.contains("do not expose a second Scrapling CodeAct"));
+        assert!(!brain_general_codeact_templates()
+            .iter()
+            .any(|candidate| candidate.command == "/scrapling_mcp_"));
         assert!(template.slots.iter().any(|slot| slot.name == "urls" && slot.required));
         assert!(template.slots.iter().any(|slot| slot.name == "goal" && slot.required));
         assert!(template.slots.iter().any(|slot| {

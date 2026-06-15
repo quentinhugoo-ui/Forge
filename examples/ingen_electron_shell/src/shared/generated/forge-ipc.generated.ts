@@ -23,8 +23,6 @@ export const BRAIN_GOOGLEWEB_COMMAND = "/googleweb_" as const;
 export const BRAIN_GOOGLEWEB_RESULT_SCHEMA = "forge.webexplorer.googleweb.result.v1" as const;
 export const BRAIN_SCRAPERS_COMMAND = "/scrapers_" as const;
 export const BRAIN_SCRAPERS_RESULT_SCHEMA = "forge.scrapers.mcp.result.v1" as const;
-export const BRAIN_SCRAPLING_MCP_COMMAND = "/scrapling_mcp_" as const;
-export const BRAIN_SCRAPLING_MCP_RESULT_SCHEMA = "forge.scrapling.mcp.result.v1" as const;
 export const BRAIN_MAPS_COMMAND = "/maps_" as const;
 export const BRAIN_MAPS_RESULT_SCHEMA = "forge.webexplorer.maps.result.v1" as const;
 export const BRAIN_GMAIL_COMMAND = "/gmail_" as const;
@@ -66,8 +64,7 @@ export const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION = "Use /github_ for GitHub MCP
 export const BRAIN_WEBACT_COMMAND_DESCRIPTION = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation." as const;
 export const BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION = "Use /securityscan_ for Semgrep MCP security and static-analysis checks on code paths or snippets, especially before commits, PRs, generated code, dependency-facing adapters, auth, filesystem, shell, network or deserialization changes. It returns a compact SECURITYSCAN_RESULT with findings and evidence; do not treat a clean scan as a full proof of security." as const;
 export const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION = "Open contained WebExplorer on a generic Google search when the user wants to visually browse or manually inspect web results. Prefer /websearch_ when the assistant must answer with cited sources, discover URLs, rank sources, verify current information or feed /scrapers_. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work." as const;
-export const BRAIN_SCRAPERS_COMMAND_DESCRIPTION = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Use /scrapling_mcp_ only for low-level selector/session/screenshot work. Respect robots/terms/rate limits/privacy; stealth only for authorized targets." as const;
-export const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_." as const;
+export const BRAIN_SCRAPERS_COMMAND_DESCRIPTION = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Scrapling selector/session/screenshot needs are handled inside this same command; do not expose a second Scrapling CodeAct. Respect robots/terms/rate limits/privacy; stealth only for authorized targets." as const;
 export const BRAIN_MAPS_COMMAND_DESCRIPTION = "Open Google Earth only for explicit map/localization/route/coordinates/where-is/local-weather/Google Earth intent. A place name in a cultural, historical, literary, vocabulary, table or explanation request is not enough; use /websearch_ then /scrapers_ for source/media enrichment. Bare /maps_ opens a neutral Earth view, never the saved home city. For travel/stay intent, open Maps first and Airbnb next. Never read device location without explicit permission." as const;
 export const BRAIN_GMAIL_COMMAND_DESCRIPTION = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail." as const;
 export const BRAIN_GMAIL_COM_COMMAND_DESCRIPTION = "Open the Gmail sign-in/mail entry URL directly in split-screen WebExplorer when the user asks to access or open Gmail. Use only for navigation to Gmail, not for generic mail reasoning or web search." as const;
@@ -106,7 +103,6 @@ BRAIN_WEBACT_COMMAND,
 BRAIN_SECURITYSCAN_COMMAND,
 BRAIN_GOOGLEWEB_COMMAND,
 BRAIN_SCRAPERS_COMMAND,
-BRAIN_SCRAPLING_MCP_COMMAND,
 BRAIN_MAPS_COMMAND,
 BRAIN_GMAIL_COMMAND,
 BRAIN_GMAIL_COM_COMMAND,
@@ -145,7 +141,6 @@ export const BRAIN_CODEACT_COMMAND_DESCRIPTIONS = [
   { command: BRAIN_SECURITYSCAN_COMMAND, description: BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION },
   { command: BRAIN_GOOGLEWEB_COMMAND, description: BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION },
   { command: BRAIN_SCRAPERS_COMMAND, description: BRAIN_SCRAPERS_COMMAND_DESCRIPTION },
-  { command: BRAIN_SCRAPLING_MCP_COMMAND, description: BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION },
   { command: BRAIN_MAPS_COMMAND, description: BRAIN_MAPS_COMMAND_DESCRIPTION },
   { command: BRAIN_GMAIL_COMMAND, description: BRAIN_GMAIL_COMMAND_DESCRIPTION },
   { command: BRAIN_GMAIL_COM_COMMAND, description: BRAIN_GMAIL_COM_COMMAND_DESCRIPTION },
