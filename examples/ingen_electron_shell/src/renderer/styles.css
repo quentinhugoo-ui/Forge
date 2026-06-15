@@ -8912,9 +8912,9 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
-  inset: 50% auto auto 54%;
-  width: min(78.00361593575513vw, 96.8320749547305vh, 1022.56093845675px);
-  height: min(78.00361593575513vw, 96.8320749547305vh, 1022.56093845675px);
+  inset: 50% auto auto 56%;
+  width: min(81.90379673254289vw, 101.67367870246703vh, 1073.6889853795875px);
+  height: min(81.90379673254289vw, 101.67367870246703vh, 1073.6889853795875px);
   overflow: visible;
   transform: translate3d(-50%, -50%, 0);
 }
@@ -8941,7 +8941,7 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 1022.56093845675px);
+  width: min(100%, 1073.6889853795875px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
