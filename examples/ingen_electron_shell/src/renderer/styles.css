@@ -7246,6 +7246,13 @@ ol.assistantText__list li::before {
     inset 0 -1px 1px rgba(255, 255, 255, 0.025);
 }
 
+.composer__send--stop:hover,
+.composer__send--stop:active,
+.composer__send--stop:focus-visible {
+  background: transparent !important;
+  box-shadow: none;
+}
+
 .composer__send--stop {
   position: relative;
   border-radius: 50% !important;
@@ -7262,7 +7269,7 @@ ol.assistantText__list li::before {
   left: 50%;
   top: 50%;
   border-radius: 50% !important;
-  background: color-mix(in oklab, var(--forge-bg) 76%, var(--forge-text) 24%);
+  background: #f1f1ef;
   transform: translate(-50%, -50%);
   z-index: 0;
 }

@@ -160,10 +160,22 @@ function replacementTargetIdFromPending(id: string): string | undefined {
 function mergeInFlightPendingSnapshot(
   incomingSnapshot: PanelsChatBottomSnapshot,
   currentSnapshot: PanelsChatBottomSnapshot,
-  inFlightChatRequests: number
+  inFlightChatRequests: number,
+  assistantStopSuppressed: boolean
 ): PanelsChatBottomSnapshot {
+  const nextAssistantBusy = assistantStopSuppressed
+    ? false
+    : incomingSnapshot.composer.assistantBusy || currentSnapshot.composer.assistantBusy;
   if (inFlightChatRequests <= 0) {
-    return incomingSnapshot;
+    return assistantStopSuppressed
+      ? {
+          ...incomingSnapshot,
+          composer: {
+            ...incomingSnapshot.composer,
+            assistantBusy: false
+          }
+        }
+      : incomingSnapshot;
   }
   const transcript = mergeInFlightPendingTranscript(incomingSnapshot.transcript, currentSnapshot.transcript);
   const parallelLanes = incomingSnapshot.parallelLanes.map((lane) => {
@@ -182,7 +194,7 @@ function mergeInFlightPendingSnapshot(
     parallelLanes,
     composer: {
       ...incomingSnapshot.composer,
-      assistantBusy: incomingSnapshot.composer.assistantBusy || currentSnapshot.composer.assistantBusy
+      assistantBusy: nextAssistantBusy
     }
   };
 }
@@ -238,6 +250,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
   };
   const subscribers = new Set<() => void>();
   let inFlightChatRequests = 0;
+  let assistantStopSuppressed = false;
 
   function emit() {
     for (const subscriber of subscribers) {
@@ -249,7 +262,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
     if (!api) {
       return;
     }
-    const snapshot = mergeInFlightPendingSnapshot(await api.getPanelsChatBottomSnapshot(), state.snapshot, inFlightChatRequests);
+    const snapshot = mergeInFlightPendingSnapshot(await api.getPanelsChatBottomSnapshot(), state.snapshot, inFlightChatRequests, assistantStopSuppressed);
     state = {
       ...state,
       snapshot,
@@ -273,6 +286,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
         .filter((draft): draft is ParallelChatDraft => draft.value.length > 0 && Number.isInteger(draft.parallelSessionIndex));
       const attachments = state.snapshot.composer.uploadPreviews;
       if (drafts.length > 0) {
+        assistantStopSuppressed = false;
         if (attachments.length > 0) {
           outgoingCommand = {
             ...command,
@@ -329,6 +343,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
         };
       }
       if (draft || attachments.length > 0) {
+        assistantStopSuppressed = false;
         const workspace = await api.getWorkspaceFolder?.();
         if (parallelSessionIndex === 0 && !internalPrompt) {
           sidebarShadowStore.beginChatSessionPreview(draft || "Attached files", workspace?.folderName || undefined);
@@ -357,6 +372,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       }
     }
     if (command.kind === "stop_assistant" || command.kind === "assistant_write_complete") {
+      assistantStopSuppressed = true;
       state = {
         ...state,
         snapshot: {
@@ -371,6 +387,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       emit();
     }
     if (command.kind === "new_session") {
+      assistantStopSuppressed = true;
       state = {
         ...state,
         snapshot: {

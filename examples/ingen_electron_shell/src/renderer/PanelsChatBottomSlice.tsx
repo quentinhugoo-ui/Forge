@@ -3389,7 +3389,8 @@ function TranscriptCanvas({
   className = "chatCanvas",
   assistantBusy = false,
   onEditImage,
-  onUseMathInCompute
+  onUseMathInCompute,
+  stopAnimationSignal = 0
 }: {
   activeSessionId: string;
   messages: TranscriptMessage[];
@@ -3399,6 +3400,7 @@ function TranscriptCanvas({
   assistantBusy?: boolean;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
+  stopAnimationSignal?: number;
 }) {
   const storageKey = useMemo(() => pinsStorageKey(activeSessionId), [activeSessionId]);
   const [pins, setPins] = useState<PinnedChapter[]>(() => loadPins(storageKey));
@@ -3462,6 +3464,19 @@ function TranscriptCanvas({
     animationState.queue = animationState.queue.filter((id) => id !== messageId);
     setAssistantAnimationQueueVersion((version) => version + 1);
   }, []);
+
+  useEffect(() => {
+    if (stopAnimationSignal === 0) {
+      return;
+    }
+    const animationState = assistantAnimationRef.current;
+    if (!animationState) {
+      return;
+    }
+    animationState.active.clear();
+    animationState.queue = [];
+    setAssistantAnimationQueueVersion((version) => version + 1);
+  }, [stopAnimationSignal]);
 
   useEffect(() => {
     setPins(loadPins(storageKey));
@@ -3908,6 +3923,7 @@ export function PanelsChatBottomSlice({
   const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
+  const [assistantStopSignal, setAssistantStopSignal] = useState(0);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -4298,6 +4314,7 @@ export function PanelsChatBottomSlice({
   const assistantStopActive = composerSendBusy || Boolean(snapshot.composer.assistantBusy) || selfDirectedDrafting;
   const stopAssistant = useCallback(() => {
     cancelSelfDirectedDraft();
+    setAssistantStopSignal((signal) => signal + 1);
     endComposerSendBusy();
     void dispatch({ kind: "stop_assistant" });
   }, [cancelSelfDirectedDraft, dispatch, endComposerSendBusy]);
@@ -4513,6 +4530,7 @@ export function PanelsChatBottomSlice({
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
                   assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}
+                  stopAnimationSignal={assistantStopSignal}
                   key={`parallel-transcript-${index}`}
                   onEditImage={stageImageForEdit}
                   onUseMathInCompute={useMathInCompute}
@@ -4528,6 +4546,7 @@ export function PanelsChatBottomSlice({
             agentName={brainAgentName}
             parallelSessionIndex={0}
             assistantBusy={Boolean(snapshot.composer.assistantBusy)}
+            stopAnimationSignal={assistantStopSignal}
             onEditImage={stageImageForEdit}
             onUseMathInCompute={useMathInCompute}
           />
