@@ -18,10 +18,6 @@ const MAX_GHOSTS = 6;
 const GHOST_LIFETIME = 12;
 const WAVE_ACTIVE_FRAME_INTERVAL_MS = 1000 / 60;
 const WAVE_REDUCED_FRAME_INTERVAL_MS = 1000 / 12;
-const WAVE_POINTER_OFFSCREEN = -5;
-const WAVE_POINTER_ENTRY_RATE = 5.6;
-const WAVE_POINTER_EXIT_RATE = 7.8;
-const WAVE_POINTER_EPSILON = 0.002;
 const WAVE_POINTER_BLOCKER_SELECTOR = [
   ".leftPanel",
   ".panelsChatBottom",
@@ -35,10 +31,6 @@ const WAVE_POINTER_BLOCKER_SELECTOR = [
 
 function isWavePointerBlocked(event: PointerEvent): boolean {
   return Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest(WAVE_POINTER_BLOCKER_SELECTOR));
-}
-
-function approachWavePointerValue(current: number, target: number, deltaSeconds: number, rate: number): number {
-  return current + (target - current) * (1 - Math.exp(-rate * deltaSeconds));
 }
 
 const WEBGPU_BUFFER_USAGE = {
@@ -479,11 +471,10 @@ fn vertexMain(
   let fresh = 1.0 - smoothstep(pBirth + 0.18, pBirth + 1.12, intro);
   let mdiff = p - uniforms.pointer.xy;
   let mdist = length(mdiff);
-  let pointerStrength = uniforms.pointer.w;
-  let depress = -depressAmp * pointerStrength * exp(-mdist * mdist * 34.0);
-  let mripple = rippleAmp * pointerStrength * exp(-mdist * 6.1) * sin(mdist * 8.0 - t * 0.6);
-  let mspeed = uniforms.pointer.z * 40.0;
-  let turb = pointerStrength * mspeed * 0.28 * exp(-mdist * mdist * 44.0) * sin(mdist * 5.0 - t * 0.9);
+  let depress = -depressAmp * exp(-mdist * mdist * 34.0);
+  let mripple = rippleAmp * exp(-mdist * 6.1) * sin(mdist * 8.0 - t * 0.6);
+  let mspeed = length(uniforms.pointer.zw) * 40.0;
+  let turb = mspeed * 0.28 * exp(-mdist * mdist * 44.0) * sin(mdist * 5.0 - t * 0.9);
   var ghostSum = 0.0;
   for (var i = 0; i < ${MAX_GHOSTS}; i++) {
     ghostSum += ghostRipple(p, ghosts.data[i], t);
@@ -654,9 +645,9 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const hitPoint = new THREE.Vector3();
   const pointerNdc = new THREE.Vector2();
-  const mouseTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const mousePrev = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const mouseUniform = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mouseTarget = new THREE.Vector2(-5, -5);
+  const mousePrev = new THREE.Vector2(-5, -5);
+  const mouseUniform = new THREE.Vector2(-5, -5);
   const mouseVel = new THREE.Vector2(0, 0);
   const halfCW = (POINT_COLS / 2) * POINT_SPACING;
   const halfCD = (POINT_ROWS / 2) * POINT_SPACING;
@@ -669,9 +660,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let viewportWidth = 1;
   let viewportHeight = 1;
   let msaaTexture: WebGpuTexture | null = null;
-  let pointerActive = false;
   let hasMouse = false;
-  let pointerStrength = 0;
   let configured = false;
   let deviceLost = false;
   let drainLevel = 0;
@@ -720,7 +709,8 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
       event.clientY < rect.top ||
       event.clientY > rect.bottom
     ) {
-      onLeave();
+      hasMouse = false;
+      mouseVel.set(0, 0);
       return;
     }
 
@@ -732,23 +722,22 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
     if (raycaster.ray.intersectPlane(plane, hitPoint)) {
       const ux = (hitPoint.x / pointScaleX + halfCW) / gridWorldWidth;
       const uy = (hitPoint.z + halfCD) / (POINT_ROWS * POINT_SPACING) + 0.15 - cursorBottomEdgeOffset;
-      pointerActive = true;
       if (!hasMouse) {
         mousePrev.set(ux, uy);
-        pointerStrength = 0;
+        mouseTarget.set(ux, uy);
         mouseVel.set(0, 0);
         hasMouse = true;
       } else {
         mouseVel.set(ux - mousePrev.x, uy - mousePrev.y);
       }
-      mousePrev.set(ux, uy);
+      mousePrev.copy(mouseTarget);
       mouseTarget.set(ux, uy);
     }
   };
 
   const onLeave = () => {
-    pointerActive = false;
     hasMouse = false;
+    mouseTarget.set(-5, -5);
     mouseVel.set(0, 0);
   };
 
@@ -852,21 +841,8 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
       return;
     }
     lastRenderNow = now;
-    const deltaSeconds = Math.min((now - lastNow) / 1000, 0.1);
-    elapsed += deltaSeconds;
+    elapsed += Math.min((now - lastNow) / 1000, 0.1);
     lastNow = now;
-
-    const targetStrength = pointerActive ? 1 : 0;
-    pointerStrength = approachWavePointerValue(
-      pointerStrength,
-      targetStrength,
-      deltaSeconds,
-      pointerActive ? WAVE_POINTER_ENTRY_RATE : WAVE_POINTER_EXIT_RATE
-    );
-    if (!pointerActive && pointerStrength < WAVE_POINTER_EPSILON) {
-      pointerStrength = 0;
-    }
-    const pointerSpeed = pointerStrength > WAVE_POINTER_EPSILON ? mouseVel.length() : 0;
 
     for (let s = 0; s < MAX_GHOSTS; s++) {
       const age = elapsed - ghostData[s * 4 + 2];
@@ -883,14 +859,11 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
     uniformData[21] = pointScaleX;
     uniformData[22] = viewportWidth;
     uniformData[23] = viewportHeight;
-    mouseUniform.set(
-      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.x : WAVE_POINTER_OFFSCREEN,
-      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.y : WAVE_POINTER_OFFSCREEN
-    );
+    mouseUniform.copy(mouseTarget);
     uniformData[24] = mouseUniform.x;
     uniformData[25] = mouseUniform.y;
-    uniformData[26] = pointerSpeed;
-    uniformData[27] = pointerStrength;
+    uniformData[26] = mouseVel.x;
+    uniformData[27] = mouseVel.y;
     uniformData[28] = sceneHeight;
     uniformData[29] = drainLevel;
     uniformData[30] = 0;
@@ -1019,7 +992,7 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
       "varying vec2 vCoord;",
       "float getAmbient(float px,float pz,float t){float z=0.0;z+=0.085*sin(px*6.28318*1.1+t*0.045);z+=0.072*sin(pz*6.28318*0.8+t*0.035+1.1);z+=0.058*sin((px+pz)*6.28318*1.5+t*0.055+2.3);z+=0.044*sin((px-pz)*6.28318*2.1+t*0.065+3.7);return z;}",
       "float ghostRipple(vec2 p,vec4 g,float t){float age=t-g.z;if(age<0.0)return 0.0;float lifetime=12.0;if(age>lifetime)return 0.0;float fadeIn=smoothstep(0.0,2.5,age);float fadeOut=smoothstep(lifetime,lifetime-3.0,age);float envelope=fadeIn*fadeOut;float dist=length(p-g.xy);float front=age*0.032;float width=0.18;float ring=exp(-((dist-front)*(dist-front))/(width*width));float osc=sin(dist*8.0-age*1.0);return g.w*1.28*ring*envelope*osc;}",
-      `void main(){float px=pCoord.x;float pz=pCoord.y;float t=uTime;vec2 p=vec2(px,pz);float reveal=smoothstep(pBirth,pBirth+0.42,uIntro);float seed=1.0-smoothstep(0.0,0.001,pBirth);float seedPulse=seed*smoothstep(0.02,0.16,uIntro)*(1.0-smoothstep(0.45,1.1,uIntro));float fresh=1.0-smoothstep(pBirth+0.18,pBirth+1.12,uIntro);vec2 mdiff=p-uMouse;float mdist=length(mdiff);float pointerStrength=uMouseVel.y;float depress=-uDepress*pointerStrength*exp(-mdist*mdist*34.0);float mripple=uRippleAmp*pointerStrength*exp(-mdist*6.1)*sin(mdist*8.0-t*0.6);float mspeed=uMouseVel.x*40.0;float turb=pointerStrength*mspeed*0.28*exp(-mdist*mdist*44.0)*sin(mdist*5.0-t*0.9);float ghostSum=0.0;for(int i=0;i<MAX_G;i++){ghostSum+=ghostRipple(p,uGhosts[i],t);}float yTotal=(depress+mripple+turb+ghostSum+getAmbient(px,pz,t))*reveal;vY=yTotal;vRipple=(mripple+ghostSum)*reveal;vDepth=pCoord.y;vReveal=reveal;vSeed=seedPulse;vIntroChroma=reveal*(0.32+fresh*0.72)+seedPulse;vCoord=pCoord;float drainHash=fract(sin(dot(pCoord,vec2(127.1,311.7)))*43758.5453);float keep=smoothstep(uDrain*1.04-0.04,uDrain*1.04,drainHash);vec3 pos=position;pos.y=yTotal-step(keep,0.01)*1000.0;gl_PointSize=max(1.0,uPointSize*(reveal+seedPulse*1.8))*max(keep,0.001);gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.0);}`
+      `void main(){float px=pCoord.x;float pz=pCoord.y;float t=uTime;vec2 p=vec2(px,pz);float reveal=smoothstep(pBirth,pBirth+0.42,uIntro);float seed=1.0-smoothstep(0.0,0.001,pBirth);float seedPulse=seed*smoothstep(0.02,0.16,uIntro)*(1.0-smoothstep(0.45,1.1,uIntro));float fresh=1.0-smoothstep(pBirth+0.18,pBirth+1.12,uIntro);vec2 mdiff=p-uMouse;float mdist=length(mdiff);float depress=-uDepress*exp(-mdist*mdist*34.0);float mripple=uRippleAmp*exp(-mdist*6.1)*sin(mdist*8.0-t*0.6);float mspeed=length(uMouseVel)*40.0;float turb=mspeed*0.28*exp(-mdist*mdist*44.0)*sin(mdist*5.0-t*0.9);float ghostSum=0.0;for(int i=0;i<MAX_G;i++){ghostSum+=ghostRipple(p,uGhosts[i],t);}float yTotal=(depress+mripple+turb+ghostSum+getAmbient(px,pz,t))*reveal;vY=yTotal;vRipple=(mripple+ghostSum)*reveal;vDepth=pCoord.y;vReveal=reveal;vSeed=seedPulse;vIntroChroma=reveal*(0.32+fresh*0.72)+seedPulse;vCoord=pCoord;float drainHash=fract(sin(dot(pCoord,vec2(127.1,311.7)))*43758.5453);float keep=smoothstep(uDrain*1.04-0.04,uDrain*1.04,drainHash);vec3 pos=position;pos.y=yTotal-step(keep,0.01)*1000.0;gl_PointSize=max(1.0,uPointSize*(reveal+seedPulse*1.8))*max(keep,0.001);gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.0);}`
     ].join("\n"),
     fragmentShader: [
       "varying float vY;",
@@ -1046,10 +1019,9 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const hitPoint = new THREE.Vector3();
   const pointerNdc = new THREE.Vector2();
-  const mouseTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const mousePrev = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mouseTarget = new THREE.Vector2(-5, -5);
+  const mousePrev = new THREE.Vector2(-5, -5);
   const mouseVel = new THREE.Vector2(0, 0);
-  const mouseUniform = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
   const halfCW = (POINT_COLS / 2) * POINT_SPACING;
   const halfCD = (POINT_ROWS / 2) * POINT_SPACING;
   const gridWorldWidth = POINT_COLS * POINT_SPACING;
@@ -1058,9 +1030,7 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
   let sceneHeight = 600;
   let cropY = 240;
   let pointScaleX = 1;
-  let pointerActive = false;
   let hasMouse = false;
-  let pointerStrength = 0;
   let drainLevel = 0;
   let shutdownRequested = false;
   let stopped = false;
@@ -1093,7 +1063,8 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
       event.clientY < rect.top ||
       event.clientY > rect.bottom
     ) {
-      onLeave();
+      hasMouse = false;
+      mouseVel.set(0, 0);
       return;
     }
 
@@ -1105,23 +1076,22 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
     if (raycaster.ray.intersectPlane(plane, hitPoint)) {
       const ux = (hitPoint.x / pointScaleX + halfCW) / gridWorldWidth;
       const uy = (hitPoint.z + halfCD) / (POINT_ROWS * POINT_SPACING) + 0.15 - cursorBottomEdgeOffset;
-      pointerActive = true;
       if (!hasMouse) {
         mousePrev.set(ux, uy);
-        pointerStrength = 0;
+        mouseTarget.set(ux, uy);
         mouseVel.set(0, 0);
         hasMouse = true;
       } else {
         mouseVel.set(ux - mousePrev.x, uy - mousePrev.y);
       }
-      mousePrev.set(ux, uy);
+      mousePrev.copy(mouseTarget);
       mouseTarget.set(ux, uy);
     }
   };
 
   const onLeave = () => {
-    pointerActive = false;
     hasMouse = false;
+    mouseTarget.set(-5, -5);
     mouseVel.set(0, 0);
   };
 
@@ -1217,21 +1187,8 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
       return;
     }
     lastRenderNow = now;
-    const deltaSeconds = Math.min((now - lastNow) / 1000, 0.1);
-    elapsed += deltaSeconds;
+    elapsed += Math.min((now - lastNow) / 1000, 0.1);
     lastNow = now;
-
-    const targetStrength = pointerActive ? 1 : 0;
-    pointerStrength = approachWavePointerValue(
-      pointerStrength,
-      targetStrength,
-      deltaSeconds,
-      pointerActive ? WAVE_POINTER_ENTRY_RATE : WAVE_POINTER_EXIT_RATE
-    );
-    if (!pointerActive && pointerStrength < WAVE_POINTER_EPSILON) {
-      pointerStrength = 0;
-    }
-    const pointerSpeed = pointerStrength > WAVE_POINTER_EPSILON ? mouseVel.length() : 0;
 
     for (let s = 0; s < MAX_GHOSTS; s++) {
       const age = elapsed - ghostData[s * 4 + 2];
@@ -1241,13 +1198,9 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
     mat.uniforms.uGhosts.value = ghostData;
     mat.uniforms.uTime.value = elapsed;
     mat.uniforms.uIntro.value = prefersReducedMotion ? INTRO_REVEAL_SECONDS : Math.min(elapsed, INTRO_REVEAL_SECONDS);
-    mouseUniform.set(
-      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.x : WAVE_POINTER_OFFSCREEN,
-      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.y : WAVE_POINTER_OFFSCREEN
-    );
-    mat.uniforms.uMouse.value.copy(mouseUniform);
-    mat.uniforms.uMouseVel.value.set(pointerSpeed, pointerStrength);
+    mat.uniforms.uMouse.value.copy(mouseTarget);
     mouseVel.multiplyScalar(0.9);
+    mat.uniforms.uMouseVel.value.copy(mouseVel);
     renderer.render(scene, camera);
     if (shutdownRequested) {
       stopRenderer();
