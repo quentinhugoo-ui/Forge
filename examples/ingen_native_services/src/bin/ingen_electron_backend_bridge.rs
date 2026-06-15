@@ -252,6 +252,7 @@ struct BangerMapsRootIngestProjection {
     traversal_seed: BangerMapsTraversalSeed,
     content_cache: BangerMapsContentCacheProjection,
     content_decode: BangerMapsContentDecodeProjection,
+    gpu_staging: BangerMapsGpuStagingProjection,
     verifier: BangerMapsRootIngestVerifier,
     error: Option<BangerNativeError>,
 }
@@ -349,6 +350,80 @@ struct BangerMapsContentDecodeRecord {
     glb: Option<BangerGlbProjection>,
     gltf: Option<BangerGltfSummaryProjection>,
     error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsGpuStagingProjection {
+    schema: &'static str,
+    enabled: bool,
+    staged_content_count: usize,
+    failed_content_count: usize,
+    primitive_count: usize,
+    vertex_buffer_byte_count: usize,
+    index_buffer_byte_count: usize,
+    material_count: usize,
+    texture_byte_count: usize,
+    upload_plan_hash: String,
+    records: Vec<BangerMapsGpuStageRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsGpuStageRecord {
+    tile_id: String,
+    source_uri: String,
+    cache_path: String,
+    source_content_type: &'static str,
+    container: &'static str,
+    primitive_stages: Vec<BangerMapsGpuPrimitiveStage>,
+    material_stages: Vec<BangerMapsMaterialStage>,
+    texture_stages: Vec<BangerMapsTextureStage>,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsGpuPrimitiveStage {
+    mesh_index: usize,
+    primitive_index: usize,
+    material_index: Option<usize>,
+    mode: u32,
+    position_accessor: usize,
+    index_accessor: Option<usize>,
+    vertex_count: usize,
+    index_count: usize,
+    vertex_buffer_byte_count: usize,
+    index_buffer_byte_count: usize,
+    vertex_buffer_hash: String,
+    index_buffer_hash: String,
+    index_format: &'static str,
+    vertex_stride_bytes: usize,
+    wgpu_vertex_usage: &'static str,
+    wgpu_index_usage: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsMaterialStage {
+    material_index: usize,
+    base_color_factor: [f32; 4],
+    metallic_factor: f32,
+    roughness_factor: f32,
+    base_color_texture: Option<usize>,
+    material_hash: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsTextureStage {
+    texture_index: usize,
+    image_index: Option<usize>,
+    mime_type: String,
+    source_kind: &'static str,
+    byte_count: usize,
+    content_hash: String,
+    wgpu_usage: &'static str,
 }
 
 #[derive(Serialize)]
@@ -522,18 +597,23 @@ fn main() {
         println!("{}", serde_json::to_string(&frame).expect("serialize banger preview frame"));
         return;
     }
+    if env::args().any(|argument| argument == "--banger-maps-gpu-stage") {
+        let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
+        println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps gpu staging"));
+        return;
+    }
     if env::args().any(|argument| argument == "--banger-maps-content-decode") {
-        let ingest = banger_maps_root_ingest(Some(true), Some(true));
+        let ingest = banger_maps_root_ingest(Some(true), Some(true), None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps content decode"));
         return;
     }
     if env::args().any(|argument| argument == "--banger-maps-content-cache") {
-        let ingest = banger_maps_root_ingest(Some(true), None);
+        let ingest = banger_maps_root_ingest(Some(true), None, None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps content cache"));
         return;
     }
     if env::args().any(|argument| argument == "--banger-maps-root-ingest") {
-        let ingest = banger_maps_root_ingest(None, None);
+        let ingest = banger_maps_root_ingest(None, None, None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps root ingest"));
         return;
     }
@@ -769,7 +849,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn banger_maps_root_ingest(force_content_fetch: Option<bool>, force_content_decode: Option<bool>) -> BangerMapsRootIngestProjection {
+fn banger_maps_root_ingest(
+    force_content_fetch: Option<bool>,
+    force_content_decode: Option<bool>,
+    force_gpu_staging: Option<bool>,
+) -> BangerMapsRootIngestProjection {
     let url = env::var("FORGE_BANGER_MAPS_ROOT_URL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -808,6 +892,7 @@ fn banger_maps_root_ingest(force_content_fetch: Option<bool>, force_content_deco
                     traversal_seed: empty_banger_maps_traversal_seed(),
                     content_cache: empty_banger_maps_content_cache(&cache_dir),
                     content_decode: empty_banger_maps_content_decode(),
+                    gpu_staging: empty_banger_maps_gpu_staging(),
                     verifier: banger_maps_root_ingest_verifier(),
                     error: Some(BangerNativeError {
                         code: "root_fetch_failed",
@@ -828,6 +913,7 @@ fn banger_maps_root_ingest(force_content_fetch: Option<bool>, force_content_deco
         error,
         force_content_fetch,
         force_content_decode,
+        force_gpu_staging,
     )
 }
 
@@ -882,6 +968,7 @@ fn summarize_banger_maps_root(
     error: Option<BangerNativeError>,
     force_content_fetch: Option<bool>,
     force_content_decode: Option<bool>,
+    force_gpu_staging: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
     let root_hash = sha256_hex(bytes);
     let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
@@ -893,6 +980,7 @@ fn summarize_banger_maps_root(
     let traversal_seed = build_banger_maps_traversal_seed(root);
     let content_cache = build_banger_maps_content_cache(url, cache_dir, &traversal_seed, force_content_fetch);
     let content_decode = build_banger_maps_content_decode(&content_cache, force_content_decode);
+    let gpu_staging = build_banger_maps_gpu_staging(&content_decode, force_gpu_staging);
     let asset_version = parsed
         .as_ref()
         .and_then(|value| value.get("asset"))
@@ -926,6 +1014,7 @@ fn summarize_banger_maps_root(
         traversal_seed,
         content_cache,
         content_decode,
+        gpu_staging,
         verifier: banger_maps_root_ingest_verifier(),
         error,
     }
@@ -1331,6 +1420,553 @@ fn build_banger_maps_content_decode(
     }
 }
 
+fn empty_banger_maps_gpu_staging() -> BangerMapsGpuStagingProjection {
+    BangerMapsGpuStagingProjection {
+        schema: "forge.banger.native_3d_tiles_gpu_staging.v1",
+        enabled: false,
+        staged_content_count: 0,
+        failed_content_count: 0,
+        primitive_count: 0,
+        vertex_buffer_byte_count: 0,
+        index_buffer_byte_count: 0,
+        material_count: 0,
+        texture_byte_count: 0,
+        upload_plan_hash: sha256_hex(b"empty_banger_maps_gpu_staging"),
+        records: Vec::new(),
+    }
+}
+
+fn build_banger_maps_gpu_staging(
+    content_decode: &BangerMapsContentDecodeProjection,
+    force_gpu_staging: Option<bool>,
+) -> BangerMapsGpuStagingProjection {
+    let enabled = force_gpu_staging.unwrap_or_else(|| {
+        env::var("FORGE_BANGER_MAPS_STAGE_GLTF_BUFFERS")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    });
+    if !enabled {
+        return empty_banger_maps_gpu_staging();
+    }
+    let records = content_decode
+        .records
+        .iter()
+        .filter(|record| record.error.is_none())
+        .map(stage_banger_maps_gpu_record)
+        .collect::<Vec<_>>();
+    let staged_content_count = records.iter().filter(|record| record.error.is_none()).count();
+    let failed_content_count = records.iter().filter(|record| record.error.is_some()).count();
+    let primitive_count = records.iter().map(|record| record.primitive_stages.len()).sum();
+    let vertex_buffer_byte_count = records
+        .iter()
+        .flat_map(|record| record.primitive_stages.iter())
+        .map(|stage| stage.vertex_buffer_byte_count)
+        .sum();
+    let index_buffer_byte_count = records
+        .iter()
+        .flat_map(|record| record.primitive_stages.iter())
+        .map(|stage| stage.index_buffer_byte_count)
+        .sum();
+    let material_count = records.iter().map(|record| record.material_stages.len()).sum();
+    let texture_byte_count = records
+        .iter()
+        .flat_map(|record| record.texture_stages.iter())
+        .map(|stage| stage.byte_count)
+        .sum();
+    let upload_plan_hash = sha256_hex(
+        records
+            .iter()
+            .map(|record| {
+                format!(
+                    "{}:{}:{}:{}:{}:{};",
+                    record.tile_id,
+                    record.container,
+                    record.primitive_stages.len(),
+                    record.material_stages.len(),
+                    record.texture_stages.len(),
+                    record.error.as_deref().unwrap_or("")
+                )
+            })
+            .collect::<String>()
+            .as_bytes(),
+    );
+    BangerMapsGpuStagingProjection {
+        schema: "forge.banger.native_3d_tiles_gpu_staging.v1",
+        enabled,
+        staged_content_count,
+        failed_content_count,
+        primitive_count,
+        vertex_buffer_byte_count,
+        index_buffer_byte_count,
+        material_count,
+        texture_byte_count,
+        upload_plan_hash,
+        records,
+    }
+}
+
+fn stage_banger_maps_gpu_record(record: &BangerMapsContentDecodeRecord) -> BangerMapsGpuStageRecord {
+    let bytes = match fs::read(&record.cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) => return failed_banger_gpu_stage_record(record, format!("gpu stage read: {error}")),
+    };
+    let stage_result = match record.container {
+        "b3dm" => decode_banger_b3dm(&bytes).and_then(|(_, glb_bytes)| {
+            let decoded = decode_banger_glb_full(glb_bytes)?;
+            stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk)
+        }),
+        "glb" => decode_banger_glb_full(&bytes).and_then(|decoded| {
+            stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk)
+        }),
+        "gltf" => parse_banger_gltf_json_value(&bytes).and_then(|value| stage_banger_gltf_payload(&value, &[])),
+        _ => Err(format!("gpu staging unsupported container {}", record.container)),
+    };
+    match stage_result {
+        Ok((primitive_stages, material_stages, texture_stages)) => BangerMapsGpuStageRecord {
+            tile_id: record.tile_id.clone(),
+            source_uri: record.source_uri.clone(),
+            cache_path: record.cache_path.clone(),
+            source_content_type: record.source_content_type,
+            container: record.container,
+            primitive_stages,
+            material_stages,
+            texture_stages,
+            error: None,
+        },
+        Err(error) => failed_banger_gpu_stage_record(record, error),
+    }
+}
+
+fn failed_banger_gpu_stage_record(record: &BangerMapsContentDecodeRecord, error: String) -> BangerMapsGpuStageRecord {
+    BangerMapsGpuStageRecord {
+        tile_id: record.tile_id.clone(),
+        source_uri: record.source_uri.clone(),
+        cache_path: record.cache_path.clone(),
+        source_content_type: record.source_content_type,
+        container: record.container,
+        primitive_stages: Vec::new(),
+        material_stages: Vec::new(),
+        texture_stages: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn stage_banger_gltf_payload(
+    gltf: &Value,
+    bin_chunk: &[u8],
+) -> Result<(Vec<BangerMapsGpuPrimitiveStage>, Vec<BangerMapsMaterialStage>, Vec<BangerMapsTextureStage>), String> {
+    let mut primitive_stages = Vec::new();
+    let meshes = gltf.get("meshes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    for (mesh_index, mesh) in meshes.iter().enumerate() {
+        let primitives = mesh.get("primitives").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        for (primitive_index, primitive) in primitives.iter().enumerate() {
+            primitive_stages.push(stage_banger_gltf_primitive(
+                gltf,
+                bin_chunk,
+                mesh_index,
+                primitive_index,
+                primitive,
+            )?);
+        }
+    }
+    let material_stages = stage_banger_gltf_materials(gltf);
+    let texture_stages = stage_banger_gltf_textures(gltf, bin_chunk)?;
+    Ok((primitive_stages, material_stages, texture_stages))
+}
+
+fn stage_banger_gltf_primitive(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    mesh_index: usize,
+    primitive_index: usize,
+    primitive: &Value,
+) -> Result<BangerMapsGpuPrimitiveStage, String> {
+    let attributes = primitive
+        .get("attributes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing attributes"))?;
+    let position_accessor = attributes
+        .get("POSITION")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing POSITION accessor"))?
+        as usize;
+    let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
+    if position.component_type != 5126 || position.accessor_type != "VEC3" {
+        return Err(format!(
+            "mesh {mesh_index} primitive {primitive_index} POSITION must be FLOAT VEC3, got {} {}",
+            position.component_type, position.accessor_type
+        ));
+    }
+    let index_accessor = primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize);
+    let (index_bytes, index_count, index_format) = match index_accessor {
+        Some(accessor_index) => {
+            let indices = banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?;
+            if indices.accessor_type != "SCALAR" {
+                return Err(format!(
+                    "mesh {mesh_index} primitive {primitive_index} indices must be SCALAR, got {}",
+                    indices.accessor_type
+                ));
+            }
+            match indices.component_type {
+                5121 => {
+                    let mut expanded = Vec::with_capacity(indices.bytes.len() * 2);
+                    for index in indices.bytes {
+                        expanded.extend_from_slice(&(index as u16).to_le_bytes());
+                    }
+                    (expanded, indices.count, "uint16_expanded_from_uint8")
+                }
+                5123 => (indices.bytes, indices.count, "uint16"),
+                5125 => (indices.bytes, indices.count, "uint32"),
+                other => return Err(format!("unsupported index component type {other}")),
+            }
+        }
+        None => (Vec::new(), 0, "none"),
+    };
+    Ok(BangerMapsGpuPrimitiveStage {
+        mesh_index,
+        primitive_index,
+        material_index: primitive.get("material").and_then(Value::as_u64).map(|value| value as usize),
+        mode: primitive.get("mode").and_then(Value::as_u64).unwrap_or(4) as u32,
+        position_accessor,
+        index_accessor,
+        vertex_count: position.count,
+        index_count,
+        vertex_buffer_byte_count: position.bytes.len(),
+        index_buffer_byte_count: index_bytes.len(),
+        vertex_buffer_hash: sha256_hex(&position.bytes),
+        index_buffer_hash: sha256_hex(&index_bytes),
+        index_format,
+        vertex_stride_bytes: 12,
+        wgpu_vertex_usage: "VERTEX|COPY_DST",
+        wgpu_index_usage: "INDEX|COPY_DST",
+    })
+}
+
+fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
+    gltf.get("materials")
+        .and_then(Value::as_array)
+        .map(|materials| {
+            materials
+                .iter()
+                .enumerate()
+                .map(|(material_index, material)| {
+                    let pbr = material.get("pbrMetallicRoughness");
+                    let base_color_factor = pbr
+                        .and_then(|value| value.get("baseColorFactor"))
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            let mut factor = [1.0f32, 1.0, 1.0, 1.0];
+                            for (index, item) in items.iter().take(4).enumerate() {
+                                factor[index] = item.as_f64().unwrap_or(1.0) as f32;
+                            }
+                            factor
+                        })
+                        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                    let metallic_factor = pbr
+                        .and_then(|value| value.get("metallicFactor"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(1.0) as f32;
+                    let roughness_factor = pbr
+                        .and_then(|value| value.get("roughnessFactor"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(1.0) as f32;
+                    let base_color_texture = pbr
+                        .and_then(|value| value.get("baseColorTexture"))
+                        .and_then(|value| value.get("index"))
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    let material_hash = sha256_hex(
+                        format!(
+                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}"
+                        )
+                        .as_bytes(),
+                    );
+                    BangerMapsMaterialStage {
+                        material_index,
+                        base_color_factor,
+                        metallic_factor,
+                        roughness_factor,
+                        base_color_texture,
+                        material_hash,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn stage_banger_gltf_textures(gltf: &Value, bin_chunk: &[u8]) -> Result<Vec<BangerMapsTextureStage>, String> {
+    let textures = gltf.get("textures").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let images = gltf.get("images").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let mut texture_stages = Vec::new();
+    for (texture_index, texture) in textures.iter().enumerate() {
+        let image_index = texture.get("source").and_then(Value::as_u64).map(|value| value as usize);
+        let Some(image_index) = image_index else {
+            texture_stages.push(BangerMapsTextureStage {
+                texture_index,
+                image_index: None,
+                mime_type: "image/unknown".to_string(),
+                source_kind: "missing_image_source",
+                byte_count: 0,
+                content_hash: sha256_hex(b"missing_image_source"),
+                wgpu_usage: "TEXTURE_BINDING|COPY_DST",
+            });
+            continue;
+        };
+        let image = images
+            .get(image_index)
+            .ok_or_else(|| format!("texture {texture_index} references missing image {image_index}"))?;
+        let mime_type = image
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("image/unknown")
+            .to_string();
+        if let Some(buffer_view_index) = image.get("bufferView").and_then(Value::as_u64).map(|value| value as usize) {
+            let image_bytes = banger_gltf_buffer_view_bytes(gltf, bin_chunk, buffer_view_index)?;
+            texture_stages.push(BangerMapsTextureStage {
+                texture_index,
+                image_index: Some(image_index),
+                mime_type,
+                source_kind: "embedded_buffer_view",
+                byte_count: image_bytes.len(),
+                content_hash: sha256_hex(&image_bytes),
+                wgpu_usage: "TEXTURE_BINDING|COPY_DST",
+            });
+        } else {
+            let source_kind = if image.get("uri").and_then(Value::as_str).map(|uri| uri.starts_with("data:")).unwrap_or(false) {
+                "data_uri_pending"
+            } else {
+                "external_uri_pending"
+            };
+            texture_stages.push(BangerMapsTextureStage {
+                texture_index,
+                image_index: Some(image_index),
+                mime_type,
+                source_kind,
+                byte_count: 0,
+                content_hash: sha256_hex(source_kind.as_bytes()),
+                wgpu_usage: "TEXTURE_BINDING|COPY_DST",
+            });
+        }
+    }
+    Ok(texture_stages)
+}
+
+struct BangerGltfAccessorStage {
+    bytes: Vec<u8>,
+    count: usize,
+    component_type: u32,
+    accessor_type: String,
+}
+
+fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: usize) -> Result<BangerGltfAccessorStage, String> {
+    let accessors = gltf
+        .get("accessors")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gltf accessors array missing".to_string())?;
+    let accessor = accessors
+        .get(accessor_index)
+        .ok_or_else(|| format!("accessor {accessor_index} missing"))?;
+    if accessor.get("sparse").is_some() {
+        return Err(format!("accessor {accessor_index} sparse upload not implemented"));
+    }
+    let buffer_view_index = accessor
+        .get("bufferView")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("accessor {accessor_index} missing bufferView"))? as usize;
+    let component_type = accessor
+        .get("componentType")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("accessor {accessor_index} missing componentType"))? as u32;
+    let count = accessor
+        .get("count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("accessor {accessor_index} missing count"))? as usize;
+    let accessor_type = accessor
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("accessor {accessor_index} missing type"))?
+        .to_string();
+    let component_size = banger_gltf_component_size(component_type)?;
+    let component_count = banger_gltf_type_component_count(&accessor_type)?;
+    let element_size = component_size * component_count;
+    let (view_offset, view_length, byte_stride) = banger_gltf_buffer_view_layout(gltf, buffer_view_index)?;
+    let accessor_offset = accessor.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let start = view_offset + accessor_offset;
+    let stride = byte_stride.unwrap_or(element_size);
+    if stride < element_size {
+        return Err(format!("accessor {accessor_index} byteStride {stride} is smaller than element size {element_size}"));
+    }
+    let final_byte = if count == 0 {
+        start
+    } else {
+        start + stride * (count - 1) + element_size
+    };
+    if final_byte > view_offset + view_length || final_byte > bin_chunk.len() {
+        return Err(format!("accessor {accessor_index} exceeds GLB BIN chunk"));
+    }
+    let mut bytes = Vec::with_capacity(count * element_size);
+    for item in 0..count {
+        let offset = start + item * stride;
+        bytes.extend_from_slice(&bin_chunk[offset..offset + element_size]);
+    }
+    Ok(BangerGltfAccessorStage {
+        bytes,
+        count,
+        component_type,
+        accessor_type,
+    })
+}
+
+fn banger_gltf_buffer_view_bytes(gltf: &Value, bin_chunk: &[u8], buffer_view_index: usize) -> Result<Vec<u8>, String> {
+    let (view_offset, view_length, _) = banger_gltf_buffer_view_layout(gltf, buffer_view_index)?;
+    let end = view_offset + view_length;
+    if end > bin_chunk.len() {
+        return Err(format!("bufferView {buffer_view_index} exceeds GLB BIN chunk"));
+    }
+    Ok(bin_chunk[view_offset..end].to_vec())
+}
+
+fn banger_gltf_buffer_view_layout(gltf: &Value, buffer_view_index: usize) -> Result<(usize, usize, Option<usize>), String> {
+    let buffer_views = gltf
+        .get("bufferViews")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gltf bufferViews array missing".to_string())?;
+    let buffer_view = buffer_views
+        .get(buffer_view_index)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} missing"))?;
+    let buffer_index = buffer_view.get("buffer").and_then(Value::as_u64).unwrap_or(0);
+    if buffer_index != 0 {
+        return Err(format!("bufferView {buffer_view_index} uses external buffer {buffer_index}"));
+    }
+    let byte_offset = buffer_view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let byte_length = buffer_view
+        .get("byteLength")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} missing byteLength"))? as usize;
+    let byte_stride = buffer_view.get("byteStride").and_then(Value::as_u64).map(|value| value as usize);
+    Ok((byte_offset, byte_length, byte_stride))
+}
+
+fn banger_gltf_component_size(component_type: u32) -> Result<usize, String> {
+    match component_type {
+        5120 | 5121 => Ok(1),
+        5122 | 5123 => Ok(2),
+        5125 | 5126 => Ok(4),
+        _ => Err(format!("unsupported glTF component type {component_type}")),
+    }
+}
+
+fn banger_gltf_type_component_count(accessor_type: &str) -> Result<usize, String> {
+    match accessor_type {
+        "SCALAR" => Ok(1),
+        "VEC2" => Ok(2),
+        "VEC3" => Ok(3),
+        "VEC4" => Ok(4),
+        "MAT2" => Ok(4),
+        "MAT3" => Ok(9),
+        "MAT4" => Ok(16),
+        _ => Err(format!("unsupported glTF accessor type {accessor_type}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+struct BangerMapsUploadedTileBuffers {
+    vertex_buffers: Vec<wgpu::Buffer>,
+    index_buffers: Vec<wgpu::Buffer>,
+    texture_staging_buffers: Vec<wgpu::Buffer>,
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+fn upload_banger_maps_gltf_payload_to_wgpu(
+    device: &wgpu::Device,
+    gltf: &Value,
+    bin_chunk: &[u8],
+) -> Result<BangerMapsUploadedTileBuffers, String> {
+    let mut vertex_buffers = Vec::new();
+    let mut index_buffers = Vec::new();
+    let meshes = gltf.get("meshes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    for (mesh_index, mesh) in meshes.iter().enumerate() {
+        let primitives = mesh.get("primitives").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        for (primitive_index, primitive) in primitives.iter().enumerate() {
+            let attributes = primitive
+                .get("attributes")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing attributes"))?;
+            let position_accessor = attributes
+                .get("POSITION")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing POSITION accessor"))?
+                as usize;
+            let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
+            if position.component_type != 5126 || position.accessor_type != "VEC3" {
+                return Err(format!(
+                    "mesh {mesh_index} primitive {primitive_index} POSITION must be FLOAT VEC3 before wgpu upload"
+                ));
+            }
+            vertex_buffers.push(banger_create_mapped_buffer(
+                device,
+                "banger maps gltf position vertex buffer",
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                &position.bytes,
+            ));
+            if let Some(index_accessor) = primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
+                let indices = banger_gltf_accessor_stage(gltf, bin_chunk, index_accessor)?;
+                let index_bytes = match indices.component_type {
+                    5121 => {
+                        let mut expanded = Vec::with_capacity(indices.bytes.len() * 2);
+                        for index in indices.bytes {
+                            expanded.extend_from_slice(&(index as u16).to_le_bytes());
+                        }
+                        expanded
+                    }
+                    5123 | 5125 => indices.bytes,
+                    other => return Err(format!("unsupported index component type {other} before wgpu upload")),
+                };
+                index_buffers.push(banger_create_mapped_buffer(
+                    device,
+                    "banger maps gltf index buffer",
+                    wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                    &index_bytes,
+                ));
+            }
+        }
+    }
+    let texture_stages = stage_banger_gltf_textures(gltf, bin_chunk)?;
+    let mut texture_staging_buffers = Vec::new();
+    for texture_stage in texture_stages.iter().filter(|stage| stage.source_kind == "embedded_buffer_view" && stage.byte_count > 0) {
+        let texture_index = texture_stage.texture_index;
+        let textures = gltf.get("textures").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        let images = gltf.get("images").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        let image_index = textures
+            .get(texture_index)
+            .and_then(|texture| texture.get("source"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("texture {texture_index} missing source before wgpu staging upload"))?
+            as usize;
+        let buffer_view_index = images
+            .get(image_index)
+            .and_then(|image| image.get("bufferView"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("texture {texture_index} image {image_index} missing bufferView before wgpu staging upload"))?
+            as usize;
+        let image_bytes = banger_gltf_buffer_view_bytes(gltf, bin_chunk, buffer_view_index)?;
+        texture_staging_buffers.push(banger_create_mapped_buffer(
+            device,
+            "banger maps gltf texture staging buffer",
+            wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            &image_bytes,
+        ));
+    }
+    Ok(BangerMapsUploadedTileBuffers {
+        vertex_buffers,
+        index_buffers,
+        texture_staging_buffers,
+    })
+}
+
 fn decode_banger_maps_content_record(record: &BangerMapsContentCacheRecord) -> BangerMapsContentDecodeRecord {
     let bytes = match fs::read(&record.cache_path) {
         Ok(bytes) => bytes,
@@ -1460,7 +2096,19 @@ fn decode_banger_b3dm(bytes: &[u8]) -> Result<(BangerB3dmHeaderProjection, &[u8]
     ))
 }
 
+struct BangerDecodedGlb<'a> {
+    projection: BangerGlbProjection,
+    gltf_summary: BangerGltfSummaryProjection,
+    gltf_value: Value,
+    bin_chunk: &'a [u8],
+}
+
 fn decode_banger_glb(bytes: &[u8]) -> Result<(BangerGlbProjection, BangerGltfSummaryProjection), String> {
+    let decoded = decode_banger_glb_full(bytes)?;
+    Ok((decoded.projection, decoded.gltf_summary))
+}
+
+fn decode_banger_glb_full(bytes: &[u8]) -> Result<BangerDecodedGlb<'_>, String> {
     if bytes.len() < 20 {
         return Err("glb shorter than header plus first chunk".to_string());
     }
@@ -1505,10 +2153,11 @@ fn decode_banger_glb(bytes: &[u8]) -> Result<(BangerGlbProjection, BangerGltfSum
         cursor = data_end;
     }
     let json_chunk = json_chunk.ok_or_else(|| "glb JSON chunk missing".to_string())?;
-    let gltf = decode_banger_gltf_json(json_chunk)?;
+    let gltf_value = parse_banger_gltf_json_value(json_chunk)?;
+    let gltf_summary = summarize_banger_gltf_value(&gltf_value);
     let bin = bin_chunk.unwrap_or(&[]);
-    Ok((
-        BangerGlbProjection {
+    Ok(BangerDecodedGlb {
+        projection: BangerGlbProjection {
             version,
             declared_byte_length,
             json_chunk_byte_count: json_chunk.len(),
@@ -1518,17 +2167,27 @@ fn decode_banger_glb(bytes: &[u8]) -> Result<(BangerGlbProjection, BangerGltfSum
             json_hash: sha256_hex(json_chunk),
             bin_hash: sha256_hex(bin),
         },
-        gltf,
-    ))
+        gltf_summary,
+        gltf_value,
+        bin_chunk: bin,
+    })
 }
 
 fn decode_banger_gltf_json(bytes: &[u8]) -> Result<BangerGltfSummaryProjection, String> {
+    let value = parse_banger_gltf_json_value(bytes)?;
+    Ok(summarize_banger_gltf_value(&value))
+}
+
+fn parse_banger_gltf_json_value(bytes: &[u8]) -> Result<Value, String> {
     let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     let json_text = std::str::from_utf8(json_bytes)
         .map_err(|error| format!("gltf json utf8: {error}"))?
         .trim_end_matches(|character| character == ' ' || character == '\0');
-    let value = serde_json::from_str::<Value>(json_text).map_err(|error| format!("gltf json parse: {error}"))?;
-    Ok(BangerGltfSummaryProjection {
+    serde_json::from_str::<Value>(json_text).map_err(|error| format!("gltf json parse: {error}"))
+}
+
+fn summarize_banger_gltf_value(value: &Value) -> BangerGltfSummaryProjection {
+    BangerGltfSummaryProjection {
         asset_version: value
             .get("asset")
             .and_then(|asset| asset.get("version"))
@@ -1556,7 +2215,7 @@ fn decode_banger_gltf_json(bytes: &[u8]) -> Result<BangerGltfSummaryProjection, 
         buffer_count: json_array_len(&value, "buffers"),
         extensions_used_count: json_array_len(&value, "extensionsUsed"),
         extensions_required_count: json_array_len(&value, "extensionsRequired"),
-    })
+    }
 }
 
 fn json_array_len(value: &Value, key: &str) -> usize {
@@ -2909,6 +3568,7 @@ mod tests {
             None,
             Some(false),
             Some(false),
+            None,
         );
         assert!(projection.ok);
         assert_eq!(projection.schema, "forge.banger.native_3d_tiles_root_ingest.v1");
@@ -2969,6 +3629,7 @@ mod tests {
             None,
             Some(true),
             Some(false),
+            None,
         );
         assert!(projection.ok);
         assert!(projection.content_cache.enabled);
@@ -2991,13 +3652,15 @@ mod tests {
         assert_eq!(glb_projection.chunk_count, 2);
         assert_eq!(glb_projection.unknown_chunk_count, 0);
         assert!(glb_projection.json_chunk_byte_count > 0);
-        assert_eq!(glb_projection.bin_chunk_byte_count, 4);
+        assert_eq!(glb_projection.bin_chunk_byte_count, 48);
         assert_eq!(gltf.asset_version, "2.0");
         assert_eq!(gltf.mesh_count, 1);
         assert_eq!(gltf.primitive_count, 1);
         assert_eq!(gltf.material_count, 1);
-        assert_eq!(gltf.accessor_count, 1);
-        assert_eq!(gltf.buffer_view_count, 1);
+        assert_eq!(gltf.texture_count, 1);
+        assert_eq!(gltf.image_count, 1);
+        assert_eq!(gltf.accessor_count, 2);
+        assert_eq!(gltf.buffer_view_count, 3);
         assert_eq!(gltf.buffer_count, 1);
     }
 
@@ -3028,6 +3691,7 @@ mod tests {
             None,
             Some(true),
             Some(true),
+            Some(true),
         );
         assert!(projection.ok);
         assert!(projection.content_decode.enabled);
@@ -3042,19 +3706,64 @@ mod tests {
         assert!(b3dm.glb_byte_count > 0);
         let glb = projection.content_decode.records[0].glb.as_ref().unwrap();
         assert_eq!(glb.version, 2);
-        assert_eq!(glb.bin_chunk_byte_count, 4);
+        assert_eq!(glb.bin_chunk_byte_count, 48);
         let gltf = projection.content_decode.records[0].gltf.as_ref().unwrap();
         assert_eq!(gltf.mesh_count, 1);
         assert_eq!(gltf.primitive_count, 1);
+        assert!(projection.gpu_staging.enabled);
+        assert_eq!(projection.gpu_staging.staged_content_count, 1);
+        assert_eq!(projection.gpu_staging.failed_content_count, 0);
+        assert_eq!(projection.gpu_staging.primitive_count, 1);
+        assert_eq!(projection.gpu_staging.vertex_buffer_byte_count, 36);
+        assert_eq!(projection.gpu_staging.index_buffer_byte_count, 6);
+        assert_eq!(projection.gpu_staging.texture_byte_count, 4);
+        let stage = &projection.gpu_staging.records[0];
+        assert_eq!(stage.primitive_stages[0].vertex_count, 3);
+        assert_eq!(stage.primitive_stages[0].index_count, 3);
+        assert_eq!(stage.primitive_stages[0].index_format, "uint16");
+        assert_eq!(stage.primitive_stages[0].wgpu_vertex_usage, "VERTEX|COPY_DST");
+        assert_eq!(stage.primitive_stages[0].wgpu_index_usage, "INDEX|COPY_DST");
+        assert_eq!(stage.material_stages[0].base_color_texture, Some(0));
+        assert_eq!(stage.texture_stages[0].source_kind, "embedded_buffer_view");
+        assert_eq!(stage.texture_stages[0].wgpu_usage, "TEXTURE_BINDING|COPY_DST");
+    }
+
+    #[test]
+    fn stages_glb_primitive_buffers_for_wgpu_upload_plan() {
+        let glb = test_glb_bytes();
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let (primitives, materials, textures) = stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+        assert_eq!(primitives.len(), 1);
+        assert_eq!(primitives[0].position_accessor, 0);
+        assert_eq!(primitives[0].index_accessor, Some(1));
+        assert_eq!(primitives[0].vertex_buffer_byte_count, 36);
+        assert_eq!(primitives[0].index_buffer_byte_count, 6);
+        assert_eq!(primitives[0].vertex_buffer_hash.len(), 64);
+        assert_eq!(primitives[0].index_buffer_hash.len(), 64);
+        assert_eq!(materials.len(), 1);
+        assert_eq!(materials[0].base_color_factor, [0.7, 0.82, 0.9, 1.0]);
+        assert_eq!(materials[0].metallic_factor, 0.0);
+        assert_eq!(materials[0].roughness_factor, 0.45);
+        assert_eq!(textures.len(), 1);
+        assert_eq!(textures[0].byte_count, 4);
+        assert_eq!(textures[0].content_hash, sha256_hex(&[137, 80, 78, 71]));
     }
 
     fn test_glb_bytes() -> Vec<u8> {
-        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0}]}],"materials":[{}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"buffers":[{"byteLength":4}]}"#;
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0}}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
         let mut json_chunk = json.to_vec();
         while json_chunk.len() % 4 != 0 {
             json_chunk.push(0x20);
         }
-        let mut bin_chunk = vec![1u8, 2, 3, 4];
+        let mut bin_chunk = Vec::new();
+        for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            bin_chunk.extend_from_slice(&value.to_le_bytes());
+        }
+        for index in [0u16, 1, 2] {
+            bin_chunk.extend_from_slice(&index.to_le_bytes());
+        }
+        bin_chunk.extend_from_slice(&[0, 0]);
+        bin_chunk.extend_from_slice(&[137, 80, 78, 71]);
         while bin_chunk.len() % 4 != 0 {
             bin_chunk.push(0);
         }
