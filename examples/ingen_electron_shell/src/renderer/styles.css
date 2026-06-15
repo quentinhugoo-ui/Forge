@@ -861,6 +861,111 @@ button {
   transition-delay: 0ms, 920ms, 920ms;
 }
 
+/* Replicated Windows system tray, shown bottom-right in widget mode while the
+   real taskbar is hidden. Translucent pill over the desktop for legibility. */
+.widgetSystemTray {
+  position: fixed;
+  right: 14px;
+  bottom: calc(var(--bottom-controls-bottom) - 3px);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 30px;
+  padding: 0 5px;
+  color: color-mix(in oklab, #ffffff, transparent 10%);
+  background: color-mix(in oklab, #0a0a0c, transparent 24%);
+  border: 1px solid color-mix(in oklab, #ffffff, transparent 90%);
+  border-radius: 9px !important;
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  font: 11px/1.1 "Geist", system-ui, sans-serif;
+  animation: widgetSystemTrayIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes widgetSystemTrayIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.widgetSystemTray button {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  width: 26px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px !important;
+  cursor: default;
+  transition: background 120ms ease-out, transform 120ms ease-out;
+}
+
+.widgetSystemTray button:hover,
+.widgetSystemTray button:focus-visible {
+  background: color-mix(in oklab, #ffffff, transparent 86%);
+  outline: 0;
+}
+
+.widgetSystemTray button:active {
+  transform: scale(0.94);
+}
+
+.widgetSystemTray button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+}
+
+.widgetSystemTray__battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: auto;
+  padding: 0 4px;
+}
+
+.widgetSystemTray__battery svg {
+  width: 22px;
+  height: 16px;
+}
+
+.widgetSystemTray__batteryPct {
+  font-size: 9.5px;
+  opacity: 0.82;
+  font-variant-numeric: tabular-nums;
+}
+
+.widgetSystemTray__clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  width: auto;
+  height: 26px;
+  padding: 0 3px 0 6px;
+  text-align: right;
+  line-height: 1.04;
+}
+
+.widgetSystemTray__time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.widgetSystemTray__date {
+  font-size: 9.5px;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+}
+
 .navIconButton {
   position: relative;
   display: inline-grid;
@@ -4487,7 +4592,8 @@ button {
   color: #d3b8ff;
 }
 
-.transcriptCodeActEvent--agent {
+.transcriptCodeActEvent--agent,
+.transcriptCodeActEvent--codeact {
   transition:
     color 260ms ease-out,
     opacity 260ms ease-out,
@@ -4509,12 +4615,38 @@ button {
   color: #d8dde0;
 }
 
+.transcriptCodeActEvent--codeact-working {
+  color: #d8dde0;
+  opacity: 1;
+  filter: drop-shadow(0 0 10px color-mix(in oklab, currentColor 18%, transparent));
+}
+
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon {
+  animation: transcriptAgentEventPulse 1150ms ease-in-out infinite;
+}
+
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__text {
+  color: #d8dde0;
+}
+
 .transcriptCodeActEvent--agent-complete {
   opacity: 0.72;
   animation: transcriptAgentEventSettle 260ms ease-out both;
 }
 
 .transcriptCodeActEvent--agent-complete .transcriptCodeActEvent__text {
+  color: #8d9396;
+}
+
+.transcriptCodeActEvent--codeact-complete {
+  opacity: 0.72;
+  animation: transcriptAgentEventSettle 260ms ease-out both;
+}
+
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__text {
   color: #8d9396;
 }
 
@@ -6728,6 +6860,8 @@ ol.assistantText__list li::before {
   .transcriptCodeActEvent__icon .brainSegmentIcon path,
   .transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__icon,
   .transcriptCodeActEvent--agent-complete,
+  .transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon,
+  .transcriptCodeActEvent--codeact-complete,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
   .transcriptContextCompactionEvent,

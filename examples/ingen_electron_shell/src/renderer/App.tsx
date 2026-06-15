@@ -29,6 +29,7 @@ import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-stor
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
+import { WidgetSystemTray } from "./WidgetSystemTray";
 import { selectWelcomeMessage } from "./welcome-message-store";
 
 function cssTokenStyle(): React.CSSProperties {
@@ -156,6 +157,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
      window shape, and add vertical margin so the icon's delayed translateY
      entrance never leaves it cropped before the next region sync. */
   { selector: ".widgetWindowsButton", padding: { left: 104, right: 10, top: 14, bottom: 14 } },
+  { selector: ".widgetSystemTray", padding: { left: 10, right: 10, top: 10, bottom: 10 } },
   { selector: ".bottomControls button", padding: 1 },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
@@ -268,11 +270,16 @@ export function App() {
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
+  const [canvasMapsClosing, setCanvasMapsClosing] = useState(false);
   const [codingLivePreview, setCodingLivePreview] = useState<CodingLivePreviewTarget | null>(null);
   const [widgetMode, setWidgetMode] = useState(false);
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetRestoring, setWidgetRestoring] = useState(false);
+  /* Tracks whether the user toggled the real Windows taskbar back on (via the
+     Windows icon) while in widget mode. The replicated system tray shows only
+     when the real taskbar is hidden. */
+  const [widgetTaskbarShown, setWidgetTaskbarShown] = useState(false);
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
@@ -299,6 +306,7 @@ export function App() {
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceNoticeTimerRef = useRef<number | null>(null);
   const parallelSidebarBirthTimerRef = useRef<number | null>(null);
+  const canvasMapsCloseTimerRef = useRef<number | null>(null);
   const widgetSurfaceCloseTimerRef = useRef<number | null>(null);
   const widgetModeSequenceRef = useRef(0);
   const widgetModeTransitioningRef = useRef(false);
@@ -441,6 +449,7 @@ export function App() {
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
     canvasMapsOpen ? "shell--maps-canvas-open" : "",
+    canvasMapsClosing ? "shell--maps-canvas-closing" : "",
     codingLivePreview ? "shell--coding-live-preview-open" : "",
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
@@ -454,6 +463,12 @@ export function App() {
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
+
+  useEffect(() => {
+    /* Entering or leaving widget mode resets to the taskbar-hidden state; the
+       Windows icon then flips this while inside widget mode. */
+    setWidgetTaskbarShown(false);
+  }, [widgetMode]);
 
   useEffect(() => {
     const widgetSurfaceVisible = widgetMode || widgetMinimizingPhase !== "";
@@ -881,6 +896,11 @@ export function App() {
   }, []);
 
   const openCanvasMaps = useCallback((parallelSessionIndex = 0) => {
+    if (canvasMapsCloseTimerRef.current !== null) {
+      window.clearTimeout(canvasMapsCloseTimerRef.current);
+      canvasMapsCloseTimerRef.current = null;
+    }
+    setCanvasMapsClosing(false);
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
@@ -898,9 +918,20 @@ export function App() {
   }, [panelsChatSnapshot.activeSessionId, parallelPrompts.length]);
 
   const closeCanvasMaps = useCallback(() => {
-    mapsOwnerSessionIdRef.current = null;
-    canvasMapsOpenRef.current = false;
-    setCanvasMapsOpen(false);
+    if (!canvasMapsOpenRef.current) {
+      return;
+    }
+    if (canvasMapsCloseTimerRef.current !== null) {
+      window.clearTimeout(canvasMapsCloseTimerRef.current);
+    }
+    setCanvasMapsClosing(true);
+    canvasMapsCloseTimerRef.current = window.setTimeout(() => {
+      mapsOwnerSessionIdRef.current = null;
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+      setCanvasMapsClosing(false);
+      canvasMapsCloseTimerRef.current = null;
+    }, 260);
     setMapsParallelIndex(0);
     void globalThis.window?.forgeShell?.hideNativeMaps?.();
   }, []);
@@ -1279,6 +1310,7 @@ export function App() {
         aria-label="Toggle Windows taskbar"
         tabIndex={widgetMode ? 0 : -1}
         onClick={() => {
+          setWidgetTaskbarShown((shown) => !shown);
           void globalThis.window?.forgeWindowControls?.toggleWidgetTaskbar?.();
         }}
       >
@@ -1286,6 +1318,8 @@ export function App() {
           <path d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z" />
         </svg>
       </button>
+
+      <WidgetSystemTray visible={widgetMode && !widgetTaskbarShown} />
 
       <section className="workspaceHeader" aria-label="Workspace header">
         {isFullPageCanvas && !isBrainCanvas ? (
