@@ -16896,6 +16896,18 @@ function installIpc(): void {
       provider: "google_photorealistic_3d_tiles" as const,
       rendererModel: "cesium_for_unreal_style_3d_tileset" as const,
       rootTilesetUrl: "",
+      nativeStreamer: {
+        schema: "forge.banger.native_3d_tiles_streamer.v1" as const,
+        authority: "banger_native_engine" as const,
+        status: "contract_ready_visual_fallback_active",
+        rootIngestionStage: "3d_tiles_root_json_manifest_ingestion",
+        traversalStage: "screen_space_error_priority_queue_with_tile_budget",
+        contentDecodeStage: "b3dm_glb_gltf_mesh_material_texture_decode",
+        georeferenceStage: "wgs84_ecef_to_enu_floating_origin",
+        gpuSubmissionStage: "meshlet_or_indexed_mesh_upload_pending",
+        visualFallback: "cesiumjs_photorealistic_tiles_until_native_submission_promoted",
+        blocker: "native_gltf_material_texture_submission_not_promoted"
+      },
       directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json" as const,
       requestBudget: 18,
       rootRequestTtlHours: 3 as const,

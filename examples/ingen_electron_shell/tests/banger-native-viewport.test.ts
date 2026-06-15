@@ -88,6 +88,11 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("forge.banger.maps_photorealistic_3d_tiles_contract.v1");
     expect(nativeBridgeSource).toContain("google_photorealistic_3d_tiles");
     expect(nativeBridgeSource).toContain("Cesium3DTileset_style_native_streamer");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_streamer.v1");
+    expect(nativeBridgeSource).toContain("3d_tiles_root_json_manifest_ingestion");
+    expect(nativeBridgeSource).toContain("b3dm_glb_gltf_mesh_material_texture_decode");
+    expect(nativeBridgeSource).toContain("wgs84_ecef_to_enu_floating_origin");
+    expect(nativeBridgeSource).toContain("native_gltf_material_texture_submission_not_promoted");
     expect(nativeBridgeSource).toContain("CesiumGeoreference_style_floating_origin");
     expect(nativeBridgeSource).toContain("screen_space_error");
     expect(nativeBridgeSource).toContain("visible_on_screen");
@@ -105,6 +110,9 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
     expect(canvasSurfacesSource).toContain("data-tileset-georeference");
     expect(canvasSurfacesSource).toContain("data-tileset-lod");
+    expect(canvasSurfacesSource).toContain("data-native-streamer");
+    expect(canvasSurfacesSource).toContain("data-native-streamer-status");
+    expect(canvasSurfacesSource).toContain("data-native-streamer-blocker");
     expect(canvasSurfacesSource).toContain("redactedTilesetEndpoint");
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
@@ -159,6 +167,8 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("showCreditsOnScreen: true");
     expect(mainSource).toContain("policy: \"screen_space_error\"");
     expect(mainSource).toContain("authority: \"banger_tileset_residency_cache\"");
+    expect(mainSource).toContain("nativeStreamer");
+    expect(mainSource).toContain("meshlet_or_indexed_mesh_upload_pending");
   });
 
   it("rebuilds stale Electron renderer assets before reusing the desktop fast path", () => {

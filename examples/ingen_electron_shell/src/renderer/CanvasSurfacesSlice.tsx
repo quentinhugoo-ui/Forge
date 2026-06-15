@@ -228,6 +228,9 @@ function BangerSphereNativeViewport({ searchQuery, target }: { searchQuery?: str
       data-tileset-lod={tilesConfig ? `${tilesConfig.lod.policy}:${tilesConfig.lod.maxScreenSpaceError}` : "screen_space_error:pending"}
       data-tileset-attribution={tilesConfig?.attribution.mode ?? "visible_on_screen"}
       data-tileset-cache={tilesConfig?.cache.authority ?? "banger_tileset_residency_cache"}
+      data-native-streamer={tilesConfig?.nativeStreamer.schema ?? "forge.banger.native_3d_tiles_streamer.v1"}
+      data-native-streamer-status={tilesConfig?.nativeStreamer.status ?? "pending"}
+      data-native-streamer-blocker={tilesConfig?.nativeStreamer.blocker ?? "pending"}
     >
       {tilesConfig?.accepted && tilesConfig.rootTilesetUrl && !cesiumFailed ? (
         <>

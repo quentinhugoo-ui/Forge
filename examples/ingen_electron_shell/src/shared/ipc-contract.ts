@@ -1724,6 +1724,18 @@ export interface BangerPresentLoopBootstrapResult {
     rendererContract: "Cesium3DTileset_style_native_streamer";
     rootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
     rootRequestTtlHours: 3;
+    nativeStreamer?: {
+      schema: "forge.banger.native_3d_tiles_streamer.v1";
+      authority: "banger_native_engine";
+      status: string;
+      rootIngestionStage: string;
+      traversalStage: string;
+      contentDecodeStage: string;
+      georeferenceStage: string;
+      gpuSubmissionStage: string;
+      visualFallback: string;
+      blocker: string;
+    };
     attribution: {
       required: true;
       mode: "visible_on_screen";
@@ -1758,6 +1770,18 @@ export interface BangerGoogleTilesConfigResult {
   rootTilesetUrl: string;
   cesiumIonAccessTokenUrl?: string;
   cesiumIonAccessToken?: string;
+  nativeStreamer: {
+    schema: "forge.banger.native_3d_tiles_streamer.v1";
+    authority: "banger_native_engine";
+    status: string;
+    rootIngestionStage: string;
+    traversalStage: string;
+    contentDecodeStage: string;
+    georeferenceStage: string;
+    gpuSubmissionStage: string;
+    visualFallback: string;
+    blocker: string;
+  };
   directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
   requestBudget: number;
   rootRequestTtlHours: 3;

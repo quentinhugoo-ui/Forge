@@ -161,6 +161,7 @@ struct BangerMapsTilesetContract {
     renderer_contract: &'static str,
     root_tileset_endpoint: &'static str,
     root_request_ttl_hours: u32,
+    native_streamer: BangerMapsNative3DTilesStreamer,
     georeference: BangerMapsGeoreference,
     traversal: BangerMapsTraversalPolicy,
     cache: BangerMapsResidencyCache,
@@ -168,6 +169,21 @@ struct BangerMapsTilesetContract {
     credential_policy: &'static str,
     interop_floor: BangerMapsInteropFloor,
     contract_hash: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsNative3DTilesStreamer {
+    schema: &'static str,
+    authority: &'static str,
+    status: &'static str,
+    root_ingestion_stage: &'static str,
+    traversal_stage: &'static str,
+    content_decode_stage: &'static str,
+    georeference_stage: &'static str,
+    gpu_submission_stage: &'static str,
+    visual_fallback: &'static str,
+    blocker: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -222,6 +238,18 @@ impl BangerMapsTilesetContract {
             renderer_contract: "Cesium3DTileset_style_native_streamer",
             root_tileset_endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
             root_request_ttl_hours: 3,
+            native_streamer: BangerMapsNative3DTilesStreamer {
+                schema: "forge.banger.native_3d_tiles_streamer.v1",
+                authority: "banger_native_engine",
+                status: "contract_ready_visual_fallback_active",
+                root_ingestion_stage: "3d_tiles_root_json_manifest_ingestion",
+                traversal_stage: "screen_space_error_priority_queue_with_tile_budget",
+                content_decode_stage: "b3dm_glb_gltf_mesh_material_texture_decode",
+                georeference_stage: "wgs84_ecef_to_enu_floating_origin",
+                gpu_submission_stage: "meshlet_or_indexed_mesh_upload_pending",
+                visual_fallback: "cesiumjs_photorealistic_tiles_until_native_submission_promoted",
+                blocker: "native_gltf_material_texture_submission_not_promoted",
+            },
             georeference: BangerMapsGeoreference {
                 ellipsoid: "WGS84",
                 origin_latitude: 37.42207,
