@@ -12786,15 +12786,15 @@ async function sampleNativeWidgetWallpaper(
     let lightPixels = 0;
     for (let index = 0; index < pixelCount; index += 1) {
       const offset = index * 4;
-      const brightness = (bitmap[offset] + bitmap[offset + 1] + bitmap[offset + 2]) / 765;
-      brightnessTotal += brightness;
-      if (brightness >= 0.62) {
+      const luma = (0.2126 * bitmap[offset] + 0.7152 * bitmap[offset + 1] + 0.0722 * bitmap[offset + 2]) / 255;
+      brightnessTotal += luma;
+      if (luma >= 0.48) {
         lightPixels += 1;
       }
     }
     const luminance = brightnessTotal / pixelCount;
     const lightRatio = lightPixels / pixelCount;
-    const dominantLight = luminance >= 0.56 || (luminance >= 0.48 && lightRatio >= 0.52) || lightRatio >= 0.64;
+    const dominantLight = luminance >= 0.42 || (luminance >= 0.34 && lightRatio >= 0.18) || lightRatio >= 0.34;
     return widgetWallpaperSampleResult(true, {
       tone: dominantLight ? "light" : "dark",
       dominantLight,

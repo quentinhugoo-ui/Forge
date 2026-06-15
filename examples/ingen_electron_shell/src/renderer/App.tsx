@@ -154,6 +154,7 @@ type WidgetHitPadding = number | { left?: number; right?: number; top?: number; 
 
 const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: WidgetHitPadding }> = [
   { selector: ".composer", padding: 6 },
+  { selector: ".widgetWallpaperShadow", padding: 0 },
   /* Asymmetric: stretch left so the hover tooltip stays inside the native
      window shape, and add vertical margin so the icon's delayed translateY
      entrance never leaves it cropped before the next region sync. */
@@ -550,7 +551,7 @@ export function App() {
                 if (!current) {
                   return false;
                 }
-                return !(result.luminance <= 0.34 && result.lightRatio <= 0.18);
+                return !(result.luminance <= 0.24 && result.lightRatio <= 0.08);
               });
             })
             .catch((error: unknown) => {
@@ -664,7 +665,7 @@ export function App() {
       void setWidgetHitRegions([]);
       void setWidgetClickThrough?.(false);
     };
-  }, [widgetLayoutLock, widgetMode]);
+  }, [widgetLayoutLock, widgetMode, widgetWallpaperLight]);
 
   useEffect(() => {
     if (workspaceFolder) {
@@ -1437,6 +1438,7 @@ export function App() {
         </svg>
       </button>
 
+      {widgetMode && widgetWallpaperLight ? <div className="widgetWallpaperShadow" aria-hidden="true" /> : null}
       <WidgetSystemTray visible={widgetMode && !widgetTaskbarShown} />
 
       <section className="workspaceHeader" aria-label="Workspace header">
