@@ -4034,7 +4034,7 @@ function webExplorerCodeActInstructions(moduleId = ""): string {
     BRAIN_CODEACT_ROUTING_RULES,
     `Quand le Brain actif est general et qu'une demande correspond a ${BRAIN_SCIENCE_COMMAND} ou ${BRAIN_CODING_COMMAND}, active d'abord ce CodeAct de Brain avec une phrase naturelle courte; ne commence pas par une longue reponse specialisee sans switch.`,
     `N'utilise ${BRAIN_GOOGLEWEB_COMMAND} que pour une recherche web generique qui n'est couverte par aucun module specifique du Brain.`,
-    `Regle geographique stricte: lieu geographique detecte seul = ${BRAIN_MAPS_COMMAND}; lieu geographique + champ lexical voyage/vacances/sejour = ${BRAIN_MAPS_COMMAND} puis ${BRAIN_AIRBNB_COMMAND}. Pour une ville, un pays, une region, la meteo d'une ville, une carte, un trajet, Google Earth, une localisation ou des coordonnees sans vocabulaire voyage/vacances/sejour, ecris une phrase naturelle puis active ${BRAIN_MAPS_COMMAND}. Si le meme lieu apparait avec voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, voyageurs, logement, hotel, location ou reservation, ecris une phrase naturelle puis active d'abord ${BRAIN_MAPS_COMMAND}, puis ${BRAIN_AIRBNB_COMMAND} comme page suivante du WebExplorer. Ne lis jamais la position de l'ordinateur sans permission explicite.`,
+    `Regle geographique stricte: ${BRAIN_MAPS_COMMAND} exige une intention carte/localisation/itineraire/coordonnees/Google Earth/meteo locale explicite. Un nom de pays, ville, region ou periode historique dans une demande culturelle, litteraire, historique, de tableau, de vocabulaire ou d'explication ne suffit jamais: utilise plutot ${BRAIN_WEBSEARCH_COMMAND}, puis ${BRAIN_SCRAPERS_COMMAND} si des sources, images ou medias doivent enrichir la conversation. Si le meme lieu apparait avec voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, voyageurs, logement, hotel, location ou reservation, ecris une phrase naturelle puis active d'abord ${BRAIN_MAPS_COMMAND}, puis ${BRAIN_AIRBNB_COMMAND} comme page suivante du WebExplorer. Ne lis jamais la position de l'ordinateur sans permission explicite.`,
     `Si l'utilisateur demande de generer/creer une image, ecris une phrase naturelle puis active ${BRAIN_NEWIMAGE_COMMAND} avec say et prompt.`,
     `Si l'utilisateur demande de modifier/retoucher/transformer une image attachee, selectionnee ou visible dans le registre des documents de la session, ecris une phrase naturelle puis active ${BRAIN_EDITIMAGE_COMMAND} avec say, instruction et image_ref.`,
     `Pour une demande comme retirer un element de l'image, enlever le fond, changer les couleurs ou modifier l'image, n'ecris pas un prompt pour un outil externe: active ${BRAIN_EDITIMAGE_COMMAND}.`,
@@ -4559,7 +4559,32 @@ async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<M
 }
 
 function userTextHasTravelOrStayIntent(value: string): boolean {
-  return /\b(airbnb|voyage|voyager|vacances|partir|depart|départ|destination|tourisme|touristique|visiter|visite|sejour|séjour|weekend|week-end|logement|loger|hebergement|hébergement|hotel|hôtel|auberge|reserver|réserver|reservation|réservation|booking|location|louer|appartement|maison|villa|chambre|nuits?|voyageurs?)\b/i.test(value);
+  return /\b(airbnb|voyage|voyager|vacances|partir|depart|destination|tourisme|touristique|visiter|visite|sejour|weekend|week-end|logement|loger|hebergement|hotel|auberge|reserver|reservation|booking|location|louer|appartement|maison|villa|chambre|nuits?|voyageurs?)\b/i.test(normalizedRoutingIntentText(value));
+}
+
+function normalizedRoutingIntentText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function userTextHasDirectMapsIntent(value: string): boolean {
+  const text = normalizedRoutingIntentText(value);
+  return /\b(carte|map|maps|google earth|localise|localiser|situe|situer|ou est|itineraire|route|trajet|coordonnees?|gps|latitude|longitude|geographie|geographique|contexte geographique|meteo|temperature|climat)\b/i.test(text);
+}
+
+function userTextHasKnowledgeOnlyPlaceIntent(value: string): boolean {
+  const text = normalizedRoutingIntentText(value);
+  return !userTextHasDirectMapsIntent(value) &&
+    !userTextHasTravelOrStayIntent(value) &&
+    /\b(litterature|histoire|historique|culture|mythologie|philosophie|poesie|theatre|auteur|auteurs|oeuvre|oeuvres|classe|classer|tableau|categorie|categories|explique|parle|raconte|resume|synthese|notion|notions|vocabulaire|mots?)\b/i.test(text);
+}
+
+function shouldSuppressMapsForUserText(value: string): boolean {
+  return Boolean(value.trim()) && userTextHasKnowledgeOnlyPlaceIntent(value);
 }
 
 function cleanInferredMapsTarget(value: string): string {
@@ -4579,10 +4604,9 @@ function inferGeographicTargetFromUserText(value: string): string {
     /\b(?:partir|aller)\s+(?:en\s+)?(?:vacances?|voyage|sejour|séjour|weekend|week-end)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:voyage|vacances|sejour|séjour|weekend|week-end|tourisme)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:partir|voyager|visiter|visite)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
-    /\b(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+(.{2,96})$/i,
     /\b(?:meteo|météo|temperature|température|climat)\s+(?:a|à|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:ou|où)\s+est\s+(.{2,96})$/i,
-    /\b(?:carte|map|maps|google earth|localise|situe)\s+(?:de|d'|a|à|sur|pour)?\s*(.{2,96})$/i
+    /\b(?:carte|map|maps|google earth|localise|situe|itineraire|route|trajet|coordonnees|gps)\s+(?:de|d'|a|à|sur|pour|vers)?\s*(.{2,96})$/i
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -4591,20 +4615,27 @@ function inferGeographicTargetFromUserText(value: string): string {
       return target;
     }
   }
-  const simplePlaceIntro = text.match(/^(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+([A-ZÀ-Ý][\p{L}\p{M}' -]{1,96})$/iu);
-  const simplePlace = cleanInferredMapsTarget(simplePlaceIntro?.[1] ?? "");
-  if (simplePlace.length >= 2) {
-    return simplePlace;
-  }
   return "";
 }
 
 function inferMapsTargetFromUserText(value: string): string {
   const text = value.replace(/\s+/g, " ").trim();
-  if (!text || userTextHasTravelOrStayIntent(text)) {
+  if (!text || userTextHasTravelOrStayIntent(text) || shouldSuppressMapsForUserText(text) || !userTextHasDirectMapsIntent(text)) {
     return "";
   }
   return inferGeographicTargetFromUserText(text);
+}
+
+function stripMapsCodeActLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return trimmed !== BRAIN_MAPS_COMMAND && !trimmed.startsWith(`${BRAIN_MAPS_COMMAND} `);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function stripCompetingGeographicCodeActLines(text: string): string {
@@ -14547,13 +14578,25 @@ function executeAssistantGoogleWebCodeAct(message: TranscriptMessage, parallelSe
   };
 }
 
-async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): Promise<TranscriptMessage> {
+async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0, originalUserText = ""): Promise<TranscriptMessage> {
   if (message.role !== "assistant") {
     return message;
   }
   const request = extractMapsCodeAct(message.text);
   if (!request) {
     return message;
+  }
+  if (shouldSuppressMapsForUserText(originalUserText)) {
+    const text = stripMapsCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
+    return {
+      ...message,
+      text,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        suppressedMapsCodeAct: request,
+        originalUserText
+      })
+    };
   }
   const resolvedRequest = await resolveMapsCodeActRequest(request);
   const navigation = navigateNativeWebExplorerToMaps(resolvedRequest, parallelSessionIndex);
@@ -14904,7 +14947,8 @@ async function injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(message: Tran
 async function executeAssistantModuleCodeActs(
   message: TranscriptMessage,
   moduleId: string,
-  parallelSessionIndex: number
+  parallelSessionIndex: number,
+  originalUserText = ""
 ): Promise<TranscriptMessage> {
   if (moduleId === "gmail") {
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
@@ -14918,7 +14962,7 @@ async function executeAssistantModuleCodeActs(
     next.text.includes(BRAIN_AIRBNB_COMMAND) &&
     !next.text.includes("MAPS_RESULT") &&
     !next.text.includes("AIRBNB_RESULT");
-  next = await executeAssistantMapsCodeAct(next, parallelSessionIndex);
+  next = await executeAssistantMapsCodeAct(next, parallelSessionIndex, originalUserText);
   if (shouldOpenAirbnbAfterMaps && next.text.includes("MAPS_RESULT")) {
     await waitForNativeMapsFirstVisual();
   }
@@ -16180,7 +16224,7 @@ async function executeUniversalLoopOrchestratorPass(params: {
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, params.originalUserText, params.moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, params.originalUserText, params.moduleId, params.parallelSessionIndex);
   throwIfAssistantRunCancelled(params.assistantRun);
-  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex);
+  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex, params.originalUserText);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, params.session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
