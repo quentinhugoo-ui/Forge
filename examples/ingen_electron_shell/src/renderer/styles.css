@@ -8905,8 +8905,8 @@ ol.assistantText__list li::before {
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
   inset: 50% auto auto 50%;
-  width: min(58vw, 72vh, 760px);
-  height: min(58vw, 72vh, 760px);
+  width: min(70.18vw, 87.12vh, 920px);
+  height: min(70.18vw, 87.12vh, 920px);
   overflow: visible;
   transform: translate3d(-50%, -50%, 0);
 }
@@ -8928,8 +8928,12 @@ ol.assistantText__list li::before {
   display: none;
 }
 
+.mapsCanvasGrid--earthActive .webExplorerClose {
+  display: none;
+}
+
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 760px);
+  width: min(100%, 920px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
