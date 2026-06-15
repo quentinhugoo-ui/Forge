@@ -552,8 +552,10 @@ struct BangerNativeScenePipeline {
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    vertex_count: u32,
     index_count: u32,
     instance_count: u32,
+    mesh_source: &'static str,
     scene_mesh_hash: String,
     scene_graph_hash: String,
     instance_buffer_hash: String,
@@ -2507,7 +2509,7 @@ fn run_banger_native_host(
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}:{}",
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}:{}",
             config.width,
             config.height,
             format,
@@ -2515,6 +2517,7 @@ fn run_banger_native_host(
             alpha_mode,
             parent_hash,
             child_hash,
+            scene_pipeline.mesh_source,
             scene_pipeline.scene_mesh_hash,
             scene_pipeline.scene_graph_hash,
             scene_pipeline.index_count,
@@ -2554,7 +2557,7 @@ fn run_banger_native_host(
         render_pass_count: 1,
         submitted_frame_count: 1,
         draw_call_count: 1,
-        vertex_count: 8,
+        vertex_count: scene_pipeline.vertex_count,
         index_count: scene_pipeline.index_count,
         instance_count: scene_pipeline.instance_count,
         scene_object_count: scene_pipeline.instance_count,
@@ -2827,23 +2830,27 @@ fn create_banger_first_scene_pipeline(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
         mapped_at_creation: false,
     });
-    let (vertex_bytes, index_bytes, instance_bytes) = if scene_kind == "maps_sphere" {
-        (
-            banger_sphere_vertex_bytes(24, 48),
-            banger_sphere_index_bytes(24, 48),
-            banger_maps_sphere_instance_bytes(),
-        )
+    let mesh = if scene_kind == "maps_sphere" {
+        banger_maps_first_tile_render_mesh_bytes().unwrap_or_else(banger_maps_sphere_render_mesh_bytes)
     } else {
-        (
-            banger_cube_vertex_bytes(),
-            banger_cube_index_bytes(),
-            banger_scene_instance_bytes(),
-        )
+        BangerRenderMeshBytes {
+            vertex_bytes: banger_cube_vertex_bytes(),
+            index_bytes: banger_cube_index_bytes(),
+            instance_bytes: banger_scene_instance_bytes(),
+            source: "banger_dense_cube_field_fallback",
+        }
     };
+    let BangerRenderMeshBytes {
+        vertex_bytes,
+        index_bytes,
+        instance_bytes,
+        source: mesh_source,
+    } = mesh;
     let instance_buffer_hash = sha256_hex(&instance_bytes);
     let scene_mesh_hash = sha256_hex(
         format!(
-            "banger-cube-mesh-v1:{}:{}",
+            "banger-native-render-mesh-v2:{}:{}:{}",
+            mesh_source,
             sha256_hex(&vertex_bytes),
             sha256_hex(&index_bytes)
         )
@@ -3004,8 +3011,10 @@ fn create_banger_first_scene_pipeline(
         vertex_buffer,
         instance_buffer,
         index_buffer,
+        vertex_count: (vertex_bytes.len() / 24) as u32,
         index_count: (index_bytes.len() / 2) as u32,
         instance_count: (instance_bytes.len() / 80) as u32,
+        mesh_source,
         scene_mesh_hash,
         scene_graph_hash,
         instance_buffer_hash,
@@ -3110,6 +3119,241 @@ fn banger_create_mapped_buffer(
     buffer.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
     buffer.unmap();
     buffer
+}
+
+#[cfg(target_os = "windows")]
+struct BangerRenderMeshBytes {
+    vertex_bytes: Vec<u8>,
+    index_bytes: Vec<u8>,
+    instance_bytes: Vec<u8>,
+    source: &'static str,
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_sphere_render_mesh_bytes() -> BangerRenderMeshBytes {
+    BangerRenderMeshBytes {
+        vertex_bytes: banger_sphere_vertex_bytes(24, 48),
+        index_bytes: banger_sphere_index_bytes(24, 48),
+        instance_bytes: banger_maps_sphere_instance_bytes(),
+        source: "banger_maps_sphere_fallback",
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_first_tile_render_mesh_bytes() -> Option<BangerRenderMeshBytes> {
+    let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
+    if !ingest.ok || ingest.gpu_staging.staged_content_count == 0 {
+        return None;
+    }
+    for record in ingest.content_decode.records.iter().filter(|record| record.error.is_none()) {
+        let bytes = fs::read(&record.cache_path).ok()?;
+        let candidate = match record.container {
+            "b3dm" => decode_banger_b3dm(&bytes)
+                .and_then(|(_, glb_bytes)| {
+                    let decoded = decode_banger_glb_full(glb_bytes)?;
+                    banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk)
+                }),
+            "glb" => decode_banger_glb_full(&bytes)
+                .and_then(|decoded| banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk)),
+            _ => Err(format!("render mesh unsupported container {}", record.container)),
+        };
+        if let Ok(mesh) = candidate {
+            return Some(mesh);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_render_mesh_from_gltf(gltf: &Value, bin_chunk: &[u8]) -> Result<BangerRenderMeshBytes, String> {
+    let meshes = gltf
+        .get("meshes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gltf meshes array missing".to_string())?;
+    for (mesh_index, mesh) in meshes.iter().enumerate() {
+        let primitives = mesh.get("primitives").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        for (primitive_index, primitive) in primitives.iter().enumerate() {
+            match banger_maps_render_mesh_from_primitive(gltf, bin_chunk, primitive) {
+                Ok(mesh) => return Ok(mesh),
+                Err(error) => {
+                    let _ = (mesh_index, primitive_index, error);
+                }
+            }
+        }
+    }
+    Err("no drawable glTF primitive could be converted to Banger render mesh".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_render_mesh_from_primitive(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    primitive: &Value,
+) -> Result<BangerRenderMeshBytes, String> {
+    let attributes = primitive
+        .get("attributes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "primitive missing attributes".to_string())?;
+    let position_accessor = attributes
+        .get("POSITION")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "primitive missing POSITION accessor".to_string())? as usize;
+    let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
+    if position.component_type != 5126 || position.accessor_type != "VEC3" {
+        return Err(format!(
+            "render primitive POSITION must be FLOAT VEC3, got {} {}",
+            position.component_type, position.accessor_type
+        ));
+    }
+    if position.count > u16::MAX as usize {
+        return Err(format!("render primitive has {} vertices; current first draw path is u16", position.count));
+    }
+    let material_color = primitive
+        .get("material")
+        .and_then(Value::as_u64)
+        .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
+        .unwrap_or([0.54, 0.78, 0.92, 1.0]);
+    let vertex_bytes = banger_maps_position_bytes_to_render_vertices(&position.bytes, material_color)?;
+    let index_bytes = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
+        Some(index_accessor) => banger_maps_u16_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
+        None => banger_maps_generated_u16_index_bytes(position.count)?,
+    };
+    Ok(BangerRenderMeshBytes {
+        vertex_bytes,
+        index_bytes,
+        instance_bytes: banger_maps_tile_instance_bytes(),
+        source: "banger_maps_3d_tiles_gltf_first_primitive",
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_position_bytes_to_render_vertices(
+    position_bytes: &[u8],
+    material_color: [f32; 4],
+) -> Result<Vec<u8>, String> {
+    if position_bytes.len() % 12 != 0 {
+        return Err("POSITION byte length is not a multiple of Float32x3".to_string());
+    }
+    let mut positions = Vec::with_capacity(position_bytes.len() / 12);
+    for chunk in position_bytes.chunks_exact(12) {
+        positions.push([
+            f32::from_le_bytes(chunk[0..4].try_into().expect("position x bytes")),
+            f32::from_le_bytes(chunk[4..8].try_into().expect("position y bytes")),
+            f32::from_le_bytes(chunk[8..12].try_into().expect("position z bytes")),
+        ]);
+    }
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for position in &positions {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(position[axis]);
+            max[axis] = max[axis].max(position[axis]);
+        }
+    }
+    let center = [
+        (min[0] + max[0]) * 0.5,
+        (min[1] + max[1]) * 0.5,
+        (min[2] + max[2]) * 0.5,
+    ];
+    let extent = [
+        (max[0] - min[0]).abs(),
+        (max[1] - min[1]).abs(),
+        (max[2] - min[2]).abs(),
+    ];
+    let scale = extent.into_iter().fold(0.0_f32, f32::max).max(1.0);
+    let mut bytes = Vec::with_capacity(positions.len() * 24);
+    for position in positions {
+        let normalized = [
+            (position[0] - center[0]) / scale * 2.8,
+            (position[1] - center[1]) / scale * 2.8,
+            (position[2] - center[2]) / scale * 2.8,
+        ];
+        for value in [
+            normalized[0],
+            normalized[1],
+            normalized[2],
+            material_color[0],
+            material_color[1],
+            material_color[2],
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_u16_index_bytes_from_accessor(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    accessor_index: usize,
+) -> Result<Vec<u8>, String> {
+    let indices = banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?;
+    if indices.accessor_type != "SCALAR" {
+        return Err(format!("render indices must be SCALAR, got {}", indices.accessor_type));
+    }
+    match indices.component_type {
+        5121 => {
+            let mut bytes = Vec::with_capacity(indices.bytes.len() * 2);
+            for index in indices.bytes {
+                bytes.extend_from_slice(&(index as u16).to_le_bytes());
+            }
+            Ok(bytes)
+        }
+        5123 => Ok(indices.bytes),
+        5125 => {
+            let mut bytes = Vec::with_capacity(indices.count * 2);
+            for chunk in indices.bytes.chunks_exact(4) {
+                let index = u32::from_le_bytes(chunk.try_into().expect("u32 index bytes"));
+                if index > u16::MAX as u32 {
+                    return Err(format!("u32 index {index} exceeds current u16 draw path"));
+                }
+                bytes.extend_from_slice(&(index as u16).to_le_bytes());
+            }
+            Ok(bytes)
+        }
+        other => Err(format!("unsupported render index component type {other}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_generated_u16_index_bytes(vertex_count: usize) -> Result<Vec<u8>, String> {
+    if vertex_count > u16::MAX as usize {
+        return Err(format!("cannot generate u16 indices for {vertex_count} vertices"));
+    }
+    let mut bytes = Vec::with_capacity(vertex_count * 2);
+    for index in 0..vertex_count {
+        bytes.extend_from_slice(&(index as u16).to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_gltf_material_base_color(gltf: &Value, material_index: usize) -> Option<[f32; 4]> {
+    let material = gltf.get("materials").and_then(Value::as_array)?.get(material_index)?;
+    material
+        .get("pbrMetallicRoughness")
+        .and_then(|pbr| pbr.get("baseColorFactor"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            let mut color = [1.0f32, 1.0, 1.0, 1.0];
+            for (index, item) in items.iter().take(4).enumerate() {
+                color[index] = item.as_f64().unwrap_or(1.0) as f32;
+            }
+            color
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_tile_instance_bytes() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(80);
+    for value in banger_model_matrix([0.0, -0.2, 0.0], [1.0, 1.0, 1.0]) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [1.0_f32, 1.0, 1.0, 2.0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -3512,6 +3756,24 @@ mod tests {
         assert_eq!(f32::from_le_bytes(instance_bytes[76..80].try_into().unwrap()), 3.0);
         assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn converts_staged_gltf_into_banger_render_mesh_bytes() {
+        let glb = test_glb_bytes();
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+        assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
+        assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+        assert_eq!(mesh.index_bytes.len(), 3 * 2);
+        assert_eq!(mesh.instance_bytes.len(), 80);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[12..16].try_into().unwrap()), 0.7);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[16..20].try_into().unwrap()), 0.82);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[20..24].try_into().unwrap()), 0.9);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
+        assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
+        assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
     }
 
     #[cfg(target_os = "windows")]

@@ -101,6 +101,8 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("INDEX|COPY_DST");
     expect(nativeBridgeSource).toContain("TEXTURE_BINDING|COPY_DST");
     expect(nativeBridgeSource).toContain("upload_banger_maps_gltf_payload_to_wgpu");
+    expect(nativeBridgeSource).toContain("banger_maps_render_mesh_from_gltf");
+    expect(nativeBridgeSource).toContain("banger_maps_3d_tiles_gltf_first_primitive");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_ROOT_URL");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_TILE_CACHE_DIR");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_FETCH_TILE_CONTENT");
