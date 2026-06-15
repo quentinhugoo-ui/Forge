@@ -94,8 +94,13 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_ROOT_URL");
     expect(nativeBridgeSource).toContain("FORGE_BANGER_TILE_CACHE_DIR");
     expect(nativeBridgeSource).toContain("BangerMapsRootIngestProjection");
+    expect(nativeBridgeSource).toContain("BangerMapsTraversalSeed");
+    expect(nativeBridgeSource).toContain("BangerMapsTraversalTile");
     expect(nativeBridgeSource).toContain("reqwest::blocking::Client");
     expect(nativeBridgeSource).toContain("traversal_seed_hash");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_traversal_seed.v1");
+    expect(nativeBridgeSource).toContain("parent_first_screen_space_error_seed");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_TRAVERSAL_MAX_TILES");
     expect(nativeBridgeSource).toContain("3d_tiles_root_json_manifest_ingestion");
     expect(nativeBridgeSource).toContain("b3dm_glb_gltf_mesh_material_texture_decode");
     expect(nativeBridgeSource).toContain("wgs84_ecef_to_enu_floating_origin");
