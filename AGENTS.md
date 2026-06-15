@@ -120,29 +120,17 @@ Use these coordination files before adding new frontend actors:
 - `examples/ingen_electron_shell/contract/src/main.rs`
 - `examples/ingen_electron_shell/scripts/final-cutover-audit.mjs`
 
-## Build Isolation
+## Parallel Worktrees
 
-Parallel coding sessions must use separate Git worktrees when they write code. Do not run two Codex/Claude coding agents in the same worktree and expect conflict-free edits. Create a dedicated branch/worktree per session:
+For any coding task, use a dedicated Git worktree and branch `codex/<task-name>`. Do not edit `master` directly during parallel work.
 
-```powershell
-.\scripts\forge-session-worktree.ps1 -Name loop-stream-ui
-```
+Start with `git status --short --branch`, work only inside the task worktree, preserve unrelated user changes, and do not track caches, logs, build outputs or temp files.
 
-Multiple Codex and Claude Code sessions must not share the same Cargo target directory. Agents must not call `cargo` directly for project builds/checks/runs. Use the repo wrapper so each session gets a stable isolated cache under `.codex-targets/<session>`.
+Before stopping: run targeted tests, run `npm.cmd run typecheck` if TypeScript changed, commit intentional changes, push the branch, and report branch, commit, tests, and clean/dirty status.
 
-```powershell
-.\scripts\forge-cargo.ps1 check --lib --tests
-```
+Never leave uncommitted source changes without naming the exact files and reason.
 
-For the Electron product shell:
-
-```powershell
-cd examples\ingen_electron_shell
-npm.cmd test
-npm.cmd run build
-```
-
-The visible Electron app is launched by `examples\ingen_electron_shell\run_ingen_electron_shell.vbs` or `examples\ingen_electron_shell\run_ingen_electron_shell.cmd`.
+Only an integration session may merge worktrees into `master`; it must inspect all worktrees, merge completed branches, run checks, push `master`, and verify completed worktrees are clean.
 
 ## Useful Checks
 
