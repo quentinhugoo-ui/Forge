@@ -3247,7 +3247,7 @@ button {
 }
 
 .surface--banger {
-  background: #05070a;
+  background: transparent;
 }
 
 .nativeViewportSlot--live {
@@ -3280,9 +3280,13 @@ button {
   height: 100%;
   border: 0;
   border-radius: 0;
-  background: #050607;
+  background: transparent;
   overflow: hidden;
   pointer-events: none;
+}
+
+.surface--banger .nativeViewportSlot--live {
+  background: transparent;
 }
 
 .surface--banger .nativeViewportSlot::before,
@@ -8635,23 +8639,12 @@ ol.assistantText__list li::before {
   inset: 0;
   display: grid;
   place-items: center;
-  background:
-    radial-gradient(circle at 50% 44%, rgba(255, 224, 144, 0.86) 0 8%, rgba(255, 149, 71, 0.28) 12%, transparent 24%),
-    linear-gradient(180deg, #050716 0%, #151030 36%, #7f2638 51%, #ff7331 54%, #071b26 55%, #03090d 100%);
+  background: transparent;
   overflow: hidden;
 }
 
 .bangerSphereNativeFrame__fallback::after {
-  position: absolute;
-  inset: 54% -12% -18%;
-  background:
-    linear-gradient(90deg, rgba(130, 217, 255, 0.16) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(130, 217, 255, 0.13) 1px, transparent 1px);
-  background-size: 42px 42px;
-  content: "";
-  opacity: 0.72;
-  transform: perspective(760px) rotateX(58deg);
-  transform-origin: 50% 0;
+  content: none;
 }
 
 .bangerSphereNativeFrame__fallbackSphere {
@@ -8661,11 +8654,11 @@ ol.assistantText__list li::before {
   aspect-ratio: 1;
   border-radius: 999px !important;
   background:
-    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.92), transparent 0 12%, rgba(156, 224, 255, 0.72) 13%, transparent 34%),
-    radial-gradient(circle at 58% 58%, #1a9eb6 0 9%, #13607a 10% 17%, #123f60 18% 31%, #0a1a32 32% 100%);
+    radial-gradient(ellipse at 34% 26%, rgba(179, 232, 255, 0.86) 0 8%, rgba(98, 177, 214, 0.34) 18%, transparent 37%),
+    linear-gradient(132deg, #5aafd2 0%, #1b5d7d 34%, #0d2139 67%, #030912 100%);
   box-shadow:
-    inset -32px -42px 74px rgba(0, 0, 0, 0.54),
-    inset 18px 14px 38px rgba(255, 255, 255, 0.2),
+    inset -42px -52px 86px rgba(0, 0, 0, 0.62),
+    inset 24px 18px 44px rgba(255, 255, 255, 0.16),
     0 0 80px rgba(70, 190, 255, 0.28);
 }
 

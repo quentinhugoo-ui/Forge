@@ -37,7 +37,12 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
     expect(stylesSource).toContain("content: none");
+    expect(stylesSource).toContain(".surface--banger .nativeViewportSlot--live");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame__fallback");
+    expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
+    expect(stylesSource).not.toContain("transparent 0 12%");
+    expect(stylesSource).not.toContain("#1a9eb6 0 9%");
     expect(stylesSource).toContain("object-fit: cover");
   });
 
