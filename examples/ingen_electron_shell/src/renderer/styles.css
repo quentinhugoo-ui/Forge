@@ -7251,12 +7251,12 @@ ol.assistantText__list li::before {
 .composer__send--stop::before {
   content: "";
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   left: 50%;
   top: 50%;
   border-radius: 50% !important;
-  background: color-mix(in oklab, var(--forge-text) 92%, transparent);
+  background: color-mix(in oklab, var(--forge-bg) 76%, var(--forge-text) 24%);
   transform: translate(-50%, -50%);
   z-index: 0;
 }
@@ -7273,13 +7273,12 @@ ol.assistantText__list li::before {
   transition: color 140ms ease-out;
 }
 
-.sendStopGlyph {
+.sendGlyph--stopSquare {
   position: relative;
   z-index: 2;
-  display: block;
-  width: 10px;
-  height: 10px;
-  background: var(--forge-bg) !important;
+  color: color-mix(in oklab, var(--forge-text) 82%, transparent);
+  fill: currentColor;
+  stroke: none;
 }
 
 .composer__send--empty .sendGlyph {

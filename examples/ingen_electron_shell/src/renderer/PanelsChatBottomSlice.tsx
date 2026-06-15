@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Square, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
 import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
@@ -4683,7 +4683,7 @@ export function PanelsChatBottomSlice({
           disabled={!canSend && !assistantStopActive}
         >
           {assistantStopActive ? (
-            <span className="sendStopGlyph" aria-hidden="true" />
+            <Square className="sendGlyph sendGlyph--stopSquare" size={15} strokeWidth={0} aria-hidden="true" />
           ) : (
             <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
