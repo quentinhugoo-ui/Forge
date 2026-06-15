@@ -753,7 +753,8 @@ function BrainMemoryLocationField({
 }
 
 function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["source"] | BrainCustomCodeActEntry["source"] }) {
-  return <span className="brainLearningRegistry__source">{source === "manual" ? "manual" : "agent"}</span>;
+  const label = source === "manual" ? "manual" : source === "host_generated_newbrain" ? "host" : "agent";
+  return <span className="brainLearningRegistry__source">{label}</span>;
 }
 
 function BrainLearningRegistry() {

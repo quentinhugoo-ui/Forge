@@ -28,7 +28,7 @@ export interface BrainUserLocationMemorySlot {
 export type BrainLearningMemoryCategory = "lesson" | "skill" | "task";
 type LegacyBrainLearningMemoryCategory = "anti_pattern" | "conduct_rule";
 type BrainLearningMemoryStoredCategory = BrainLearningMemoryCategory | LegacyBrainLearningMemoryCategory;
-export type BrainDurableCandidateSource = "manual" | "agent_learning_interrupt";
+export type BrainDurableCandidateSource = "manual" | "agent_learning_interrupt" | "host_generated_newbrain";
 
 export interface BrainLearningMemoryEntry {
   schema: "ingen.brain.memory.learning_registry.v1";
@@ -384,6 +384,42 @@ export function appendBrainCustomCodeAct(input: {
   };
   const current = readBrainCustomCodeActs();
   return writeBrainCustomCodeActs([nextEntry, ...current].slice(0, MAX_CUSTOM_CODEACT_ENTRIES));
+}
+
+export function upsertBrainCustomCodeAct(input: {
+  command: string;
+  description: string;
+  template?: string;
+  source: BrainDurableCandidateSource;
+  evidence?: string;
+  trust?: BrainCustomCodeActEntry["trust"];
+}): BrainCustomCodeActEntry[] {
+  const command = normalizeBrainCustomCodeActCommand(input.command);
+  const description = trimmedMultiline(input.description, MAX_CODEACT_FIELD_LENGTH);
+  const template = trimmedMultiline(input.template ?? "", MAX_CODEACT_FIELD_LENGTH);
+  if (!description && !template) {
+    return readBrainCustomCodeActs();
+  }
+  const current = readBrainCustomCodeActs();
+  const existing = current.find((entry) => normalizeBrainCustomCodeActCommand(entry.command) === command);
+  if (existing?.source === "manual") {
+    return current;
+  }
+  if (existing) {
+    const timestamp = nowIso();
+    const nextEntry: BrainCustomCodeActEntry = {
+      ...existing,
+      command,
+      description: description || existing.description,
+      template,
+      source: input.source,
+      trust: input.trust ?? existing.trust,
+      evidence: input.evidence ?? existing.evidence,
+      updatedAt: timestamp
+    };
+    return writeBrainCustomCodeActs([nextEntry, ...current.filter((entry) => entry.id !== existing.id)]);
+  }
+  return appendBrainCustomCodeAct(input);
 }
 
 export function removeBrainCustomCodeAct(id: string): BrainCustomCodeActEntry[] {

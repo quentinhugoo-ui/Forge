@@ -54,7 +54,8 @@ import {
   appendBrainCustomCodeAct,
   appendBrainLearningMemoryEntry,
   dispatchBrainResearchParallelRequest,
-  readBrainAgentMemory
+  readBrainAgentMemory,
+  upsertBrainCustomCodeAct
 } from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
@@ -69,6 +70,7 @@ import {
   brainLearningResearchPrompt,
   brainLearningSavedLabel,
   brainLearningTypeLabel,
+  brainSpecializedCodeActsFromNewBrainText,
   parseBrainLearningInterruptLine,
   stripBrainLearningInterruptMarkup,
   type BrainLearningInterrupt
@@ -3165,6 +3167,23 @@ function AssistantMarkdownText({
   onUseMathInCompute?: AssistantMathUseHandler;
   parallelSessionIndex: number;
 }) {
+  useEffect(() => {
+    if (writing) {
+      return;
+    }
+    const drafts = brainSpecializedCodeActsFromNewBrainText(text);
+    drafts.forEach((draft, index) => {
+      upsertBrainCustomCodeAct({
+        command: draft.command,
+        description: draft.description,
+        template: draft.template,
+        source: "host_generated_newbrain",
+        trust: "agent_candidate",
+        evidence: `assistant_newbrain:${messageId}:${draft.brainName}:${index}`
+      });
+    });
+  }, [messageId, text, writing]);
+
   const blocks = assistantMarkdownBlocks(text);
   return (
     <div className="assistantText__body">

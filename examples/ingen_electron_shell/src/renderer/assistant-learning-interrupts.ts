@@ -1,4 +1,5 @@
 import type { BrainLearningMemoryCategory } from "./brain-user-memory-store";
+import { BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
 
 export type BrainLearningInterruptType =
   | "anti_pattern"
@@ -19,7 +20,15 @@ export interface BrainLearningInterrupt {
   text: string;
 }
 
+export interface BrainSpecializedCodeActDraft {
+  brainName: string;
+  command: string;
+  description: string;
+  template: string;
+}
+
 const LEARNING_INTERRUPT_PATTERN = /^\s*\[\[learn\b([^\]]*)\]\]([\s\S]{1,1400}?)\[\[\/learn\]\]\s*$/;
+const MARKDOWN_FENCE_PATTERN = /^(```+|~~~+)/;
 const KNOWN_TYPES = new Set<BrainLearningInterruptType>([
   "anti_pattern",
   "working_pattern",
@@ -60,6 +69,135 @@ function parseLearningAttributes(source: string): Map<string, string> {
     attributes.set(match[1].toLowerCase(), match[3] ?? match[4] ?? match[5] ?? "");
   }
   return attributes;
+}
+
+function cleanNewBrainField(value: string | undefined, maxLength = 420): string {
+  return cleanLearningValue(value ?? "")
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength)
+    .trim();
+}
+
+export function specializedBrainSlug(value: string): string {
+  return cleanNewBrainField(value, 96)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+}
+
+export function specializedBrainCodeActCommand(brainName: string): string {
+  const slug = specializedBrainSlug(brainName);
+  if (!slug) {
+    return "";
+  }
+  return `/${slug.endsWith("brain") ? slug : `${slug}brain`}_`;
+}
+
+function isNewBrainInvocationLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith(BRAIN_NEWBRAIN_COMMAND)) {
+    return true;
+  }
+  const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
+  return (commandAssignment?.[2] ?? commandAssignment?.[3] ?? commandAssignment?.[4] ?? "") === BRAIN_NEWBRAIN_COMMAND;
+}
+
+function isFieldContinuationLine(line: string): boolean {
+  return /^[a-zA-Z_][\w-]*\s*=/.test(line.trim());
+}
+
+function titleFromBrainName(brainName: string): string {
+  const slug = specializedBrainSlug(brainName);
+  const words = (slug || "specialized_brain").split("_").filter(Boolean);
+  return `${words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")} Brain`;
+}
+
+function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedCodeActDraft | undefined {
+  const brainName = specializedBrainSlug(fields.get("brain_name") ?? fields.get("name") ?? fields.get("domain") ?? "");
+  if (!brainName) {
+    return undefined;
+  }
+  const command = specializedBrainCodeActCommand(brainName);
+  if (!command) {
+    return undefined;
+  }
+  const title = cleanNewBrainField(fields.get("title"), 160) || titleFromBrainName(brainName);
+  const purpose = cleanNewBrainField(fields.get("purpose"), 420);
+  const activationTriggers = cleanNewBrainField(fields.get("activation_triggers") ?? fields.get("triggers"), 420);
+  const description = [
+    `Activate ${title} as a specialized Brain scope created by ${BRAIN_NEWBRAIN_COMMAND}.`,
+    activationTriggers ? `Use when: ${activationTriggers}.` : "",
+    purpose ? `Purpose: ${purpose}.` : "",
+    "Host-generated from explicit /newbrain_ fields; General Brain stays read-only."
+  ].filter(Boolean).join(" ");
+  const optionalFields = [
+    "initial_lessons",
+    "initial_rules",
+    "initial_skills",
+    "initial_tasks",
+    "initial_codeacts",
+    "token_budget"
+  ]
+    .map((key) => [key, cleanNewBrainField(fields.get(key), 420)] as const)
+    .filter(([, value]) => value.length > 0)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`);
+  const template = [
+    command,
+    `brain_name=${JSON.stringify(brainName)}`,
+    `title=${JSON.stringify(title)}`,
+    purpose ? `purpose=${JSON.stringify(purpose)}` : "",
+    activationTriggers ? `activation_triggers=${JSON.stringify(activationTriggers)}` : "",
+    ...optionalFields,
+    `generated_by=${JSON.stringify("host_from_newbrain")}`,
+    `source_command=${JSON.stringify(BRAIN_NEWBRAIN_COMMAND)}`,
+    `output=${JSON.stringify("activate_specialized_brain")}`
+  ].filter(Boolean).join("\n");
+  return {
+    brainName,
+    command,
+    description,
+    template
+  };
+}
+
+export function brainSpecializedCodeActsFromNewBrainText(text: string): BrainSpecializedCodeActDraft[] {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const drafts: BrainSpecializedCodeActDraft[] = [];
+  const seenCommands = new Set<string>();
+  let insideFence: string | null = null;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const trimmed = line.trim();
+    const fence = MARKDOWN_FENCE_PATTERN.exec(trimmed)?.[1] ?? null;
+    if (fence && (!insideFence || trimmed.startsWith(insideFence))) {
+      insideFence = insideFence ? null : fence;
+      continue;
+    }
+    if (insideFence || !isNewBrainInvocationLine(trimmed)) {
+      continue;
+    }
+    const blockLines = [trimmed];
+    for (let nextIndex = lineIndex + 1; nextIndex < lines.length; nextIndex += 1) {
+      const nextLine = lines[nextIndex].trim();
+      if (!nextLine || MARKDOWN_FENCE_PATTERN.test(nextLine) || nextLine.startsWith("/")) {
+        break;
+      }
+      if (!isFieldContinuationLine(nextLine)) {
+        break;
+      }
+      blockLines.push(nextLine);
+      lineIndex = nextIndex;
+    }
+    const draft = newBrainDraftFromFields(parseLearningAttributes(blockLines.join(" ")));
+    if (draft && !seenCommands.has(draft.command)) {
+      seenCommands.add(draft.command);
+      drafts.push(draft);
+    }
+  }
+  return drafts;
 }
 
 function parseLearningType(value: string | undefined): BrainLearningInterruptType {
