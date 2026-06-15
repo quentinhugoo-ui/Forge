@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const routerSource = readFileSync("src/renderer/HeaderSurfaceRouter.tsx", "utf8");
+const appSource = readFileSync("src/renderer/App.tsx", "utf8");
 const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
@@ -96,6 +97,14 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain("display: none");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere");
     expect(stylesSource).toContain("width: min(100%, 560px)");
+    expect(appSource).toContain("canvasMapsClosing");
+    expect(appSource).toContain("canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing");
+    expect(appSource).toContain("closeCanvasMaps();");
+    expect(canvasSurfacesSource).toContain('mapsClosing ? "canvasSurfaces--mapsClosing" : ""');
+    expect(stylesSource).toContain(".navIconButton--selected .shellIcon--nav-web");
+    expect(stylesSource).toContain(".canvasSurfaces--mapsClosing .mapsCanvasGrid--earthActive .mapsCanvasPane");
+    expect(stylesSource).toContain("animation: mapsSphereRailExit 260ms");
+    expect(stylesSource).toContain("@keyframes mapsSphereRailExit");
     expect(stylesSource).toContain(".shell--maps-canvas-open .transcriptTextFrame");
     expect(stylesSource).toContain("var(--transcript-media-avoidance-width)");
     expect(stylesSource).toContain("object-fit: cover");

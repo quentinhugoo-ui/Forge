@@ -338,6 +338,14 @@ export function App() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    return () => {
+      if (canvasMapsCloseTimerRef.current !== null) {
+        window.clearTimeout(canvasMapsCloseTimerRef.current);
+        canvasMapsCloseTimerRef.current = null;
+      }
+    };
+  }, []);
   const activeProfileCanvas = sidebarSnapshot.profileCanvas || snapshot.profileCanvas;
   const isLlmProviderCanvas = activeProfileCanvas === "llm";
   const isBrainCanvas = activeProfileCanvas === "brain";
@@ -372,6 +380,11 @@ export function App() {
     if (canvasMapsOpen) {
       return;
     }
+    if (canvasMapsCloseTimerRef.current !== null) {
+      window.clearTimeout(canvasMapsCloseTimerRef.current);
+      canvasMapsCloseTimerRef.current = null;
+    }
+    setCanvasMapsClosing(false);
     mapsOwnerSessionIdRef.current = null;
     void globalThis.window?.forgeShell?.hideNativeMaps?.();
   }, [canvasMapsOpen]);
@@ -1041,6 +1054,10 @@ export function App() {
         if (isFullPageCanvas) {
           await closeProfileCanvas();
         }
+        if (canvasMapsOpen || canvasMapsClosing) {
+          closeCanvasMaps();
+          return;
+        }
         setCanvasSplitOpen(true);
         openCanvasPlanets();
         return;
@@ -1064,7 +1081,7 @@ export function App() {
         );
       }
     },
-    [canvasFilesOpen, canvasTerminalOpen, closeProfileCanvas, isFullPageCanvas, openCanvasPlanets]
+    [canvasFilesOpen, canvasMapsClosing, canvasMapsOpen, canvasTerminalOpen, closeCanvasMaps, closeProfileCanvas, isFullPageCanvas, openCanvasPlanets]
   );
 
   const dispatchWindowControl = useCallback(
@@ -1408,7 +1425,7 @@ export function App() {
                 : control.id === "right-panel"
                   ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
                   : control.id === "webexplorer-workspace"
-                    ? canvasPlanetsOpen
+                    ? canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing
                   : control.selected;
             return (
               <button
@@ -1428,7 +1445,7 @@ export function App() {
                     : control.id === "right-panel"
                       ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
                       : control.id === "webexplorer-workspace"
-                        ? canvasPlanetsOpen
+                        ? canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing
                       : undefined
                 }
                 key={control.id}
@@ -1479,6 +1496,7 @@ export function App() {
           webExplorerParallelIndex={webExplorerParallelIndex}
           webExplorerModuleId={webExplorerModuleId}
           mapsOpen={canvasMapsOpen}
+          mapsClosing={canvasMapsClosing}
           mapsParallelIndex={mapsParallelIndex}
           mapsUrl={mapsWebviewUrl}
           mapsSearchQuery={latestAssistantGeoEntityLabel}

@@ -940,6 +940,7 @@ export function CanvasSurfacesSlice({
   webExplorerParallelIndex = 0,
   webExplorerModuleId = null,
   mapsOpen,
+  mapsClosing = false,
   mapsParallelIndex = 0,
   mapsSearchQuery,
   codingLivePreview,
@@ -972,6 +973,7 @@ export function CanvasSurfacesSlice({
   webExplorerParallelIndex?: number;
   webExplorerModuleId?: string | null;
   mapsOpen: boolean;
+  mapsClosing?: boolean;
   mapsParallelIndex?: number;
   mapsUrl?: string;
   mapsSearchQuery?: string;
@@ -1040,6 +1042,7 @@ export function CanvasSurfacesSlice({
     activeWebExplorerSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
     codingLivePreviewOpen ? "canvasSurfaces--codingLivePreviewOpen" : "",
     activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
+    mapsClosing ? "canvasSurfaces--mapsClosing" : "",
     dualNativeBrowserOpen ? "canvasSurfaces--nativePager" : ""
   ].filter(Boolean).join(" ");
 
