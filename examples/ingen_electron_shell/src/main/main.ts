@@ -2283,6 +2283,15 @@ function uploadPreviewUrl(id: string, name: string): string {
   return `ingen://upload-preview/${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
 }
 
+function isRemoteAttachmentUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function attachmentProofSummary(attachments: ProviderAttachment[]): Array<{
   id: string;
   name: string;
@@ -3446,7 +3455,10 @@ function estimatedPromptTokens(text: string): number {
 function providerConversationContent(message: TranscriptMessage): string {
   const text = trimUtf8Bytes(message.text.trim(), PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES);
   const attachmentNames = (message.attachments ?? [])
-    .map((attachment) => `${attachment.kind}:${attachment.name}`)
+    .map((attachment) => {
+      const remoteUrl = isRemoteAttachmentUrl(attachment.url) ? ` media_url=${attachment.url}` : "";
+      return `${attachment.kind}:${attachment.name}${remoteUrl}`;
+    })
     .join(", ");
   return [text, attachmentNames ? `[pieces_jointes: ${attachmentNames}]` : ""].filter(Boolean).join(" ");
 }
@@ -3640,11 +3652,14 @@ function sessionDocumentMemoryContext(
       const tablePreview = cached?.tablePreview?.length
         ? tablePreviewText(cached.tablePreview.slice(0, 18).map((row) => row.slice(0, 8)))
         : "";
+      const remoteUrl = isRemoteAttachmentUrl(preview.url) ? preview.url : "";
       const lines = [
         `Document ${blocks.length + 1}: ${preview.name}`,
         `id=${preview.id}`,
         `kind=${preview.kind}`,
         cached?.mimeType ? `mime=${cached.mimeType}` : "",
+        remoteUrl ? `media_url=${remoteUrl}` : "",
+        remoteUrl ? "remote_media=true" : "",
         `proof=${hashJson(cached ?? preview).slice(0, 16)}`,
         `source_turn=${message.role}:${message.id}`,
         message.role === "assistant" ? "created_or_returned_by_assistant=true" : "provided_by_user=true",
@@ -14248,7 +14263,7 @@ function archiveAttachmentPreview(attachment: ComposerUploadPreview): ChatArchiv
   const cached = composerUploadPreviewItems.get(attachment.id);
   return {
     ...attachment,
-    url: uploadPreviewUrl(attachment.id, attachment.name),
+    url: cached ? uploadPreviewUrl(attachment.id, attachment.name) : attachment.url,
     ...(cached ? { localPath: cached.path, mimeType: cached.mimeType } : {})
   };
 }
@@ -14257,7 +14272,7 @@ function publicArchiveAttachmentPreview(attachment: ChatArchiveAttachment): Comp
   const { localPath: _localPath, mimeType: _mimeType, ...preview } = attachment;
   return {
     ...preview,
-    url: uploadPreviewUrl(preview.id, preview.name)
+    url: attachment.localPath ? uploadPreviewUrl(preview.id, preview.name) : preview.url
   };
 }
 
