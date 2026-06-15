@@ -11100,6 +11100,21 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   armNativeWidgetTaskbarAutoHide(window);
 }
 
+function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
+  if (window.isDestroyed() || widgetWindowRestoreState === null) {
+    return;
+  }
+  clearWidgetWindowBoundsAnimationTimer();
+  const bounds = widgetWindowBounds(window, { taskbarHidden: true });
+  console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
+  traceWidgetTaskbarStep("settle-widget-bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
+  window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
+  window.setAlwaysOnTop(true, "floating");
+  window.setBounds(bounds, false);
+  window.show();
+  window.focus();
+}
+
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
   if (process.platform !== "win32" || window.isDestroyed() || widgetWindowRestoreState === null) {
     traceWidgetTaskbarStep("skip-arm-taskbar-autohide", {
@@ -11207,6 +11222,8 @@ type WindowsTaskbarNativeResult = {
   current?: number;
   target?: number;
   elapsedMs?: number;
+  registryPathFound?: boolean;
+  registryByte?: number;
   error?: string;
   ready?: boolean;
   service?: string;
@@ -12019,6 +12036,8 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
           hidden,
           current: nativeResult.current ?? null,
           target: nativeResult.target ?? null,
+          registryPathFound: nativeResult.registryPathFound ?? null,
+          registryByte: nativeResult.registryByte ?? null,
           helperElapsedMs: nativeResult.elapsedMs ?? null,
           token
         });
@@ -12054,6 +12073,9 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
       }
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
+      }
+      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null) {
+        settleNativeWidgetWindowBounds(window);
       }
       traceWidgetTaskbarStep("taskbar-autohide-finished", { id: window.id, hidden, accepted, token });
     })();
