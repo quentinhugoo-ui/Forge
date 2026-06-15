@@ -8746,6 +8746,14 @@ ol.assistantText__list li::before {
   pointer-events: none;
 }
 
+.mapsCanvasGrid--earthActive .parallelCanvasClose {
+  display: none;
+}
+
+.mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
+  width: min(100%, 560px);
+}
+
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
   z-index: 1;
   pointer-events: none;
