@@ -3888,6 +3888,13 @@ export function PanelsChatBottomSlice({
     requestAnimationFrame(syncComposerLiveHeight);
   };
 
+  const clearComposerDraft = () => {
+    composerResetFenceRef.current = true;
+    draftRef.current = "";
+    setDraft("");
+    compactComposerInputHeight();
+  };
+
   useLayoutEffect(() => {
     const node = inputRef.current;
     if (!node) {
@@ -4239,9 +4246,7 @@ export function PanelsChatBottomSlice({
       return;
     }
     if (!parallelMode) {
-      composerResetFenceRef.current = true;
-      setDraft("");
-      compactComposerInputHeight();
+      clearComposerDraft();
     }
     const commit = () => {
       try {

@@ -702,6 +702,7 @@ type ActiveBrainSegmentId = Exclude<BrainSegmentId, "general">;
 
 let panelsChatBottomState = {
   chatText: "",
+  composerResetRequestTime: 0,
   permissionMode: "ask-permissions" as PanelsChatBottomSnapshot["composer"]["permissionMode"],
   permissionModeOpen: false,
   selectedProvider: "openai" as PanelsChatBottomSnapshot["composer"]["selectedProvider"],
@@ -719,6 +720,12 @@ let panelsChatBottomState = {
 const parallelChatLanes = new Map<number, { sessionId: string; transcript: TranscriptMessage[]; groupId: string }>();
 const composerUploadPreviewItems = new Map<string, ComposerUploadItem>();
 const providerAttachmentCache = new Map<string, ProviderAttachment>();
+
+function panelsChatBottomCommandTime(command: PanelsChatBottomCommand): number {
+  const timestamp = command.requestId.split("-")[1] ?? "";
+  const parsed = Number.parseInt(timestamp, 36);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
 
 type ComposerProviderId = PanelsChatBottomSnapshot["composer"]["selectedProvider"];
 type ProviderRuntimeProfile = {
@@ -15727,15 +15734,22 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
   switch (command.kind) {
     case "new_session":
       resetPanelsChatSessionView();
+      panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
       sidebarState.recentSessionId = "";
       break;
-    case "chat_text_edited":
+    case "chat_text_edited": {
+      if (panelsChatBottomCommandTime(command) <= panelsChatBottomState.composerResetRequestTime) {
+        break;
+      }
       panelsChatBottomState.chatText = command.value ?? panelsChatBottomState.chatText;
       break;
+    }
     case "send_chat": {
       const draft = (command.value ?? panelsChatBottomState.chatText).trim();
       const moduleId = typeof command.moduleId === "string" ? command.moduleId : "";
       const pendingUploadItems = composerUploadItemsForCommand(command);
+      panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
+      panelsChatBottomState.chatText = "";
       if (draft || pendingUploadItems.length > 0) {
         const parallelSessionIndex =
           typeof command.parallelSessionIndex === "number" && Number.isInteger(command.parallelSessionIndex)
@@ -15754,6 +15768,8 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
     case "send_parallel_chat_batch": {
       const moduleId = typeof command.moduleId === "string" ? command.moduleId : "";
       const pendingUploadItems = composerUploadItemsForCommand(command);
+      panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
+      panelsChatBottomState.chatText = "";
       const drafts = (command.parallelDrafts ?? [])
         .map((draft) => ({
           parallelSessionIndex: draft.parallelSessionIndex,
