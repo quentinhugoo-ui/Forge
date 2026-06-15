@@ -359,6 +359,8 @@ pub struct BangerNativeWaterNearFieldMesh {
     pub indirect_draw_enabled: bool,
     pub visibility_storage_texel_count: u32,
     pub hzb_mip_bias: u32,
+    pub indirect_draw_mode: &'static str,
+    pub indirect_draw_word_count: u32,
     pub culling_pass_hash: String,
     pub visibility_buffer_hash: String,
     pub indirect_args_hash: String,
@@ -21475,11 +21477,22 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let meshlet_grid_x = water_pipeline_manifest.near_field_mesh.meshlet_grid_x;
     let meshlet_grid_z = water_pipeline_manifest.near_field_mesh.meshlet_grid_z;
     let water_meshlet_visibility_storage = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("banger-native-present-water-meshlet-visibility-storage"),
+        label: Some("banger-native-present-water-visible-meshlet-list-storage"),
         size: u64::from(meshlet_grid_x) * u64::from(meshlet_grid_z) * 16,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let water_meshlet_indirect_args = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-meshlet-indirect-args"),
+        size: 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_meshlet_indirect_args,
+        0,
+        water_info_uniform_words_u8([6, 0, 3, 0]).as_slice(),
+    );
     let water_meshlet_visibility_uniform_words = [
         meshlet_grid_x,
         meshlet_grid_z,
@@ -21685,6 +21698,16 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let meshlet_cull_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -21706,6 +21729,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: water_hzb_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: water_meshlet_indirect_args.as_entire_binding(),
             },
         ],
     });
@@ -21947,7 +21974,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         cache: None,
     });
     let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
-    let draw_call_count = 1u32;
+    let draw_call_count = 2u32;
     let camera_position = [0.0, 0.0, -2.4];
     let camera_target = [0.0, 0.0, 0.0];
     let camera_up = [0.0, 1.0, 0.0];
@@ -22058,7 +22085,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         });
         pass.set_pipeline(&render_pipeline);
         pass.set_bind_group(0, &water_info_bind_group, &[]);
-        pass.draw(0..mesh_vertex_count, 0..1);
+        pass.draw(0..3, 0..1);
+        pass.draw_indirect(&water_meshlet_indirect_args, 0);
     }
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -22398,7 +22426,7 @@ struct WaterMeshletVisibilityUniform {
 @group(0) @binding(4) var<uniform> water_spectral_uniform: WaterSpectralUniform;
 @group(0) @binding(5) var<storage, read> water_hzb_texels: array<vec4<u32>>;
 @group(0) @binding(6) var<uniform> water_hzb_uniform: WaterHzbUniform;
-@group(0) @binding(7) var<storage, read> water_meshlet_visibility_texels: array<vec4<u32>>;
+@group(0) @binding(7) var<storage, read> water_visible_meshlets: array<vec4<u32>>;
 @group(0) @binding(8) var<uniform> water_meshlet_visibility_uniform: WaterMeshletVisibilityUniform;
 
 fn saturate(value: f32) -> f32 {
@@ -22456,13 +22484,11 @@ fn sample_water_hzb(uv: vec2<f32>, mip: u32) -> vec4<f32> {
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
-fn sample_water_meshlet_visibility(cell: vec2<u32>) -> vec4<f32> {
+fn load_visible_water_meshlet(instance_index: u32) -> vec4<u32> {
     let width = max(water_meshlet_visibility_uniform.dims.x, 1u);
     let height = max(water_meshlet_visibility_uniform.dims.y, 1u);
-    let x = min(cell.x, width - 1u);
-    let y = min(cell.y, height - 1u);
-    let packed = water_meshlet_visibility_texels[y * width + x];
-    return vec4<f32>(packed) * (1.0 / 65535.0);
+    let max_index = width * height - 1u;
+    return water_visible_meshlets[min(instance_index, max_index)];
 }
 
 fn hash12(p: vec2<f32>) -> f32 {
@@ -22521,7 +22547,7 @@ fn sky_color(uv: vec2<f32>, sun_center: vec2<f32>) -> vec3<f32> {
 }
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) instance_index: u32) -> VertexOut {
     var sky_positions = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>( 3.0, -1.0),
@@ -22539,14 +22565,14 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
         return out;
     }
 
-    let grid_x = 96u;
-    let grid_z = 96u;
+    let grid_x = max(water_meshlet_visibility_uniform.dims.x, 1u);
+    let grid_z = max(water_meshlet_visibility_uniform.dims.y, 1u);
     let local = vertex_index - 3u;
-    let tri = local / 6u;
     let corner = local % 6u;
-    let cell_x = tri % grid_x;
-    let cell_z = tri / grid_x;
-    let meshlet_visibility = sample_water_meshlet_visibility(vec2<u32>(cell_x, cell_z));
+    let visible_meshlet = load_visible_water_meshlet(instance_index);
+    let cell_x = min(visible_meshlet.x, grid_x - 1u);
+    let cell_z = min(visible_meshlet.y, grid_z - 1u);
+    let meshlet_visibility = f32(visible_meshlet.z) * (1.0 / 65535.0);
     var corner_offsets = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0),
         vec2<f32>(1.0, 0.0),
@@ -22576,7 +22602,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     out.world_xz = world;
     out.distance_t = distance_t;
     out.layer = 1.0;
-    out.visibility = meshlet_visibility.x;
+    out.visibility = meshlet_visibility;
     return out;
 }
 
@@ -22818,6 +22844,7 @@ struct WaterHzbUniform {
 @group(0) @binding(1) var<uniform> water_meshlet_visibility_uniform: WaterMeshletVisibilityUniform;
 @group(0) @binding(2) var<storage, read> water_hzb_texels: array<vec4<u32>>;
 @group(0) @binding(3) var<uniform> water_hzb_uniform: WaterHzbUniform;
+@group(0) @binding(4) var<storage, read_write> water_meshlet_indirect_args: array<atomic<u32>>;
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -22871,23 +22898,23 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hzb = sample_hzb(uv, mip);
     let depth_span = saturate(hzb.y - hzb.x);
     let mask_energy = max(hzb.z, hzb.w);
-    let stable_tile_noise = hash_tile(vec2<u32>(gid.xy));
-
-    let near_keep = 1.0 - smoothstep(0.90, 0.997, distance_t);
+    let z = mix(4.0, 86.0, distance_t);
+    let world_x = mix(-44.0, 44.0, uv.x) * mix(0.22, 1.0, smoothstep(0.0, 0.65, distance_t));
+    let ndc_x = world_x / (z * 0.34);
     let interaction_keep = smoothstep(0.08, 0.42, mask_energy + depth_span);
-    let far_decimation_keep = select(0.0, 1.0, stable_tile_noise > 0.38 || ((gid.x + gid.y) & 3u) == 0u);
-    let visibility = max(max(near_keep, interaction_keep), far_decimation_keep * smoothstep(0.985, 1.0, distance_t));
-    let visible = select(0.0, 1.0, visibility > 0.18);
+    let frustum_keep = select(0.0, 1.0, abs(ndc_x) < 1.18);
+    let visible = max(frustum_keep, interaction_keep);
     let lod_ring = saturate(distance_t);
-    let occlusion = saturate(1.0 - depth_span * 2.2);
 
-    let index = gid.y * width + gid.x;
-    water_meshlet_visibility_texels[index] = vec4<u32>(
-        pack_unorm16(visible),
-        pack_unorm16(lod_ring),
-        pack_unorm16(occlusion),
-        pack_unorm16(mask_energy)
-    );
+    if (visible > 0.5) {
+        let visible_index = atomicAdd(&water_meshlet_indirect_args[1], 1u);
+        water_meshlet_visibility_texels[visible_index] = vec4<u32>(
+            gid.x,
+            gid.y,
+            pack_unorm16(visible),
+            pack_unorm16(lod_ring)
+        );
+    }
 }
 "#
 }
@@ -23456,6 +23483,8 @@ fn build_water_pipeline_manifest(
         indirect_draw_enabled: true,
         visibility_storage_texel_count: meshlet_candidate_count,
         hzb_mip_bias,
+        indirect_draw_mode: "wgpu_draw_indirect_nonindexed_visible_meshlet_instances",
+        indirect_draw_word_count: 4,
         culling_pass_hash: culling_pass_hash.clone(),
         visibility_buffer_hash: hash_text_hex(
             "forge.banger.water.near_field_meshlet_visibility_buffer.v1",
@@ -23464,7 +23493,7 @@ fn build_water_pipeline_manifest(
         indirect_args_hash: hash_text_hex(
             "forge.banger.water.near_field_meshlet_indirect_args.v1",
             &format!(
-                "indexed_draw_words5:{visible_meshlet_count}:triangles_per_candidate2:{culling_pass_hash}"
+                "draw_indirect_words4:vertex_count6:instance_count{visible_meshlet_count}:first_vertex3:{culling_pass_hash}"
             ),
         ),
         page_table_hash: hash_text_hex(
@@ -23918,18 +23947,14 @@ fn water_meshlet_visible_count(width: u32, height: u32) -> u32 {
     let mut visible = 0u32;
     for y in 0..height {
         for x in 0..width {
+            let u = (x as f32 + 0.5) / width.max(1) as f32;
             let v = (y as f32 + 0.5) / height.max(1) as f32;
             let distance_t = v.powf(1.75);
-            let n = x
-                .wrapping_mul(1_664_525)
-                .wrapping_add(y.wrapping_mul(1_013_904_223))
-                .wrapping_add(747_796_405);
-            let stable_tile_noise = ((n >> 8) & 1023) as f32 / 1023.0;
-            let near_keep = 1.0 - smoothstep_f32(0.90, 0.997, distance_t);
-            let far_decimation_keep =
-                if stable_tile_noise > 0.38 || ((x + y) & 3) == 0 { 1.0 } else { 0.0 };
-            let visibility =
-                near_keep.max(far_decimation_keep * smoothstep_f32(0.985, 1.0, distance_t));
+            let z = 4.0 + (86.0 - 4.0) * distance_t;
+            let width_scale = 0.22 + (1.0 - 0.22) * smoothstep_f32(0.0, 0.65, distance_t);
+            let world_x = (-44.0 + 88.0 * u) * width_scale;
+            let ndc_x = world_x / (z * 0.34);
+            let visibility = if ndc_x.abs() < 1.18 { 1.0 } else { 0.0 };
             if visibility > 0.18 {
                 visible += 1;
             }
@@ -24762,6 +24787,20 @@ mod tests {
             response
                 .water_pipeline_manifest
                 .near_field_mesh
+                .indirect_draw_mode,
+            "wgpu_draw_indirect_nonindexed_visible_meshlet_instances"
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .indirect_draw_word_count,
+            4
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
                 .culling_pass_hash
                 .len(),
             64
@@ -25007,7 +25046,7 @@ mod tests {
         assert_eq!(response.water_pipeline_manifest.proof_hash.len(), 64);
         assert_eq!(response.mesh_vertex_count, 55299);
         assert_eq!(response.mesh_triangle_count, 18433);
-        assert_eq!(response.draw_call_count, 1);
+        assert_eq!(response.draw_call_count, 2);
         assert_eq!(response.camera_position, [0.0, 0.0, -2.4]);
         assert_eq!(response.camera_target, [0.0, 0.0, 0.0]);
         assert_eq!(response.camera_up, [0.0, 1.0, 0.0]);
