@@ -1501,6 +1501,28 @@ export interface NativeTerminalResult {
   error?: IpcError;
 }
 
+export interface WidgetWallpaperSampleBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type WidgetWallpaperTone = "dark" | "light" | "unknown";
+
+export interface WidgetWallpaperSampleResult {
+  accepted: boolean;
+  schema: "ingen.electron.widget.wallpaper_sample.v1";
+  tone: WidgetWallpaperTone;
+  dominantLight: boolean;
+  luminance: number;
+  lightRatio: number;
+  sampleCount: number;
+  displayId: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
 export interface CitySuggestion {
   label: string;
   city: string;

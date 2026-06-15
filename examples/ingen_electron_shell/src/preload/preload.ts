@@ -14,7 +14,8 @@ import type {
   SidebarCommand,
   NativeTerminalBounds,
   NativeWebExplorerCodeAct,
-  NativeWebExplorerBounds
+  NativeWebExplorerBounds,
+  WidgetWallpaperSampleBounds
 } from "../shared/ipc-contract.js";
 
 const forgeShell: ForgeShellApi = {
@@ -218,6 +219,9 @@ const forgeWindowControls = {
   },
   toggleWidgetTaskbar(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-widget-taskbar-toggle");
+  },
+  sampleWidgetWallpaper(bounds: WidgetWallpaperSampleBounds) {
+    return ipcRenderer.invoke("forge:window-widget-wallpaper-sample", bounds);
   },
   close(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-close");

@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, createReadStream, existsSync } from "node:fs";
@@ -113,6 +113,8 @@ import {
   type SearchArchiveRequest,
   type SearchArchiveResult,
   type SessionFilesSnapshot,
+  type WidgetWallpaperSampleBounds,
+  type WidgetWallpaperSampleResult,
   isCanvasSurfacesCommand,
   isAgentActionRequest,
   isHeaderCommand,
@@ -12612,6 +12614,210 @@ function setNativeWindowWidgetClickThrough(event: Electron.IpcMainInvokeEvent, e
   return true;
 }
 
+const WIDGET_WALLPAPER_SAMPLE_SCHEMA = "ingen.electron.widget.wallpaper_sample.v1" as const;
+const WIDGET_WALLPAPER_THUMBNAIL_WIDTH = 640;
+const WIDGET_WALLPAPER_MAX_SAMPLE_WIDTH = 960;
+const WIDGET_WALLPAPER_MAX_SAMPLE_HEIGHT = 180;
+
+function widgetWallpaperSampleResult(
+  accepted: boolean,
+  patch: Partial<Omit<WidgetWallpaperSampleResult, "accepted" | "schema" | "proofHash">> = {}
+): WidgetWallpaperSampleResult {
+  const result: WidgetWallpaperSampleResult = {
+    accepted,
+    schema: WIDGET_WALLPAPER_SAMPLE_SCHEMA,
+    tone: patch.tone ?? "unknown",
+    dominantLight: patch.dominantLight ?? false,
+    luminance: patch.luminance ?? 0,
+    lightRatio: patch.lightRatio ?? 0,
+    sampleCount: patch.sampleCount ?? 0,
+    displayId: patch.displayId ?? "",
+    proofHash: "",
+    error: patch.error
+  };
+  result.proofHash = hashJson({ widgetWallpaperSample: { ...result, proofHash: "" } });
+  return result;
+}
+
+function normalizeWidgetWallpaperSampleBounds(value: unknown): WidgetWallpaperSampleBounds | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<WidgetWallpaperSampleBounds>;
+  const x = Math.round(Number(candidate.x));
+  const y = Math.round(Number(candidate.y));
+  const width = Math.round(Number(candidate.width));
+  const height = Math.round(Number(candidate.height));
+  if (![x, y, width, height].every(Number.isFinite) || width < 12 || height < 8) {
+    return null;
+  }
+  return {
+    x: Math.max(0, x),
+    y: Math.max(0, y),
+    width: Math.min(width, WIDGET_WALLPAPER_MAX_SAMPLE_WIDTH),
+    height: Math.min(height, WIDGET_WALLPAPER_MAX_SAMPLE_HEIGHT)
+  };
+}
+
+function clampNativeSampleCoordinate(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function sampleNativeWidgetWallpaper(
+  event: Electron.IpcMainInvokeEvent,
+  boundsValue: unknown
+): Promise<WidgetWallpaperSampleResult> {
+  if (!validateSender(event)) {
+    const proofHash = hashJson({ widgetWallpaperSample: "bad_sender", sender: event.senderFrame?.url ?? "" });
+    return widgetWallpaperSampleResult(false, {
+      error: {
+        code: "bad_sender",
+        message: "Widget wallpaper sampling rejected by sender validation.",
+        proofHash
+      }
+    });
+  }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    const proofHash = hashJson({ widgetWallpaperSample: "window_unavailable" });
+    return widgetWallpaperSampleResult(false, {
+      error: {
+        code: "rust_unavailable",
+        message: "Widget wallpaper owner window is unavailable.",
+        proofHash
+      }
+    });
+  }
+  const bounds = normalizeWidgetWallpaperSampleBounds(boundsValue);
+  if (!bounds) {
+    const proofHash = hashJson({ widgetWallpaperSample: "bad_payload", boundsValue });
+    return widgetWallpaperSampleResult(false, {
+      error: {
+        code: "bad_payload",
+        message: "Widget wallpaper sample bounds are invalid.",
+        proofHash
+      }
+    });
+  }
+
+  try {
+    const windowBounds = window.getBounds();
+    const screenBounds: Electron.Rectangle = {
+      x: windowBounds.x + bounds.x,
+      y: windowBounds.y + bounds.y,
+      width: bounds.width,
+      height: bounds.height
+    };
+    const display = screen.getDisplayMatching(screenBounds);
+    const aspectRatio = Math.max(0.2, display.bounds.width / Math.max(1, display.bounds.height));
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: {
+        width: WIDGET_WALLPAPER_THUMBNAIL_WIDTH,
+        height: Math.max(96, Math.round(WIDGET_WALLPAPER_THUMBNAIL_WIDTH / aspectRatio))
+      },
+      fetchWindowIcons: false
+    });
+    const source =
+      sources.find((candidate) => candidate.display_id === String(display.id)) ??
+      (sources.length === 1 ? sources[0] : undefined) ??
+      sources[0];
+    if (!source || source.thumbnail.isEmpty()) {
+      const proofHash = hashJson({ widgetWallpaperSample: "screen_source_unavailable", displayId: display.id });
+      return widgetWallpaperSampleResult(false, {
+        displayId: String(display.id),
+        error: {
+          code: "rust_unavailable",
+          message: "Screen thumbnail source is unavailable.",
+          proofHash
+        }
+      });
+    }
+
+    const imageSize = source.thumbnail.getSize();
+    if (imageSize.width <= 0 || imageSize.height <= 0) {
+      const proofHash = hashJson({ widgetWallpaperSample: "screen_thumbnail_empty", displayId: display.id });
+      return widgetWallpaperSampleResult(false, {
+        displayId: String(display.id),
+        error: {
+          code: "rust_unavailable",
+          message: "Screen thumbnail is empty.",
+          proofHash
+        }
+      });
+    }
+
+    const displayBounds = display.bounds;
+    const sampleLeftDip = clampNativeSampleCoordinate(screenBounds.x - displayBounds.x, 0, displayBounds.width);
+    const sampleTopDip = clampNativeSampleCoordinate(screenBounds.y - displayBounds.y, 0, displayBounds.height);
+    const sampleRightDip = clampNativeSampleCoordinate(screenBounds.x + screenBounds.width - displayBounds.x, 0, displayBounds.width);
+    const sampleBottomDip = clampNativeSampleCoordinate(screenBounds.y + screenBounds.height - displayBounds.y, 0, displayBounds.height);
+    const displayWidth = Math.max(1, displayBounds.width);
+    const displayHeight = Math.max(1, displayBounds.height);
+    const cropLeft = clampNativeSampleCoordinate(Math.floor((sampleLeftDip / displayWidth) * imageSize.width), 0, imageSize.width - 1);
+    const cropTop = clampNativeSampleCoordinate(Math.floor((sampleTopDip / displayHeight) * imageSize.height), 0, imageSize.height - 1);
+    const cropRight = clampNativeSampleCoordinate(Math.ceil((sampleRightDip / displayWidth) * imageSize.width), cropLeft + 1, imageSize.width);
+    const cropBottom = clampNativeSampleCoordinate(Math.ceil((sampleBottomDip / displayHeight) * imageSize.height), cropTop + 1, imageSize.height);
+    const cropWidth = cropRight - cropLeft;
+    const cropHeight = cropBottom - cropTop;
+    const cropped = source.thumbnail
+      .crop({ x: cropLeft, y: cropTop, width: cropWidth, height: cropHeight })
+      .resize({
+        width: Math.min(96, cropWidth),
+        height: Math.min(36, cropHeight),
+        quality: "good"
+      });
+    const sampleSize = cropped.getSize();
+    const bitmap = cropped.toBitmap();
+    const pixelCount = Math.min(sampleSize.width * sampleSize.height, Math.floor(bitmap.length / 4));
+    if (pixelCount <= 0) {
+      const proofHash = hashJson({ widgetWallpaperSample: "sample_empty", displayId: display.id, cropWidth, cropHeight });
+      return widgetWallpaperSampleResult(false, {
+        displayId: String(display.id),
+        error: {
+          code: "rust_unavailable",
+          message: "Widget wallpaper sample is empty.",
+          proofHash
+        }
+      });
+    }
+
+    let brightnessTotal = 0;
+    let lightPixels = 0;
+    for (let index = 0; index < pixelCount; index += 1) {
+      const offset = index * 4;
+      const brightness = (bitmap[offset] + bitmap[offset + 1] + bitmap[offset + 2]) / 765;
+      brightnessTotal += brightness;
+      if (brightness >= 0.62) {
+        lightPixels += 1;
+      }
+    }
+    const luminance = brightnessTotal / pixelCount;
+    const lightRatio = lightPixels / pixelCount;
+    const dominantLight = luminance >= 0.56 || (luminance >= 0.48 && lightRatio >= 0.52) || lightRatio >= 0.64;
+    return widgetWallpaperSampleResult(true, {
+      tone: dominantLight ? "light" : "dark",
+      dominantLight,
+      luminance: Number(luminance.toFixed(4)),
+      lightRatio: Number(lightRatio.toFixed(4)),
+      sampleCount: pixelCount,
+      displayId: String(display.id)
+    });
+  } catch (error) {
+    const proofHash = hashJson({
+      widgetWallpaperSample: "capture_failed",
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return widgetWallpaperSampleResult(false, {
+      error: {
+        code: "rust_unavailable",
+        message: "Widget wallpaper sampling failed.",
+        proofHash
+      }
+    });
+  }
+}
+
 function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown, delayMs?: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget mode from invalid sender", event.senderFrame?.url ?? "");
@@ -12754,6 +12960,9 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-widget-click-through", (event, enabled): boolean => setNativeWindowWidgetClickThrough(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-autohide", (event, enabled): boolean => setNativeWindowWidgetTaskbarAutoHide(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-toggle", (event): boolean => toggleNativeWindowWidgetTaskbar(event));
+  ipcMain.handle("forge:window-widget-wallpaper-sample", (event, bounds): Promise<WidgetWallpaperSampleResult> =>
+    sampleNativeWidgetWallpaper(event, bounds)
+  );
   ipcMain.handle("forge:widget-shell-action", (event, action): boolean => triggerWidgetShellAction(event, action));
 }
 

@@ -1,4 +1,9 @@
-import type { ForgeShellApi, ForgeTerminalApi } from "../shared/ipc-contract";
+import type {
+  ForgeShellApi,
+  ForgeTerminalApi,
+  WidgetWallpaperSampleBounds,
+  WidgetWallpaperSampleResult
+} from "../shared/ipc-contract";
 
 interface ForgeWindowControlsApi {
   minimize: () => Promise<boolean>;
@@ -8,6 +13,7 @@ interface ForgeWindowControlsApi {
   setWidgetClickThrough?: (enabled: boolean) => Promise<boolean>;
   setWidgetTaskbarAutoHide?: (enabled: boolean) => Promise<boolean>;
   toggleWidgetTaskbar?: () => Promise<boolean>;
+  sampleWidgetWallpaper?: (bounds: WidgetWallpaperSampleBounds) => Promise<WidgetWallpaperSampleResult>;
   close: () => Promise<boolean>;
 }
 

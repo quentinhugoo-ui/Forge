@@ -9,7 +9,8 @@ import {
   type NativeWebExplorerCodeAct,
   type ComposerUploadPreview,
   type HeaderControl,
-  type NativeSection
+  type NativeSection,
+  type WidgetWallpaperSampleBounds
 } from "../shared/ipc-contract";
 import tokens from "../shared/generated/design-tokens.generated.json";
 import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice";
@@ -222,6 +223,33 @@ function readWidgetHitRegions(): WidgetHitRegion[] {
   return regions;
 }
 
+function readWidgetWallpaperSampleBounds(): WidgetWallpaperSampleBounds | null {
+  const bottomControlsRect = document.querySelector(".bottomControls")?.getBoundingClientRect();
+  if (!bottomControlsRect || bottomControlsRect.width <= 0 || bottomControlsRect.height <= 0) {
+    return null;
+  }
+  const windowsButtonRect = document.querySelector(".widgetWindowsButton")?.getBoundingClientRect();
+  const left = Math.min(bottomControlsRect.left, windowsButtonRect?.left ?? bottomControlsRect.left);
+  const top = Math.min(bottomControlsRect.top, windowsButtonRect?.top ?? bottomControlsRect.top);
+  const right = Math.max(bottomControlsRect.right, windowsButtonRect?.right ?? bottomControlsRect.right);
+  const bottom = Math.max(bottomControlsRect.bottom, windowsButtonRect?.bottom ?? bottomControlsRect.bottom);
+  const padX = 18;
+  const padY = 10;
+  const sampleLeft = Math.max(0, Math.floor(left - padX));
+  const sampleTop = Math.max(0, Math.floor(top - padY));
+  const sampleRight = Math.min(window.innerWidth, Math.ceil(right + padX));
+  const sampleBottom = Math.min(window.innerHeight, Math.ceil(bottom + padY));
+  if (sampleRight - sampleLeft < 12 || sampleBottom - sampleTop < 8) {
+    return null;
+  }
+  return {
+    x: sampleLeft,
+    y: sampleTop,
+    width: sampleRight - sampleLeft,
+    height: sampleBottom - sampleTop
+  };
+}
+
 function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSProperties {
   const style = cssTokenStyle();
   if (!lock) {
@@ -276,6 +304,7 @@ export function App() {
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetRestoring, setWidgetRestoring] = useState(false);
+  const [widgetWallpaperLight, setWidgetWallpaperLight] = useState(false);
   /* Tracks whether the user toggled the real Windows taskbar back on (via the
      Windows icon) while in widget mode. The replicated system tray shows only
      when the real taskbar is hidden. */
@@ -474,6 +503,7 @@ export function App() {
     widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-header" : "",
     widgetRestoring ? "shell--widget-restoring" : "",
     widgetMode ? "shell--widget-mode" : "",
+    widgetMode && widgetWallpaperLight ? "shell--widget-wallpaper-light" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
@@ -482,6 +512,77 @@ export function App() {
        Windows icon then flips this while inside widget mode. */
     setWidgetTaskbarShown(false);
   }, [widgetMode]);
+
+  useEffect(() => {
+    const sampleWidgetWallpaper = globalThis.window?.forgeWindowControls?.sampleWidgetWallpaper;
+    if (!widgetMode || !sampleWidgetWallpaper) {
+      setWidgetWallpaperLight(false);
+      return undefined;
+    }
+
+    let disposed = false;
+    let animationFrame = 0;
+    let sampleTimer = 0;
+    const scheduleSample = (delayMs = 0) => {
+      if (sampleTimer !== 0) {
+        window.clearTimeout(sampleTimer);
+      }
+      sampleTimer = window.setTimeout(() => {
+        sampleTimer = 0;
+        if (animationFrame !== 0) {
+          return;
+        }
+        animationFrame = window.requestAnimationFrame(() => {
+          animationFrame = 0;
+          const bounds = readWidgetWallpaperSampleBounds();
+          if (!bounds) {
+            return;
+          }
+          void sampleWidgetWallpaper(bounds)
+            .then((result) => {
+              if (disposed || !result.accepted) {
+                return;
+              }
+              setWidgetWallpaperLight((current) => {
+                if (result.dominantLight) {
+                  return true;
+                }
+                if (!current) {
+                  return false;
+                }
+                return !(result.luminance <= 0.34 && result.lightRatio <= 0.18);
+              });
+            })
+            .catch((error: unknown) => {
+              console.warn("[widget-wallpaper] sample failed", error);
+            })
+            .finally(() => {
+              if (!disposed) {
+                scheduleSample(2400);
+              }
+            });
+        });
+      }, delayMs);
+    };
+
+    const scheduleSettledSample = () => scheduleSample(140);
+    const resizeObserver = new ResizeObserver(scheduleSettledSample);
+    resizeObserver.observe(document.body);
+    window.addEventListener("resize", scheduleSettledSample);
+    scheduleSample(180);
+    return () => {
+      disposed = true;
+      if (animationFrame !== 0) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      if (sampleTimer !== 0) {
+        window.clearTimeout(sampleTimer);
+      }
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", scheduleSettledSample);
+      setWidgetWallpaperLight(false);
+    };
+  }, [widgetLayoutLock, widgetMode, widgetTaskbarShown]);
 
   useEffect(() => {
     const widgetSurfaceVisible = widgetMode || widgetMinimizingPhase !== "";

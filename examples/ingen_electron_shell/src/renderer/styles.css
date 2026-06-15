@@ -190,6 +190,32 @@ button {
   background: transparent;
 }
 
+.shell--widget-mode.shell--widget-wallpaper-light::after {
+  content: "";
+  position: fixed;
+  left: max(0px, calc(var(--chat-left) - 42px));
+  bottom: max(0px, calc(var(--bottom-controls-bottom) - 13px));
+  z-index: 35;
+  width: min(100vw, calc(var(--chat-width) + 64px));
+  height: 46px;
+  pointer-events: none;
+  border-radius: 8px !important;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0.46) 0%, rgba(0, 0, 0, 0.34) 45%, rgba(0, 0, 0, 0) 78%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.34));
+  filter: blur(0.1px);
+}
+
+.shell--widget-mode.shell--widget-wallpaper-light .bottomControls,
+.shell--widget-mode.shell--widget-wallpaper-light .widgetWindowsButton {
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.82);
+}
+
+.shell--widget-mode.shell--widget-wallpaper-light .widgetWindowsButton svg,
+.shell--widget-mode.shell--widget-wallpaper-light .bottomControls svg {
+  filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.72));
+}
+
 .shell--widget-minimizing {
   --chat-width: var(--widget-chat-width, min(780px, calc(var(--workspace-width) - 64px)));
   --chat-left: var(--widget-chat-left, calc(var(--workspace-left) + ((var(--workspace-width) - var(--chat-width)) / 2)));
