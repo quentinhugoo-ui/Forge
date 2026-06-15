@@ -17,7 +17,12 @@ import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
 import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
-import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";
+import {
+  BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT,
+  readBrainAgentMemory,
+  readBrainUserMemory,
+  type BrainResearchParallelRequestDetail
+} from "./brain-user-memory-store";
 import { HeaderSurfaceRouter } from "./HeaderSurfaceRouter";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-store";
@@ -661,6 +666,51 @@ export function App() {
     setCanvasMapsOpen(false);
     setParallelPrompts((prompts) => [...prompts, ""]);
     triggerParallelSidebarBirth();
+  }, [parallelPrompts.length, triggerParallelSidebarBirth]);
+
+  useEffect(() => {
+    const openResearchLane = (event: Event) => {
+      const detail = (event as CustomEvent<BrainResearchParallelRequestDetail>).detail;
+      const topic = detail?.topic?.trim();
+      if (!topic) {
+        return;
+      }
+      const targetIndex = Math.min(3, Math.max(1, parallelPrompts.length));
+      setCanvasSplitOpen(false);
+      setCanvasFilesOpen(false);
+      setCanvasTerminalOpen(false);
+      setCanvasActivePane("");
+      setCanvasPlanetsOpen(false);
+      setCanvasWebExplorerOpen(false);
+      setCodingLivePreview(null);
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+      setParallelPrompts((prompts) => {
+        if (prompts.length > targetIndex) {
+          return prompts;
+        }
+        return Array.from({ length: targetIndex + 1 }, (_value, index) => prompts[index] ?? "");
+      });
+      triggerParallelSidebarBirth();
+      const prompt = topic.startsWith("RESEARCH_PARALLEL_QUERY v1")
+        ? topic
+        : [
+          "RESEARCH_PARALLEL_QUERY v1",
+          `topic=${JSON.stringify(topic)}`,
+          `source=${detail.source}`,
+          `evidence=${detail.evidence}`,
+          "Instruction: research this topic in a separate lane. Return current sources, useful deltas, and whether this should become a Brain rule, skill, task, or no durable memory."
+        ].join("\n");
+      window.setTimeout(() => {
+        void panelsChatBottomStore.dispatch({
+          kind: "send_chat",
+          value: prompt,
+          parallelSessionIndex: targetIndex
+        });
+      }, 0);
+    };
+    window.addEventListener(BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT, openResearchLane as EventListener);
+    return () => window.removeEventListener(BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT, openResearchLane as EventListener);
   }, [parallelPrompts.length, triggerParallelSidebarBirth]);
 
   const removableParallelIndexes = useMemo(() => {

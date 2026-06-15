@@ -47,14 +47,25 @@ import {
   agentActionEventCommandFromToken,
   type AgentActionEventCommand
 } from "./agent-action-events";
-import { BRAIN_AGENT_MEMORY_UPDATED_EVENT, readBrainAgentMemory } from "./brain-user-memory-store";
+import {
+  BRAIN_AGENT_MEMORY_UPDATED_EVENT,
+  appendBrainCustomCodeAct,
+  appendBrainLearningMemoryEntry,
+  dispatchBrainResearchParallelRequest,
+  readBrainAgentMemory
+} from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
 import { MODULE_DRAG_ZONE_EVENT, type ModuleDragZoneDetail, type SidebarModuleId } from "./SidebarSlice";
 import { assistantGeoEntityLabel } from "./assistant-geo-entities";
 import {
+  brainLearningCodeActCommand,
+  brainLearningCodeActTemplate,
+  brainLearningMemoryCategoryForPromotion,
   brainLearningPromotionLabel,
   brainLearningPromotionPrompt,
+  brainLearningResearchPrompt,
+  brainLearningSavedLabel,
   brainLearningTypeLabel,
   parseBrainLearningInterruptLine,
   stripBrainLearningInterruptMarkup,
@@ -1257,7 +1268,7 @@ const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
-  [BRAIN_MAPS_COMMAND, "Use Google Earth"],
+  [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
   [BRAIN_AIRBNB_COMMAND, "Use Airbnb"],
@@ -3060,12 +3071,38 @@ function AssistantLearningInterruptCard({
   const TypeIcon = interrupt.type === "anti_pattern" ? ShieldAlert : interrupt.type === "working_pattern" ? ShieldCheck : Sparkles;
 
   const requestPromotion = (action: BrainLearningInterrupt["promote"][number]) => {
+    const durableCategory = brainLearningMemoryCategoryForPromotion(interrupt, action);
+    if (action === "research") {
+      dispatchBrainResearchParallelRequest({
+        topic: brainLearningResearchPrompt(interrupt),
+        source: "learning_interrupt",
+        evidence: `assistant_learning_interrupt:${messageId}:${blockIndex}`
+      });
+    } else if (action === "codeact") {
+      appendBrainCustomCodeAct({
+        command: brainLearningCodeActCommand(interrupt),
+        description: interrupt.text,
+        template: brainLearningCodeActTemplate(interrupt),
+        source: "agent_learning_interrupt",
+        trust: "agent_candidate",
+        evidence: `assistant_learning_interrupt:${messageId}:${blockIndex}`
+      });
+    } else if (durableCategory) {
+      appendBrainLearningMemoryEntry({
+        category: durableCategory,
+        text: interrupt.text,
+        source: "agent_learning_interrupt",
+        trust: "agent_candidate",
+        evidence: `assistant_learning_interrupt:${messageId}:${blockIndex}`
+      });
+    } else {
+      void panelsChatBottomStore.dispatch({
+        kind: "send_chat",
+        value: brainLearningPromotionPrompt(interrupt, action),
+        parallelSessionIndex: parallelSessionIndex > 0 ? parallelSessionIndex : undefined
+      });
+    }
     setSubmittedAction(action);
-    void panelsChatBottomStore.dispatch({
-      kind: "send_chat",
-      value: brainLearningPromotionPrompt(interrupt, action),
-      parallelSessionIndex: parallelSessionIndex > 0 ? parallelSessionIndex : undefined
-    });
   };
 
   return (
@@ -3094,7 +3131,11 @@ function AssistantLearningInterruptCard({
               {brainLearningPromotionLabel(action)}
             </button>
           ))}
-          {submittedAction ? <span className="assistantText__learningSubmitted">Queued {brainLearningPromotionLabel(submittedAction)}</span> : null}
+          {submittedAction ? (
+            <span className="assistantText__learningSubmitted">
+              {brainLearningSavedLabel(submittedAction, brainLearningMemoryCategoryForPromotion(interrupt, submittedAction))}
+            </span>
+          ) : null}
         </div>
       </div>
     </aside>

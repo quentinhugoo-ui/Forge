@@ -9,12 +9,24 @@ import {
 } from "../shared/ipc-contract";
 import { BrainBlob } from "./brain-blob";
 import {
+  BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
+  BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
+  appendBrainCustomCodeAct,
+  appendBrainLearningMemoryEntry,
+  normalizeBrainCustomCodeActCommand,
   readBrainAgentMemory,
+  readBrainCustomCodeActs,
+  readBrainLearningMemoryEntries,
   readBrainUserLocationMemory,
   readBrainUserMemory,
+  removeBrainCustomCodeAct,
+  removeBrainLearningMemoryEntry,
   writeBrainAgentMemory,
   writeBrainUserLocationMemory,
-  writeBrainUserMemory
+  writeBrainUserMemory,
+  type BrainCustomCodeActEntry,
+  type BrainLearningMemoryCategory,
+  type BrainLearningMemoryEntry
 } from "./brain-user-memory-store";
 import { headerShadowStore } from "./header-shadow-store";
 import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon } from "./module-logos";
@@ -263,6 +275,44 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
   { id: "science", label: "science brain", glyph: "flask", commands: SCIENCE_BRAIN_COMMANDS },
   { id: "coding", label: "coding brain", glyph: "code", commands: CODING_BRAIN_COMMANDS }
 ];
+
+const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
+  id: BrainLearningMemoryCategory;
+  label: string;
+  title: string;
+  glyph: string;
+  placeholder: string;
+}> = [
+  {
+    id: "anti_pattern",
+    label: "Erreurs",
+    title: "Erreurs à ne plus répéter",
+    glyph: "shield-check",
+    placeholder: "Ex: Ne plus valider une campagne sans audience, douleur, mécanisme et résultat mesurable."
+  },
+  {
+    id: "conduct_rule",
+    label: "Règles",
+    title: "Règles de conduite",
+    glyph: "database",
+    placeholder: "Ex: Avant de proposer une campagne, vérifier l'offre, le canal, la preuve et l'objection principale."
+  },
+  {
+    id: "skill",
+    label: "Skills",
+    title: "Skills",
+    glyph: "zap",
+    placeholder: "Ex: Critiquer une accroche marketing avec le cadre audience / douleur / mécanisme / preuve."
+  },
+  {
+    id: "task",
+    label: "Tasks",
+    title: "Tasks",
+    glyph: "terminal",
+    placeholder: "Ex: Revoir les 5 dernières variantes et extraire les erreurs récurrentes."
+  }
+];
+const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
@@ -666,6 +716,202 @@ function BrainMemoryLocationField({
   );
 }
 
+function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["source"] | BrainCustomCodeActEntry["source"] }) {
+  return <span className="brainLearningRegistry__source">{source === "manual" ? "manual" : "agent"}</span>;
+}
+
+function BrainLearningRegistry() {
+  const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
+  const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("anti_pattern");
+  const [draft, setDraft] = useState("");
+  const category = BRAIN_LEARNING_MEMORY_CATEGORIES.find((item) => item.id === activeCategory) ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY;
+  const categoryEntries = entries.filter((entry) => entry.category === activeCategory);
+
+  useEffect(() => {
+    const syncEntries = () => setEntries(readBrainLearningMemoryEntries());
+    window.addEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncEntries);
+    return () => window.removeEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncEntries);
+  }, []);
+
+  const addEntry = () => {
+    const next = appendBrainLearningMemoryEntry({
+      category: activeCategory,
+      text: draft,
+      source: "manual",
+      trust: "user_confirmed",
+      evidence: "brain_learning_registry:manual_editor"
+    });
+    setEntries(next);
+    setDraft("");
+  };
+
+  const deleteEntry = (entryId: string) => {
+    setEntries(removeBrainLearningMemoryEntry(entryId));
+  };
+
+  return (
+    <section className="brainLearningRegistry" aria-label="Durable learning memory" role="listitem">
+      <div className="brainLearningRegistry__head">
+        <span className="brainRow__icon">
+          <Glyph kind="database" size={17} />
+        </span>
+        <span>
+          <strong>Learning memory</strong>
+          <span>Manual notes and agent proposals that should survive future sessions.</span>
+        </span>
+      </div>
+      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Learning memory categories">
+        {BRAIN_LEARNING_MEMORY_CATEGORIES.map((item) => (
+          <button
+            type="button"
+            className={item.id === activeCategory ? "brainLearningRegistry__tab brainLearningRegistry__tab--active" : "brainLearningRegistry__tab"}
+            key={item.id}
+            role="tab"
+            aria-selected={item.id === activeCategory}
+            onClick={() => setActiveCategory(item.id)}
+          >
+            <Glyph kind={item.glyph} size={13} />
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <label className="brainLearningRegistry__composer">
+        <span>{category.title}</span>
+        <textarea
+          value={draft}
+          placeholder={category.placeholder}
+          rows={3}
+          spellCheck={false}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+        />
+      </label>
+      <div className="brainLearningRegistry__actions">
+        <button type="button" disabled={!draft.trim()} onClick={addEntry}>
+          <Glyph kind="plus" size={13} />
+          Add to Brain
+        </button>
+      </div>
+      <div className="brainLearningRegistry__entries" role="list" aria-label={category.title}>
+        {categoryEntries.length === 0 ? (
+          <p className="brainLearningRegistry__empty">No entries in this category yet.</p>
+        ) : categoryEntries.map((entry) => (
+          <article className="brainLearningRegistry__entry" key={entry.id} role="listitem">
+            <p>{entry.text}</p>
+            <footer>
+              <BrainEntrySourceBadge source={entry.source} />
+              <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
+              <button type="button" aria-label="Remove learning memory entry" onClick={() => deleteEntry(entry.id)}>
+                <Glyph kind="minus" size={12} />
+              </button>
+            </footer>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BrainCustomCodeActRegistry() {
+  const [entries, setEntries] = useState(() => readBrainCustomCodeActs());
+  const [command, setCommand] = useState("/agent_draft_");
+  const [description, setDescription] = useState("");
+  const [template, setTemplate] = useState("");
+  const normalizedCommand = normalizeBrainCustomCodeActCommand(command);
+  const canAdd = description.trim().length > 0 || template.trim().length > 0;
+
+  useEffect(() => {
+    const syncEntries = () => setEntries(readBrainCustomCodeActs());
+    window.addEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncEntries);
+    return () => window.removeEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncEntries);
+  }, []);
+
+  const addCodeAct = () => {
+    const next = appendBrainCustomCodeAct({
+      command: normalizedCommand,
+      description,
+      template,
+      source: "manual",
+      trust: "user_confirmed",
+      evidence: "brain_custom_codeact_registry:manual_editor"
+    });
+    setEntries(next);
+    setCommand("/agent_draft_");
+    setDescription("");
+    setTemplate("");
+  };
+
+  const deleteCodeAct = (entryId: string) => {
+    setEntries(removeBrainCustomCodeAct(entryId));
+  };
+
+  return (
+    <section className="brainCustomCodeActs" aria-label="Agent drafted CodeActs">
+      <div className="brainCustomCodeActs__head">
+        <span className="brainRow__icon">
+          <Glyph kind="code" size={17} />
+        </span>
+        <span>
+          <strong>Agent CodeAct drafts</strong>
+          <span>Reusable actions the agent or user can draft before they become official commands.</span>
+        </span>
+      </div>
+      <div className="brainCustomCodeActs__editor">
+        <label>
+          <span>Command</span>
+          <input
+            value={command}
+            placeholder="/agent_draft_"
+            spellCheck={false}
+            onBlur={() => setCommand(normalizedCommand)}
+            onChange={(event) => setCommand(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea
+            value={description}
+            placeholder="What should this CodeAct reliably do?"
+            rows={2}
+            spellCheck={false}
+            onChange={(event) => setDescription(event.currentTarget.value)}
+          />
+        </label>
+        <label className="brainCustomCodeActs__template">
+          <span>Template</span>
+          <textarea
+            value={template}
+            placeholder={`${normalizedCommand}\ninput=\"...\"\ngoal=\"...\"`}
+            rows={4}
+            spellCheck={false}
+            onChange={(event) => setTemplate(event.currentTarget.value)}
+          />
+        </label>
+        <button type="button" disabled={!canAdd} onClick={addCodeAct}>
+          <Glyph kind="plus" size={13} />
+          Save draft
+        </button>
+      </div>
+      <div className="brainCustomCodeActs__entries" role="list" aria-label="Saved custom CodeAct drafts">
+        {entries.length === 0 ? (
+          <p className="brainLearningRegistry__empty">No custom CodeAct draft yet.</p>
+        ) : entries.map((entry) => (
+          <article className="brainCustomCodeActs__entry" key={entry.id} role="listitem">
+            <header>
+              <code>{entry.command}</code>
+              <BrainEntrySourceBadge source={entry.source} />
+              <button type="button" aria-label="Remove custom CodeAct draft" onClick={() => deleteCodeAct(entry.id)}>
+                <Glyph kind="minus" size={12} />
+              </button>
+            </header>
+            <p>{entry.description}</p>
+            {entry.template ? <pre>{entry.template}</pre> : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function CodeActsSpace() {
   return (
     <div className="brainCanvas__space">
@@ -673,6 +919,7 @@ function CodeActsSpace() {
         CodeActs are autonomous commands the agent runs to move faster and do real work beyond chat.
         Some control a web browser in a contained, controlled environment; others create 3D objects or run heavy science and analysis locally, replacing work that would otherwise burn hundreds of millions of tokens.
       </p>
+      <BrainCustomCodeActRegistry />
       <div className="brainCanvas__segments">
         {BRAIN_SEGMENTS.map((segment) => (
           <section className="brainSegment" key={segment.id} aria-label={segment.label}>
@@ -807,6 +1054,7 @@ function MemorySpace() {
             />
           </div>
         </section>
+        <BrainLearningRegistry />
         <div className="brainSessionArchiveHead" role="listitem">
           <span className="brainRow__icon">
             <Glyph kind="archive" size={17} />

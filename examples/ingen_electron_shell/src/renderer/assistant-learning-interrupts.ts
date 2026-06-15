@@ -1,3 +1,5 @@
+import type { BrainLearningMemoryCategory } from "./brain-user-memory-store";
+
 export type BrainLearningInterruptType =
   | "anti_pattern"
   | "working_pattern"
@@ -122,6 +124,56 @@ export function brainLearningPromotionLabel(action: BrainLearningPromotionAction
   if (action === "task") return "Task";
   if (action === "codeact") return "CodeAct";
   return "Research";
+}
+
+function learningSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 42) || "learning_candidate";
+}
+
+export function brainLearningMemoryCategoryForPromotion(
+  interrupt: BrainLearningInterrupt,
+  action: BrainLearningPromotionAction
+): BrainLearningMemoryCategory | null {
+  if (action === "skill") return "skill";
+  if (action === "task") return "task";
+  if (action === "codeact" || action === "research") return null;
+  return interrupt.type === "anti_pattern" ? "anti_pattern" : "conduct_rule";
+}
+
+export function brainLearningSavedLabel(action: BrainLearningPromotionAction, category: BrainLearningMemoryCategory | null): string {
+  if (action === "codeact") return "Saved CodeAct";
+  if (action === "research") return "Opened Research";
+  if (category === "anti_pattern") return "Saved Error";
+  if (category === "conduct_rule") return "Saved Rule";
+  if (category === "skill") return "Saved Skill";
+  return "Saved Task";
+}
+
+export function brainLearningCodeActCommand(interrupt: BrainLearningInterrupt): string {
+  return `/agent_${learningSlug(interrupt.scope)}_${learningSlug(interrupt.text)}_`;
+}
+
+export function brainLearningCodeActTemplate(interrupt: BrainLearningInterrupt): string {
+  return [
+    `${brainLearningCodeActCommand(interrupt)}`,
+    `scope=${JSON.stringify(interrupt.scope)}`,
+    `candidate=${JSON.stringify(interrupt.text)}`,
+    "goal=\"Turn this repeated useful procedure into a typed, verifiable CodeAct draft.\""
+  ].join("\n");
+}
+
+export function brainLearningResearchPrompt(interrupt: BrainLearningInterrupt): string {
+  return [
+    "RESEARCH_PARALLEL_QUERY v1",
+    `topic=${JSON.stringify(interrupt.text)}`,
+    `scope=${interrupt.scope}`,
+    `origin_type=${interrupt.type}`,
+    "Instruction: research this topic in a separate lane. Return current sources, useful deltas, and whether this should become a Brain rule, skill, task, or no durable memory."
+  ].join("\n");
 }
 
 export function brainLearningPromotionPrompt(interrupt: BrainLearningInterrupt, action: BrainLearningPromotionAction): string {

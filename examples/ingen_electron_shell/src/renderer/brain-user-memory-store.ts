@@ -25,10 +25,63 @@ export interface BrainUserLocationMemorySlot {
   evidence: string;
 }
 
+export type BrainLearningMemoryCategory = "anti_pattern" | "conduct_rule" | "skill" | "task";
+export type BrainDurableCandidateSource = "manual" | "agent_learning_interrupt";
+
+export interface BrainLearningMemoryEntry {
+  schema: "ingen.brain.memory.learning_registry.v1";
+  id: string;
+  category: BrainLearningMemoryCategory;
+  text: string;
+  source: BrainDurableCandidateSource;
+  trust: "user_confirmed" | "agent_candidate";
+  evidence: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrainCustomCodeActEntry {
+  schema: "ingen.brain.codeact.custom_registry.v1";
+  id: string;
+  command: string;
+  description: string;
+  template: string;
+  source: BrainDurableCandidateSource;
+  trust: "user_confirmed" | "agent_candidate";
+  evidence: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrainResearchParallelRequestDetail {
+  schema: "ingen.brain.research.parallel_request.v1";
+  topic: string;
+  source: "learning_interrupt" | "brain_manual";
+  evidence: string;
+  createdAt: string;
+}
+
 const USER_STORAGE_KEY = "ingen.brain.memory.user_identity.v1";
 const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
 const USER_LOCATION_STORAGE_KEY = "ingen.brain.memory.user_location.v1";
+const LEARNING_REGISTRY_STORAGE_KEY = "ingen.brain.memory.learning_registry.v1";
+const CUSTOM_CODEACT_REGISTRY_STORAGE_KEY = "ingen.brain.codeact.custom_registry.v1";
 export const BRAIN_AGENT_MEMORY_UPDATED_EVENT = "ingen:brain-agent-memory-updated";
+export const BRAIN_LEARNING_MEMORY_UPDATED_EVENT = "ingen:brain-learning-memory-updated";
+export const BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT = "ingen:brain-custom-codeacts-updated";
+export const BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT = "ingen:brain-research-parallel-request";
+
+const LEARNING_MEMORY_CATEGORIES = new Set<BrainLearningMemoryCategory>([
+  "anti_pattern",
+  "conduct_rule",
+  "skill",
+  "task"
+]);
+
+const MAX_LEARNING_MEMORY_ENTRIES = 120;
+const MAX_CUSTOM_CODEACT_ENTRIES = 80;
+const MAX_LEARNING_TEXT_LENGTH = 1200;
+const MAX_CODEACT_FIELD_LENGTH = 2200;
 
 const fallbackBrainUserMemory: BrainUserMemorySlot = {
   schema: "ingen.brain.memory.user_identity.v1",
@@ -57,6 +110,61 @@ const fallbackBrainUserLocationMemory: BrainUserLocationMemorySlot = {
   evidence: "brain_memory_editor:user_home_location_unset"
 };
 
+function trimmedSingleLine(value: string, maxLength: number): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function trimmedMultiline(value: string, maxLength: number): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function localId(prefix: string): string {
+  const random = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().slice(0, 8)
+    : Math.random().toString(36).slice(2, 10);
+  return `${prefix}_${Date.now().toString(36)}_${random}`;
+}
+
+function readJsonArray<T>(storageKey: string, isEntry: (value: unknown) => value is T): T[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      window.localStorage.setItem(storageKey, JSON.stringify([]));
+      return [];
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeJsonArray<T>(storageKey: string, entries: T[]): T[] {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(entries));
+    } catch {
+      // Keep the caller state usable even if localStorage is temporarily unavailable.
+    }
+  }
+  return entries;
+}
+
+function dispatchBrainStoreEvent<T>(eventName: string, detail: T) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<T>(eventName, { detail }));
+  }
+}
+
 function isBrainUserMemorySlot(value: unknown): value is BrainUserMemorySlot {
   const candidate = value as Partial<BrainUserMemorySlot>;
   return (
@@ -84,6 +192,37 @@ function isBrainUserLocationMemorySlot(value: unknown): value is BrainUserLocati
     candidate.scope === "brain.memory.user.location" &&
     candidate.stableKey === "user.location.home" &&
     typeof candidate.homeLocation === "string"
+  );
+}
+
+function isBrainLearningMemoryEntry(value: unknown): value is BrainLearningMemoryEntry {
+  const candidate = value as Partial<BrainLearningMemoryEntry>;
+  return (
+    candidate?.schema === "ingen.brain.memory.learning_registry.v1" &&
+    typeof candidate.id === "string" &&
+    typeof candidate.text === "string" &&
+    typeof candidate.source === "string" &&
+    typeof candidate.trust === "string" &&
+    typeof candidate.evidence === "string" &&
+    typeof candidate.createdAt === "string" &&
+    typeof candidate.updatedAt === "string" &&
+    LEARNING_MEMORY_CATEGORIES.has(candidate.category as BrainLearningMemoryCategory)
+  );
+}
+
+function isBrainCustomCodeActEntry(value: unknown): value is BrainCustomCodeActEntry {
+  const candidate = value as Partial<BrainCustomCodeActEntry>;
+  return (
+    candidate?.schema === "ingen.brain.codeact.custom_registry.v1" &&
+    typeof candidate.id === "string" &&
+    typeof candidate.command === "string" &&
+    typeof candidate.description === "string" &&
+    typeof candidate.template === "string" &&
+    typeof candidate.source === "string" &&
+    typeof candidate.trust === "string" &&
+    typeof candidate.evidence === "string" &&
+    typeof candidate.createdAt === "string" &&
+    typeof candidate.updatedAt === "string"
   );
 }
 
@@ -117,6 +256,122 @@ export function writeBrainUserMemory(preferredFirstName: string): BrainUserMemor
     }
   }
   return next;
+}
+
+export function readBrainLearningMemoryEntries(): BrainLearningMemoryEntry[] {
+  return readJsonArray(LEARNING_REGISTRY_STORAGE_KEY, isBrainLearningMemoryEntry);
+}
+
+export function writeBrainLearningMemoryEntries(entries: BrainLearningMemoryEntry[]): BrainLearningMemoryEntry[] {
+  const next = writeJsonArray(
+    LEARNING_REGISTRY_STORAGE_KEY,
+    entries.filter(isBrainLearningMemoryEntry).slice(0, MAX_LEARNING_MEMORY_ENTRIES)
+  );
+  dispatchBrainStoreEvent(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, next);
+  return next;
+}
+
+export function appendBrainLearningMemoryEntry(input: {
+  category: BrainLearningMemoryCategory;
+  text: string;
+  source: BrainDurableCandidateSource;
+  evidence?: string;
+  trust?: BrainLearningMemoryEntry["trust"];
+}): BrainLearningMemoryEntry[] {
+  const text = trimmedMultiline(input.text, MAX_LEARNING_TEXT_LENGTH);
+  if (!text) {
+    return readBrainLearningMemoryEntries();
+  }
+  const timestamp = nowIso();
+  const nextEntry: BrainLearningMemoryEntry = {
+    schema: "ingen.brain.memory.learning_registry.v1",
+    id: localId("brain_learning"),
+    category: input.category,
+    text,
+    source: input.source,
+    trust: input.trust ?? (input.source === "manual" ? "user_confirmed" : "agent_candidate"),
+    evidence: input.evidence ?? `brain_learning_registry:${input.source}`,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  const current = readBrainLearningMemoryEntries();
+  return writeBrainLearningMemoryEntries([nextEntry, ...current].slice(0, MAX_LEARNING_MEMORY_ENTRIES));
+}
+
+export function removeBrainLearningMemoryEntry(id: string): BrainLearningMemoryEntry[] {
+  return writeBrainLearningMemoryEntries(readBrainLearningMemoryEntries().filter((entry) => entry.id !== id));
+}
+
+export function normalizeBrainCustomCodeActCommand(value: string): string {
+  const cleaned = trimmedSingleLine(value, 72)
+    .replace(/[^\w/-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^\/+/, "")
+    .replace(/^_+|_+$/g, "");
+  const body = cleaned || "agent_draft";
+  return `/${body.endsWith("_") ? body : `${body}_`}`;
+}
+
+export function readBrainCustomCodeActs(): BrainCustomCodeActEntry[] {
+  return readJsonArray(CUSTOM_CODEACT_REGISTRY_STORAGE_KEY, isBrainCustomCodeActEntry);
+}
+
+export function writeBrainCustomCodeActs(entries: BrainCustomCodeActEntry[]): BrainCustomCodeActEntry[] {
+  const next = writeJsonArray(
+    CUSTOM_CODEACT_REGISTRY_STORAGE_KEY,
+    entries.filter(isBrainCustomCodeActEntry).slice(0, MAX_CUSTOM_CODEACT_ENTRIES)
+  );
+  dispatchBrainStoreEvent(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, next);
+  return next;
+}
+
+export function appendBrainCustomCodeAct(input: {
+  command: string;
+  description: string;
+  template?: string;
+  source: BrainDurableCandidateSource;
+  evidence?: string;
+  trust?: BrainCustomCodeActEntry["trust"];
+}): BrainCustomCodeActEntry[] {
+  const command = normalizeBrainCustomCodeActCommand(input.command);
+  const description = trimmedMultiline(input.description, MAX_CODEACT_FIELD_LENGTH);
+  const template = trimmedMultiline(input.template ?? "", MAX_CODEACT_FIELD_LENGTH);
+  if (!description && !template) {
+    return readBrainCustomCodeActs();
+  }
+  const timestamp = nowIso();
+  const nextEntry: BrainCustomCodeActEntry = {
+    schema: "ingen.brain.codeact.custom_registry.v1",
+    id: localId("brain_codeact"),
+    command,
+    description: description || "Agent drafted CodeAct",
+    template,
+    source: input.source,
+    trust: input.trust ?? (input.source === "manual" ? "user_confirmed" : "agent_candidate"),
+    evidence: input.evidence ?? `brain_custom_codeact:${input.source}`,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  const current = readBrainCustomCodeActs();
+  return writeBrainCustomCodeActs([nextEntry, ...current].slice(0, MAX_CUSTOM_CODEACT_ENTRIES));
+}
+
+export function removeBrainCustomCodeAct(id: string): BrainCustomCodeActEntry[] {
+  return writeBrainCustomCodeActs(readBrainCustomCodeActs().filter((entry) => entry.id !== id));
+}
+
+export function dispatchBrainResearchParallelRequest(detail: Omit<BrainResearchParallelRequestDetail, "schema" | "createdAt">) {
+  const topic = trimmedMultiline(detail.topic, MAX_LEARNING_TEXT_LENGTH);
+  if (!topic || typeof window === "undefined") {
+    return;
+  }
+  dispatchBrainStoreEvent<BrainResearchParallelRequestDetail>(BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT, {
+    schema: "ingen.brain.research.parallel_request.v1",
+    topic,
+    source: detail.source,
+    evidence: detail.evidence,
+    createdAt: nowIso()
+  });
 }
 
 export function readBrainAgentMemory(): BrainAgentMemorySlot {
