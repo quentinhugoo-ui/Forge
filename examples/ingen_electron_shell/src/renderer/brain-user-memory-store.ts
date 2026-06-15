@@ -25,7 +25,9 @@ export interface BrainUserLocationMemorySlot {
   evidence: string;
 }
 
-export type BrainLearningMemoryCategory = "anti_pattern" | "conduct_rule" | "skill" | "task";
+export type BrainLearningMemoryCategory = "lesson" | "skill" | "task";
+type LegacyBrainLearningMemoryCategory = "anti_pattern" | "conduct_rule";
+type BrainLearningMemoryStoredCategory = BrainLearningMemoryCategory | LegacyBrainLearningMemoryCategory;
 export type BrainDurableCandidateSource = "manual" | "agent_learning_interrupt";
 
 export interface BrainLearningMemoryEntry {
@@ -71,11 +73,12 @@ export const BRAIN_LEARNING_MEMORY_UPDATED_EVENT = "ingen:brain-learning-memory-
 export const BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT = "ingen:brain-custom-codeacts-updated";
 export const BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT = "ingen:brain-research-parallel-request";
 
-const LEARNING_MEMORY_CATEGORIES = new Set<BrainLearningMemoryCategory>([
-  "anti_pattern",
-  "conduct_rule",
+const LEARNING_MEMORY_CATEGORIES = new Set<BrainLearningMemoryStoredCategory>([
+  "lesson",
   "skill",
-  "task"
+  "task",
+  "anti_pattern",
+  "conduct_rule"
 ]);
 
 const MAX_LEARNING_MEMORY_ENTRIES = 120;
@@ -83,10 +86,9 @@ const MAX_CUSTOM_CODEACT_ENTRIES = 80;
 const MAX_LEARNING_TEXT_LENGTH = 1200;
 const MAX_CODEACT_FIELD_LENGTH = 2200;
 const MAX_DURABLE_MANIFEST_LENGTH = 7000;
-const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["anti_pattern", "conduct_rule", "skill", "task"];
+const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["lesson", "skill", "task"];
 const DURABLE_MANIFEST_CATEGORY_KEYS: Record<BrainLearningMemoryCategory, string> = {
-  anti_pattern: "errors_to_avoid",
-  conduct_rule: "conduct_rules",
+  lesson: "lessons",
   skill: "skills",
   task: "tasks"
 };
@@ -203,9 +205,16 @@ function isBrainUserLocationMemorySlot(value: unknown): value is BrainUserLocati
   );
 }
 
-function isBrainLearningMemoryEntry(value: unknown): value is BrainLearningMemoryEntry {
+function normalizeBrainLearningMemoryCategory(value: unknown): BrainLearningMemoryCategory | null {
+  if (value === "anti_pattern" || value === "conduct_rule") return "lesson";
+  if (value === "lesson" || value === "skill" || value === "task") return value;
+  return null;
+}
+
+function normalizeBrainLearningMemoryEntry(value: unknown): BrainLearningMemoryEntry | null {
   const candidate = value as Partial<BrainLearningMemoryEntry>;
-  return (
+  const category = normalizeBrainLearningMemoryCategory(candidate?.category);
+  if (
     candidate?.schema === "ingen.brain.memory.learning_registry.v1" &&
     typeof candidate.id === "string" &&
     typeof candidate.text === "string" &&
@@ -214,8 +223,16 @@ function isBrainLearningMemoryEntry(value: unknown): value is BrainLearningMemor
     typeof candidate.evidence === "string" &&
     typeof candidate.createdAt === "string" &&
     typeof candidate.updatedAt === "string" &&
-    LEARNING_MEMORY_CATEGORIES.has(candidate.category as BrainLearningMemoryCategory)
-  );
+    category &&
+    LEARNING_MEMORY_CATEGORIES.has(candidate.category as BrainLearningMemoryStoredCategory)
+  ) {
+    return { ...candidate, category } as BrainLearningMemoryEntry;
+  }
+  return null;
+}
+
+function isBrainLearningMemoryEntry(value: unknown): value is BrainLearningMemoryEntry {
+  return Boolean(normalizeBrainLearningMemoryEntry(value));
 }
 
 function isBrainCustomCodeActEntry(value: unknown): value is BrainCustomCodeActEntry {
@@ -267,13 +284,18 @@ export function writeBrainUserMemory(preferredFirstName: string): BrainUserMemor
 }
 
 export function readBrainLearningMemoryEntries(): BrainLearningMemoryEntry[] {
-  return readJsonArray(LEARNING_REGISTRY_STORAGE_KEY, isBrainLearningMemoryEntry);
+  return readJsonArray(LEARNING_REGISTRY_STORAGE_KEY, isBrainLearningMemoryEntry)
+    .map(normalizeBrainLearningMemoryEntry)
+    .filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry));
 }
 
 export function writeBrainLearningMemoryEntries(entries: BrainLearningMemoryEntry[]): BrainLearningMemoryEntry[] {
   const next = writeJsonArray(
     LEARNING_REGISTRY_STORAGE_KEY,
-    entries.filter(isBrainLearningMemoryEntry).slice(0, MAX_LEARNING_MEMORY_ENTRIES)
+    entries
+      .map(normalizeBrainLearningMemoryEntry)
+      .filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry))
+      .slice(0, MAX_LEARNING_MEMORY_ENTRIES)
   );
   dispatchBrainStoreEvent(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, next);
   return next;
@@ -388,7 +410,9 @@ export function brainDurableMemoryManifestFromEntries(
   learningEntries: BrainLearningMemoryEntry[],
   customCodeActs: BrainCustomCodeActEntry[]
 ): string {
-  const validLearningEntries = learningEntries.filter(isBrainLearningMemoryEntry);
+  const validLearningEntries = learningEntries
+    .map(normalizeBrainLearningMemoryEntry)
+    .filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry));
   const validCodeActs = customCodeActs.filter(isBrainCustomCodeActEntry);
   if (validLearningEntries.length === 0 && validCodeActs.length === 0) {
     return "";
@@ -397,7 +421,7 @@ export function brainDurableMemoryManifestFromEntries(
     "BRAIN_DURABLE_MEMORY_MANIFEST v1",
     "source=brain_page_learning_memory",
     "injection_policy=session_boot_and_after_context_compaction",
-    "research_policy=Research branches are live work only; do not persist research unless it is later promoted into errors, rules, skills, tasks, or CodeAct drafts.",
+    "research_policy=Research branches are live work only; do not persist research unless it is later promoted into lessons, skills, tasks, or CodeAct drafts.",
     `learning_entries=${validLearningEntries.length}`,
     `codeact_drafts=${validCodeActs.length}`,
     "rule=Treat user_confirmed entries as durable user Brain context. Treat agent_candidate entries as useful but still revisable candidates; obey them unless the user overrides them."

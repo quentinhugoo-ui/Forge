@@ -286,7 +286,7 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
 ];
 
 const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
-  id: BrainLearningMemoryCategory;
+  id: BrainLearningMemoryCategory | "anti_pattern" | "conduct_rule";
   label: string;
   title: string;
   glyph: string;
@@ -320,7 +320,20 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
     glyph: "terminal",
     placeholder: "Ex: Revoir les 5 dernières variantes et extraire les erreurs récurrentes."
   }
-];
+].map((item) => item.id === "anti_pattern" ? {
+  ...item,
+  id: "lesson",
+  label: "Lessons",
+  title: "Lessons: observed error -> replacement rule",
+  placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
+} : item)
+  .filter((item) => item.id !== "conduct_rule") as Array<{
+    id: BrainLearningMemoryCategory;
+    label: string;
+    title: string;
+    glyph: string;
+    placeholder: string;
+  }>;
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
@@ -745,7 +758,7 @@ function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["s
 
 function BrainLearningRegistry() {
   const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
-  const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("anti_pattern");
+  const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("lesson");
   const [draft, setDraft] = useState("");
   const category = BRAIN_LEARNING_MEMORY_CATEGORIES.find((item) => item.id === activeCategory) ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY;
   const categoryEntries = entries.filter((entry) => entry.category === activeCategory);
@@ -780,7 +793,7 @@ function BrainLearningRegistry() {
         </span>
         <span>
           <strong>Learning memory</strong>
-          <span>Manual notes and agent proposals that should survive future sessions.</span>
+          <span>Lessons, skills and tasks that should survive future sessions.</span>
         </span>
       </div>
       <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Learning memory categories">
@@ -791,7 +804,7 @@ function BrainLearningRegistry() {
             key={item.id}
             role="tab"
             aria-selected={item.id === activeCategory}
-            onClick={() => setActiveCategory(item.id)}
+            onClick={() => setActiveCategory(item.id as BrainLearningMemoryCategory)}
           >
             <Glyph kind={item.glyph} size={13} />
             {item.label}

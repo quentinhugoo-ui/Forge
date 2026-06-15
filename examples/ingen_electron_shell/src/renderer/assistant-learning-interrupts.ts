@@ -9,7 +9,7 @@ export type BrainLearningInterruptType =
   | "codeact_candidate"
   | "research_candidate";
 
-export type BrainLearningPromotionAction = "remember" | "rule" | "skill" | "task" | "codeact" | "research";
+export type BrainLearningPromotionAction = "lesson" | "skill" | "task" | "codeact" | "research";
 
 export interface BrainLearningInterrupt {
   type: BrainLearningInterruptType;
@@ -29,16 +29,16 @@ const KNOWN_TYPES = new Set<BrainLearningInterruptType>([
   "codeact_candidate",
   "research_candidate"
 ]);
-const KNOWN_PROMOTIONS = new Set<BrainLearningPromotionAction>(["remember", "rule", "skill", "task", "codeact", "research"]);
+const KNOWN_PROMOTIONS = new Set<string>(["lesson", "remember", "rule", "skill", "task", "codeact", "research"]);
 
 const DEFAULT_PROMOTIONS: Record<BrainLearningInterruptType, BrainLearningPromotionAction[]> = {
-  anti_pattern: ["rule", "task"],
-  working_pattern: ["skill", "rule"],
-  user_preference: ["remember", "rule"],
-  domain_rule: ["rule", "skill"],
+  anti_pattern: ["lesson", "task"],
+  working_pattern: ["skill", "lesson"],
+  user_preference: ["lesson"],
+  domain_rule: ["lesson", "skill"],
   skill_candidate: ["skill", "task"],
   codeact_candidate: ["codeact", "task"],
-  research_candidate: ["research", "remember"]
+  research_candidate: ["research", "lesson"]
 };
 
 function cleanLearningValue(value: string): string {
@@ -82,7 +82,8 @@ function parsePromotionList(value: string | undefined, type: BrainLearningInterr
   const requested = (value ?? "")
     .split(/[|,]/)
     .map((item) => safeLearningToken(item, ""))
-    .filter((item): item is BrainLearningPromotionAction => KNOWN_PROMOTIONS.has(item as BrainLearningPromotionAction));
+    .filter((item) => KNOWN_PROMOTIONS.has(item))
+    .map((item): BrainLearningPromotionAction => (item === "remember" || item === "rule" ? "lesson" : item as BrainLearningPromotionAction));
   const unique = [...new Set(requested)];
   return unique.length > 0 ? unique : DEFAULT_PROMOTIONS[type];
 }
@@ -118,8 +119,7 @@ export function brainLearningTypeLabel(type: BrainLearningInterruptType): string
 }
 
 export function brainLearningPromotionLabel(action: BrainLearningPromotionAction): string {
-  if (action === "remember") return "Remember";
-  if (action === "rule") return "Rule";
+  if (action === "lesson") return "Lesson";
   if (action === "skill") return "Skill";
   if (action === "task") return "Task";
   if (action === "codeact") return "CodeAct";
@@ -138,17 +138,17 @@ export function brainLearningMemoryCategoryForPromotion(
   interrupt: BrainLearningInterrupt,
   action: BrainLearningPromotionAction
 ): BrainLearningMemoryCategory | null {
+  if (action === "lesson") return "lesson";
   if (action === "skill") return "skill";
   if (action === "task") return "task";
   if (action === "codeact" || action === "research") return null;
-  return interrupt.type === "anti_pattern" ? "anti_pattern" : "conduct_rule";
+  return null;
 }
 
 export function brainLearningSavedLabel(action: BrainLearningPromotionAction, category: BrainLearningMemoryCategory | null): string {
   if (action === "codeact") return "Saved CodeAct";
   if (action === "research") return "Opened Research";
-  if (category === "anti_pattern") return "Saved Error";
-  if (category === "conduct_rule") return "Saved Rule";
+  if (category === "lesson") return "Saved Lesson";
   if (category === "skill") return "Saved Skill";
   return "Saved Task";
 }

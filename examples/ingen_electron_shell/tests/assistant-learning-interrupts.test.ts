@@ -31,7 +31,7 @@ describe("assistant learning interrupts", () => {
       type: "anti_pattern",
       scope: "marketing",
       confidence: 0.81,
-      promote: ["rule", "skill"],
+      promote: ["lesson", "skill"],
       text: "We keep drifting into generic claims; force audience, pain, mechanism and measurable result."
     });
   });
@@ -60,7 +60,7 @@ describe("assistant learning interrupts", () => {
     );
     expect(antiPattern).toBeDefined();
     expect(codeAct).toBeDefined();
-    expect(brainLearningMemoryCategoryForPromotion(antiPattern!, "rule")).toBe("anti_pattern");
+    expect(brainLearningMemoryCategoryForPromotion(antiPattern!, "lesson")).toBe("lesson");
     expect(brainLearningMemoryCategoryForPromotion(antiPattern!, "research")).toBeNull();
     expect(brainLearningCodeActCommand(codeAct!)).toMatch(/^\/agent_campaign_/);
     expect(brainLearningResearchPrompt(antiPattern!)).toContain("RESEARCH_PARALLEL_QUERY v1");
@@ -72,7 +72,7 @@ describe("assistant learning interrupts", () => {
       {
         schema: "ingen.brain.memory.learning_registry.v1",
         id: "learning-1",
-        category: "anti_pattern",
+        category: "lesson",
         text: "Do not approve a campaign before audience, pain, proof and measurable result are explicit.",
         source: "manual",
         trust: "user_confirmed",
@@ -109,7 +109,7 @@ describe("assistant learning interrupts", () => {
     const manifest = brainDurableMemoryManifestFromEntries(learningEntries, codeActs);
     expect(manifest).toContain("BRAIN_DURABLE_MEMORY_MANIFEST v1");
     expect(manifest).toContain("injection_policy=session_boot_and_after_context_compaction");
-    expect(manifest).toContain("errors_to_avoid[1]");
+    expect(manifest).toContain("lessons[1]");
     expect(manifest).toContain("skills[1]");
     expect(manifest).toContain("codeact_draft[1]");
     expect(manifest).toContain("research_policy=Research branches are live work only");
