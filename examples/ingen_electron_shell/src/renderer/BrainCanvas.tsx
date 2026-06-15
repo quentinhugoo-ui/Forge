@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
+  BRAIN_SCRAPLING_MCP_COMMAND,
   type BrainCodeActCommand,
   type HardwareMetric,
   type HardwareTelemetrySnapshot,
@@ -29,7 +30,7 @@ import {
   type BrainLearningMemoryEntry
 } from "./brain-user-memory-store";
 import { headerShadowStore } from "./header-shadow-store";
-import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon } from "./module-logos";
+import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon, ScraplingIcon } from "./module-logos";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
@@ -219,6 +220,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/gmail_" || command === "/gmail_com") return <GmailIcon />;
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
+  if (command === BRAIN_SCRAPLING_MCP_COMMAND) return <ScraplingIcon />;
   if (command === "/newobject_") return <CubeIcon />;
   if (command === "/questionnaire_") return <Glyph kind="questionnaire" />;
   const stroke: Partial<Record<BrainCodeActCommand, string>> = {
@@ -255,6 +257,7 @@ const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
    commands live in the general brain since they are the switches. */
 const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
 const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
+const MCP_COMMANDS: BrainCodeActCommand[] = [BRAIN_SCRAPLING_MCP_COMMAND];
 
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/newcompute_",
@@ -323,6 +326,7 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/codingbrain_": "Switch to coding mode for software projects, files, bugs, builds, and developer tasks.",
   "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
   "/googleweb_": "Search the web for current public information.",
+  [BRAIN_SCRAPLING_MCP_COMMAND]: "Use Scrapling MCP for targeted web extraction, dynamic pages, bulk scraping, screenshots, and compact provenance.",
   "/gmail_": "Use Gmail to find messages, summarize email, or prepare replies.",
   "/airbnb_": "Use Airbnb to search for stays by place, dates, guests, and budget.",
   "/newimage_": "Create a new image from a text description.",
@@ -371,7 +375,13 @@ function codeActDisplay(command: BrainCodeActCommand, fallbackDescription = ""):
 }
 
 function segmentCodeActs(segment: { commands?: BrainCodeActCommand[] }) {
-  const elsewhere = new Set<BrainCodeActCommand>([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS, ...GOOGLE_SUITE_COMMANDS]);
+  const elsewhere = new Set<BrainCodeActCommand>([
+    ...SCIENCE_BRAIN_COMMANDS,
+    ...CODING_BRAIN_COMMANDS,
+    ...BRAIN_ACTIVATOR_COMMANDS,
+    ...GOOGLE_SUITE_COMMANDS,
+    ...MCP_COMMANDS
+  ]);
   return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) =>
     !HIDDEN_BRAIN_CODEACT_COMMANDS.has(command) && (segment.commands ? segment.commands.includes(command) : !elsewhere.has(command))
   ).map(({ command, description }) => codeActDisplay(command, description));
@@ -383,6 +393,10 @@ function activatorCodeActs() {
 
 function googleSuiteCodeActs() {
   return GOOGLE_SUITE_COMMANDS.map((command) => codeActDisplay(command));
+}
+
+function mcpCodeActs() {
+  return MCP_COMMANDS.map((command) => codeActDisplay(command));
 }
 
 function isRestorableBrainSession(item: SidebarSessionItem): boolean {
@@ -937,6 +951,12 @@ function CodeActsSpace() {
                 <div className="brainGoogleSuite" role="list" aria-label="Google Suite">
                   <p className="brainCommandPack__label">Google Suite</p>
                   {googleSuiteCodeActs().map(({ command, description }) => (
+                    <CodeActRow command={command} description={description} key={command} />
+                  ))}
+                </div>
+                <div className="brainMcpSuite" role="list" aria-label="MCP">
+                  <p className="brainCommandPack__label">MCP</p>
+                  {mcpCodeActs().map(({ command, description }) => (
                     <CodeActRow command={command} description={description} key={command} />
                   ))}
                 </div>

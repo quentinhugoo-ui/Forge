@@ -158,6 +158,8 @@ button {
 .shell .brainActivators::before,
 .shell .brainGoogleSuite,
 .shell .brainGoogleSuite::before,
+.shell .brainMcpSuite,
+.shell .brainMcpSuite::before,
 .shell .brainMemoryIdentity,
 .shell .brainMemoryIdentity::before {
   border-radius: 8px !important;
@@ -9195,6 +9197,7 @@ ol.assistantText__list li::before {
 
 .brainActivators,
 .brainGoogleSuite,
+.brainMcpSuite,
 .brainMemoryIdentity {
   position: relative;
   margin-top: 12px;
@@ -9220,6 +9223,10 @@ ol.assistantText__list li::before {
 }
 
 .brainGoogleSuite {
+  border-color: transparent;
+}
+
+.brainMcpSuite {
   border-color: transparent;
 }
 
@@ -9250,8 +9257,30 @@ ol.assistantText__list li::before {
   opacity: 0.95;
 }
 
+.brainMcpSuite::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  content: "";
+  box-sizing: border-box;
+  pointer-events: none;
+  padding: 1px;
+  border: 0;
+  background: linear-gradient(90deg, #f8fafc 0 46%, #b6ff21 46% 68%, #67e8f9 68% 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.86;
+}
+
 .brainActivators .brainRow,
 .brainGoogleSuite .brainRow,
+.brainMcpSuite .brainRow,
 .brainCommandPack__label,
 .brainMemoryIdentityField,
 .brainMemoryIdentity__label {
@@ -9264,7 +9293,8 @@ ol.assistantText__list li::before {
   padding-left: 0;
 }
 
-.brainGoogleSuite .brainRow {
+.brainGoogleSuite .brainRow,
+.brainMcpSuite .brainRow {
   padding-right: 0;
   padding-left: 0;
 }
@@ -10002,7 +10032,8 @@ ol.assistantText__list li::before {
 }
 
 .brainActivators .brainRow:last-child,
-.brainGoogleSuite .brainRow:last-child {
+.brainGoogleSuite .brainRow:last-child,
+.brainMcpSuite .brainRow:last-child {
   border-bottom: 0;
 }
 
@@ -10017,6 +10048,12 @@ ol.assistantText__list li::before {
 .brainRow__icon .sidebarModule__logo {
   width: 21px;
   height: 21px;
+}
+
+.brainRow__icon .sidebarModule__logo--scrapling {
+  width: 23px;
+  height: 23px;
+  object-fit: contain;
 }
 
 .brainRow code {

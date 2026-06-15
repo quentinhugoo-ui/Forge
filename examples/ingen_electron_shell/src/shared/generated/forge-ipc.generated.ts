@@ -11,6 +11,8 @@ export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;
 export const BRAIN_RENAME_SESSION_RESULT_SCHEMA = "forge.brain.rename_session.result.v1" as const;
 export const BRAIN_GOOGLEWEB_COMMAND = "/googleweb_" as const;
 export const BRAIN_GOOGLEWEB_RESULT_SCHEMA = "forge.webexplorer.googleweb.result.v1" as const;
+export const BRAIN_SCRAPLING_MCP_COMMAND = "/scrapling_mcp_" as const;
+export const BRAIN_SCRAPLING_MCP_RESULT_SCHEMA = "forge.scrapling.mcp.result.v1" as const;
 export const BRAIN_MAPS_COMMAND = "/maps_" as const;
 export const BRAIN_MAPS_RESULT_SCHEMA = "forge.webexplorer.maps.result.v1" as const;
 export const BRAIN_GMAIL_COMMAND = "/gmail_" as const;
@@ -44,6 +46,7 @@ export const BRAIN_RUST_STATE_STORE_COMMAND = "/rust_state_store_" as const;
 export const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work." as const;
 export const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION = "Rename the current chat session with exactly one standalone Brain-owned compact line /\\\"nomduchat\\\"_renamechat_ after identifying the first user message subject. The app uses the quoted nomduchat field as the sidebar title. The event is internal: never merge it with visible prose, never echo this line in the user-visible answer, and never describe the rename. Use 2-5 natural words, like Codex or Claude; avoid copying the prompt or using only a proper noun." as const;
 export const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION = "Open contained WebExplorer on a generic Google search when the user wants current web information and no specific module owns the request. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work." as const;
+export const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_." as const;
 export const BRAIN_MAPS_COMMAND_DESCRIPTION = "Open contained WebExplorer on Google Earth for any detected geographic place. For geography alone, Maps is the only WebExplorer page. For geography plus travel/vacation/stay intent, open Maps first and Airbnb next. Prefer over /sciencebrain_ and /googleweb_ for ordinary geographic context; use Brain home city when no target is specified. Do not read device location silently; current-location use requires explicit user permission." as const;
 export const BRAIN_GMAIL_COMMAND_DESCRIPTION = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail." as const;
 export const BRAIN_GMAIL_COM_COMMAND_DESCRIPTION = "Open the Gmail sign-in/mail entry URL directly in split-screen WebExplorer when the user asks to access or open Gmail. Use only for navigation to Gmail, not for generic mail reasoning or web search." as const;
@@ -74,6 +77,7 @@ export const BRAIN_CODEACT_COMMANDS = [
 BRAIN_SEARCHARCHIVE_COMMAND,
 BRAIN_RENAME_SESSION_COMMAND,
 BRAIN_GOOGLEWEB_COMMAND,
+BRAIN_SCRAPLING_MCP_COMMAND,
 BRAIN_MAPS_COMMAND,
 BRAIN_GMAIL_COMMAND,
 BRAIN_GMAIL_COM_COMMAND,
@@ -104,6 +108,7 @@ export const BRAIN_CODEACT_COMMAND_DESCRIPTIONS = [
   { command: BRAIN_SEARCHARCHIVE_COMMAND, description: BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION },
   { command: BRAIN_RENAME_SESSION_COMMAND, description: BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION },
   { command: BRAIN_GOOGLEWEB_COMMAND, description: BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION },
+  { command: BRAIN_SCRAPLING_MCP_COMMAND, description: BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION },
   { command: BRAIN_MAPS_COMMAND, description: BRAIN_MAPS_COMMAND_DESCRIPTION },
   { command: BRAIN_GMAIL_COMMAND, description: BRAIN_GMAIL_COMMAND_DESCRIPTION },
   { command: BRAIN_GMAIL_COM_COMMAND, description: BRAIN_GMAIL_COM_COMMAND_DESCRIPTION },

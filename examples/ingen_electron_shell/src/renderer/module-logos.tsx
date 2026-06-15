@@ -125,6 +125,17 @@ export function GoogleIcon() {
   );
 }
 
+export function ScraplingIcon() {
+  return (
+    <img
+      className="sidebarModule__logo sidebarModule__logo--scrapling"
+      src="/shell-assets/scrapling-logo.png"
+      alt=""
+      aria-hidden="true"
+    />
+  );
+}
+
 export function CubeIcon() {
   return (
     <ModuleLogoFrame
@@ -157,6 +168,7 @@ export function ModuleLogo({ id }: { id: string }) {
   if (id === "uber-eats") return <UberEatsIcon />;
   if (id === "airbnb") return <AirbnbIcon />;
   if (id === "whatsapp") return <WhatsappIcon />;
+  if (id === "scrapling") return <ScraplingIcon />;
   if (id === "compute") return <ComputeIcon />;
   return <CubeIcon />;
 }

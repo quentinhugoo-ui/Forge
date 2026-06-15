@@ -12,6 +12,7 @@ import {
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
+  BRAIN_SCRAPLING_MCP_COMMAND,
   BRAIN_GOOGLE_AGENDA_COMMAND,
   BRAIN_NAMED_COMPUTE_COMMAND,
   BRAIN_NEWCOMPUTE_COMMAND,
@@ -1268,6 +1269,7 @@ const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
+  [BRAIN_SCRAPLING_MCP_COMMAND, "Scrapling MCP extraction prepared"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
