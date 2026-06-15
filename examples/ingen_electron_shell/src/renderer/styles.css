@@ -9334,10 +9334,17 @@ ol.assistantText__list li::before {
   top: 0;
   z-index: 12;
   margin: -12px calc(-1 * var(--brain-canvas-inline-pad)) 0;
-  padding: 12px var(--brain-canvas-inline-pad) 0;
-  background:
-    linear-gradient(to bottom, var(--forge-bg) 0%, var(--forge-bg) calc(100% - 12px), color-mix(in oklab, var(--forge-bg), transparent 100%) 100%);
+  padding: 12px var(--brain-canvas-inline-pad) 8px;
+  background: var(--forge-bg);
   isolation: isolate;
+}
+
+.brainCanvas__stickyChrome::before {
+  position: absolute;
+  inset: -12px 0 -1px;
+  z-index: -1;
+  content: "";
+  background: var(--forge-bg);
 }
 
 .brainCanvas__head {
