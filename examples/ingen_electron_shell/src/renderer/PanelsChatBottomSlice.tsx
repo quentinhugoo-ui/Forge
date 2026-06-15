@@ -2013,6 +2013,9 @@ function assistantRevealBreakpoints(text: string): number[] {
   return breakpoints;
 }
 
+const ASSISTANT_LINE_GROWTH_MIN_DELTA_PX = 4;
+const ASSISTANT_LINE_GROWTH_TRANSITION_MS = 155;
+
 interface TranscriptQuestionnaire {
   title: string;
   intro: string;
@@ -3536,13 +3539,38 @@ function AnimatedAssistantText({
   const [animationSettled, setAnimationSettled] = useState(false);
   const completionReportedRef = useRef(false);
   const visibleCharactersRef = useRef(0);
+  const lineGrowthStartHeightRef = useRef<number | null>(null);
+  const lineGrowthFrameRef = useRef<number | null>(null);
+  const lineGrowthTimerRef = useRef<number | null>(null);
+
+  const clearLineGrowthTransition = useCallback(() => {
+    if (lineGrowthFrameRef.current !== null) {
+      cancelAnimationFrame(lineGrowthFrameRef.current);
+      lineGrowthFrameRef.current = null;
+    }
+    if (lineGrowthTimerRef.current !== null) {
+      window.clearTimeout(lineGrowthTimerRef.current);
+      lineGrowthTimerRef.current = null;
+    }
+    const node = textRef.current;
+    if (node) {
+      node.style.removeProperty("height");
+      node.style.removeProperty("overflow");
+      node.style.removeProperty("transition");
+      node.style.removeProperty("will-change");
+    }
+  }, []);
 
   useEffect(() => {
     completionReportedRef.current = false;
+    clearLineGrowthTransition();
+    lineGrowthStartHeightRef.current = null;
     setAnimationSettled(false);
     visibleCharactersRef.current = 0;
     setVisibleCharacters(0);
-  }, [message.id]);
+  }, [clearLineGrowthTransition, message.id]);
+
+  useEffect(() => () => clearLineGrowthTransition(), [clearLineGrowthTransition]);
 
   useEffect(() => {
     if (containsLearningInterrupt || totalCharacters === 0 || totalRevealSteps === 0 || prefersReducedMotion()) {
@@ -3570,6 +3598,7 @@ function AnimatedAssistantText({
       const targetIndex = Math.min(totalRevealSteps - 1, nextIndex + stepBudget - 1);
       const nextVisibleCharacters = Math.max(current + 1, revealBreakpoints[targetIndex] ?? totalCharacters);
       if (nextVisibleCharacters !== current) {
+        lineGrowthStartHeightRef.current = textRef.current?.getBoundingClientRect().height ?? null;
         visibleCharactersRef.current = nextVisibleCharacters;
         setVisibleCharacters(nextVisibleCharacters);
       }
@@ -3590,6 +3619,51 @@ function AnimatedAssistantText({
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [animationSource, containsLearningInterrupt, message.id, revealBreakpoints, totalCharacters, totalRevealSteps]);
+
+  useLayoutEffect(() => {
+    const startHeight = lineGrowthStartHeightRef.current;
+    lineGrowthStartHeightRef.current = null;
+    const node = textRef.current;
+    if (!node || startHeight === null || prefersReducedMotion()) {
+      return;
+    }
+    const targetHeight = node.scrollHeight;
+    const delta = targetHeight - startHeight;
+    if (delta < ASSISTANT_LINE_GROWTH_MIN_DELTA_PX) {
+      return;
+    }
+
+    if (lineGrowthFrameRef.current !== null) {
+      cancelAnimationFrame(lineGrowthFrameRef.current);
+      lineGrowthFrameRef.current = null;
+    }
+    if (lineGrowthTimerRef.current !== null) {
+      window.clearTimeout(lineGrowthTimerRef.current);
+      lineGrowthTimerRef.current = null;
+    }
+
+    node.style.transition = "none";
+    node.style.height = `${Math.max(1, startHeight)}px`;
+    node.style.overflow = "hidden";
+    node.style.willChange = "height";
+
+    lineGrowthFrameRef.current = requestAnimationFrame(() => {
+      lineGrowthFrameRef.current = null;
+      node.style.transition = `height ${ASSISTANT_LINE_GROWTH_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+      node.style.height = `${targetHeight}px`;
+    });
+
+    lineGrowthTimerRef.current = window.setTimeout(() => {
+      lineGrowthTimerRef.current = null;
+      if (textRef.current !== node) {
+        return;
+      }
+      node.style.removeProperty("height");
+      node.style.removeProperty("overflow");
+      node.style.removeProperty("transition");
+      node.style.removeProperty("will-change");
+    }, ASSISTANT_LINE_GROWTH_TRANSITION_MS + 60);
+  }, [visibleCharacters]);
 
   useEffect(() => {
     if (completionReportedRef.current || totalCharacters === 0 || !animationSettled || visibleCharacters < totalCharacters) {

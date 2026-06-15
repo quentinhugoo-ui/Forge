@@ -59,6 +59,18 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).not.toContain("followTranscriptLatest(messagesRef.current, \"smooth\")");
   });
 
+  it("smooths assistant line growth while the writing animation wraps", () => {
+    expect(animationSource).toContain("ASSISTANT_LINE_GROWTH_MIN_DELTA_PX");
+    expect(animationSource).toContain("ASSISTANT_LINE_GROWTH_TRANSITION_MS");
+    expect(animationSource).toContain("const lineGrowthStartHeightRef = useRef<number | null>(null)");
+    expect(animationSource).toContain("lineGrowthStartHeightRef.current = textRef.current?.getBoundingClientRect().height ?? null");
+    expect(animationSource).toContain("const targetHeight = node.scrollHeight");
+    expect(animationSource).toContain("node.style.transition = `height ${ASSISTANT_LINE_GROWTH_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`");
+    expect(animationSource).toContain("node.style.overflow = \"hidden\"");
+    expect(animationSource).toContain("node.style.removeProperty(\"height\")");
+    expect(animationSource).toContain("prefersReducedMotion()");
+  });
+
   it("runs agent action requests as a visible loop stream", () => {
     expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
