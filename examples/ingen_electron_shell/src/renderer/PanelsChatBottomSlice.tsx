@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Square, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
-import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
+import type { BrainCodeActCommand, ComposerUploadPreview, NativeSection, PanelsChatBottomCommand, PanelsChatBottomSnapshot, SidebarSessionItem, TranscriptMessage } from "../shared/ipc-contract";
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_AIRBNB_COMMAND,
@@ -4335,6 +4335,59 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
   );
 }
 
+function WidgetSessionTabs({
+  sessions,
+  activeSessionId,
+  onOpenSession,
+  onNewSession
+}: {
+  sessions: SidebarSessionItem[];
+  activeSessionId: string;
+  onOpenSession?: (sessionId: string, section: NativeSection) => void;
+  onNewSession?: () => void;
+}) {
+  if (sessions.length === 0 && !onNewSession) {
+    return null;
+  }
+  return (
+    <nav className="widgetSessionTabs" aria-label="Recent widget sessions">
+      <div className="widgetSessionTabs__list" role="tablist" aria-label="Recent sessions">
+        {sessions.map((session) => {
+          const selected = session.sessionId !== "" && session.sessionId === activeSessionId;
+          const label = session.label.trim() || "New session";
+          return (
+            <button
+              type="button"
+              className={selected ? "widgetSessionTabs__tab widgetSessionTabs__tab--active" : "widgetSessionTabs__tab"}
+              role="tab"
+              aria-selected={selected}
+              aria-label={`Open session: ${label}`}
+              title={label}
+              key={session.sessionId}
+              onClick={() => onOpenSession?.(session.sessionId, session.section)}
+            >
+              <span>{label}</span>
+            </button>
+          );
+        })}
+        {onNewSession ? (
+          <button
+            type="button"
+            className="widgetSessionTabs__new"
+            aria-label="New session"
+            title="New session"
+            onClick={onNewSession}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          </button>
+        ) : null}
+      </div>
+    </nav>
+  );
+}
+
 interface PanelsChatBottomSliceProps {
   composerOnly?: boolean;
   parallelPrompts?: string[];
@@ -4343,8 +4396,12 @@ interface PanelsChatBottomSliceProps {
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
   sessionName?: string;
+  activeSessionId?: string;
+  widgetRecentSessions?: SidebarSessionItem[];
   widgetMode?: boolean;
   widgetModeTransitioning?: boolean;
+  onWidgetNewSession?: () => void;
+  onWidgetSessionOpen?: (sessionId: string, section: NativeSection) => void;
   onWidgetModeChange?: (enabled: boolean) => void;
 }
 
@@ -4534,8 +4591,12 @@ export function PanelsChatBottomSlice({
   composerModule = null,
   onComposerModuleChange,
   sessionName = "",
+  activeSessionId = "",
+  widgetRecentSessions = [],
   widgetMode = false,
   widgetModeTransitioning = false,
+  onWidgetNewSession,
+  onWidgetSessionOpen,
   onWidgetModeChange
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
@@ -4966,8 +5027,18 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     (widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
+  const widgetSessionTabsVisible =
+    widgetMode &&
+    !widgetModeTransitioning &&
+    (widgetRecentSessions.length > 0 || Boolean(onWidgetNewSession));
   const widgetPanelExpanded =
-    widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelVisible || widgetTranscriptTabVisible || permissionMenuOpen);
+    widgetMode && (
+      Boolean(composerQuestionnaire) ||
+      widgetTranscriptPanelVisible ||
+      widgetTranscriptTabVisible ||
+      widgetSessionTabsVisible ||
+      permissionMenuOpen
+    );
   useEffect(() => {
     const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
     if (!setWidgetPanelExpanded) {
@@ -5264,6 +5335,14 @@ export function PanelsChatBottomSlice({
         <ComposerQuestionnaire
           questionnaire={composerQuestionnaire.questionnaire}
           onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
+        />
+      ) : null}
+      {widgetSessionTabsVisible ? (
+        <WidgetSessionTabs
+          sessions={widgetRecentSessions}
+          activeSessionId={activeSessionId || snapshot.activeSessionId}
+          onOpenSession={onWidgetSessionOpen}
+          onNewSession={onWidgetNewSession}
         />
       ) : null}
       {widgetTranscriptPanelVisible ? (

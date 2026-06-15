@@ -420,6 +420,10 @@ export function App() {
     }
     return items.find((item) => item.sessionId !== "" && item.sessionId === sidebarSnapshot.recentSessionId)?.label || "New session";
   }, [sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
+  const widgetRecentSessions = useMemo(
+    () => sidebarSnapshot.recentItems.filter((item) => item.rowVisible && item.sessionId.trim().length > 0).slice(0, 3),
+    [sidebarSnapshot.recentItems]
+  );
   useEffect(() => {
     if (canvasMapsOpen) {
       return;
@@ -984,6 +988,13 @@ export function App() {
     setHomeCanvasResetId((id) => id + 1);
     void panelsChatBottomStore.dispatch({ kind: "new_session" });
   }, [brainUserMemory.preferredFirstName]);
+
+  const openWidgetSession = useCallback((sessionId: string, section: NativeSection) => {
+    void sidebarShadowStore.dispatch(
+      sidebarShadowStore.command({ kind: "open_session", sessionId, section }),
+      `widget-session-${sessionId}`
+    );
+  }, []);
 
   const openCanvasPlanets = useCallback(() => {
     setCanvasSplitOpen(false);
@@ -1668,8 +1679,12 @@ export function App() {
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
           onComposerModuleChange={setComposerModuleId}
           sessionName={activeSessionName}
+          activeSessionId={sidebarSnapshot.recentSessionId}
+          widgetRecentSessions={widgetRecentSessions}
           widgetMode={widgetMode || widgetMinimizingPhase !== ""}
           widgetModeTransitioning={widgetModeTransitioning}
+          onWidgetNewSession={resetNewSessionCanvas}
+          onWidgetSessionOpen={openWidgetSession}
           onWidgetModeChange={setWidgetModeEnabled}
         />
       ) : null}
