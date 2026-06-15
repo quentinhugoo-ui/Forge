@@ -938,41 +938,6 @@ button {
   transform: scale(1.04);
 }
 
-/* Discreet custom tooltip, anchored to the left of the icon. Replaces the
-   native title so it can be styled, kept short, and positioned. */
-.widgetWindowsButton::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  right: calc(100% + 9px);
-  top: 50%;
-  transform: translateY(-50%) translateX(4px);
-  padding: 3px 8px;
-  font: 10.5px/1.2 "Geist", system-ui, sans-serif;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  color: color-mix(in oklab, #ffffff, transparent 26%);
-  background: color-mix(in oklab, #0a0a0c, transparent 22%);
-  border: 1px solid color-mix(in oklab, #ffffff, transparent 90%);
-  border-radius: 6px !important;
-  backdrop-filter: blur(6px);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 140ms ease-out,
-    transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.widgetWindowsButton:hover::after,
-.widgetWindowsButton:focus-visible::after {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-
-.shell [data-tooltip]::after {
-  display: none !important;
-  content: none !important;
-}
-
 .globalTooltip {
   position: fixed;
   left: var(--global-tooltip-x);
@@ -2152,39 +2117,6 @@ button {
   animation: parallelSessionMarkIn 720ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
-.parallelSessionMark::after {
-  position: absolute;
-  bottom: calc(100% + 5px);
-  left: 0;
-  z-index: 40;
-  max-width: 180px;
-  padding: 4px 6px;
-  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 88%);
-  border-radius: 4px !important;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-  color: color-mix(in oklab, var(--forge-text), transparent 14%);
-  content: attr(data-tooltip);
-  font-family: "Geist", system-ui, sans-serif;
-  font-size: 10.5px;
-  font-weight: 560;
-  line-height: 1;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
-  transform: translate(0, 2px);
-  transition:
-    opacity 120ms ease-out,
-    transform 120ms ease-out;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.parallelSessionMark:hover::after {
-  opacity: 0.88;
-  transform: translate(0, 0);
-}
-
 .parallelSessionMark__icon {
   display: block;
   width: var(--sidebar-session-archive-icon-size);
@@ -2245,40 +2177,6 @@ button {
   pointer-events: none;
   transform: translateX(2px);
   transition: color 140ms ease-out, opacity 140ms ease-out, transform 140ms ease-out;
-}
-
-.sessionRow__archive::after {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 5px);
-  z-index: 40;
-  max-width: 180px;
-  padding: 4px 6px;
-  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 88%);
-  border-radius: 4px !important;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-  color: color-mix(in oklab, var(--forge-text), transparent 14%);
-  content: attr(data-tooltip);
-  font-family: "Geist", system-ui, sans-serif;
-  font-size: 10.5px;
-  font-weight: 560;
-  line-height: 1;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
-  text-overflow: ellipsis;
-  transform: translate(0, 2px);
-  transition:
-    opacity 120ms ease-out,
-    transform 120ms ease-out;
-  white-space: nowrap;
-}
-
-.sessionRow__archive:hover::after,
-.sessionRow__archive:focus-visible::after {
-  opacity: 0.88;
-  transform: translate(0, 0);
 }
 
 .sessionRow__workStatus {

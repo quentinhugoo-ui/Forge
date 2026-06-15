@@ -168,7 +168,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         type="button"
         className="widgetSystemTray__icon"
         aria-label="Network"
-        title="Network"
+        data-tooltip="Network"
         onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         <WifiGlyph online={online} />
@@ -177,7 +177,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         type="button"
         className="widgetSystemTray__icon"
         aria-label="Volume"
-        title="Volume"
+        data-tooltip="Volume"
         onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         <VolumeGlyph />
@@ -186,7 +186,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         type="button"
         className="widgetSystemTray__battery"
         aria-label={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
-        title={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
+        data-tooltip={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
         onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         {battery ? <BatteryGlyph level={battery.level} charging={battery.charging} /> : <BatteryGlyph level={1} charging={false} />}
@@ -196,7 +196,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         type="button"
         className="widgetSystemTray__clock"
         aria-label={`${formatTime(now)} ${formatDate(now)}`}
-        title="Date and time"
+        data-tooltip="Date and time"
         onClick={() => triggerWidgetShellAction("calendar")}
       >
         <span className="widgetSystemTray__time">{formatTime(now)}</span>

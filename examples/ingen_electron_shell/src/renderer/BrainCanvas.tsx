@@ -495,7 +495,7 @@ function BrainSessionArchiveList({
             onClick={() => onOpenSession(session)}
           >
             <span className="brainSessionArchiveItem__line">
-              <time className="brainSessionArchiveItem__date" dateTime={session.date} title={session.date}>
+              <time className="brainSessionArchiveItem__date" dateTime={session.date} data-tooltip={session.date}>
                 {compactSessionAgeLabel(session.date)}
               </time>
               <span className="brainSessionArchiveItem__title">{session.label}</span>
@@ -776,7 +776,7 @@ export function BrainWorkspaceChrome({
   return (
     <div className="brainWorkspaceChrome">
       <div className="brainWorkspaceChrome__titlebar">
-        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" data-tooltip="Close Brain" onClick={onClose}>
           <span aria-hidden="true" />
         </button>
         <span className="brainCanvas__mark brainWorkspaceChrome__mark"><Glyph kind="brain" size={26} /></span>
@@ -952,7 +952,7 @@ function BrainLearningRegistry() {
             <p>{entry.text}</p>
             <footer>
               <BrainEntrySourceBadge source={entry.source} />
-              <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
+              <span data-tooltip={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
               <button type="button" aria-label="Remove lesson entry" onClick={() => deleteEntry(entry.id)}>
                 <Glyph kind="minus" size={12} />
               </button>

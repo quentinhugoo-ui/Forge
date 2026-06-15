@@ -449,6 +449,19 @@ const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: Comp
   { id: "chart", label: "Graphiques" },
   { id: "file", label: "Autres fichiers" }
 ];
+
+const FILE_KIND_TOOLTIP_LABELS: Record<FileKindFilter, string> = {
+  all: "All files",
+  image: "Images and photos",
+  video: "Videos",
+  model3d: "3D objects",
+  document: "Documents",
+  chart: "Charts",
+  file: "Other files",
+  pdf: "PDF files",
+  spreadsheet: "Spreadsheets",
+  text: "Text files"
+};
 function TerminalGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
   return (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
@@ -568,7 +581,7 @@ function NativeBrowserPager({
         className={activePage === "maps" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
         aria-label="Open Map page"
         aria-pressed={activePage === "maps"}
-        title="Map"
+        data-tooltip="Open Maps"
         onClick={() => onPageChange("maps")}
       >
         <GoogleEarthIcon />
@@ -578,7 +591,7 @@ function NativeBrowserPager({
         className={activePage === "webexplorer" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
         aria-label={`Open ${webLabel} page`}
         aria-pressed={activePage === "webexplorer"}
-        title={webLabel}
+        data-tooltip={`Open ${webLabel}`}
         onClick={() => onPageChange("webexplorer")}
       >
         {webExplorerModuleId === "airbnb" ? <ModuleLogo id="airbnb" /> : <span className="shellIcon shellIcon--google" aria-hidden="true" />}
@@ -1036,7 +1049,7 @@ function CanvasFilesPane({
                 aria-pressed={selected}
                 disabled={count === 0}
                 key={filter.id}
-                title={`${filter.label} (${count})`}
+                data-tooltip={`${FILE_KIND_TOOLTIP_LABELS[filter.id]} (${count})`}
                 onClick={() => setKindFilter(filter.id)}
               >
                 {filter.id === "all" ? <AllFilesIcon /> : <TranscriptAttachmentEventIcon kind={fileKindIconKind(filter.id)} />}
@@ -1058,7 +1071,6 @@ function CanvasFilesPane({
                 role="listitem"
                 key={file.id}
                 style={{ "--canvas-file-enter-delay": `${Math.min(index, 12) * 46}ms` } as CSSProperties}
-                title={file.name}
               >
                 <div className="canvasFileTile__preview">
                   <CanvasFilePreview file={file} />
@@ -1066,8 +1078,8 @@ function CanvasFilesPane({
                     <button
                       type="button"
                       className="imageEditButton imageEditButton--file"
-                      aria-label={`Modifier ${file.name}`}
-                      title="Modifier l'image"
+                      aria-label={`Edit ${file.name}`}
+                      data-tooltip="Edit image"
                       onClick={(event) => {
                         event.stopPropagation();
                         stageCanvasImageForEdit(file);
@@ -1079,7 +1091,7 @@ function CanvasFilesPane({
                 </div>
                 <figcaption className="canvasFileTile__caption">
                   <strong>{file.name}</strong>
-                  <span className="canvasFileTile__captionIcon" aria-label={file.kind} title={file.kind}>
+                  <span className="canvasFileTile__captionIcon" aria-label={file.kind}>
                     <TranscriptAttachmentEventIcon kind={file.kind} />
                   </span>
                 </figcaption>

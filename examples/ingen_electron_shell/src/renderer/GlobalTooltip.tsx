@@ -13,20 +13,17 @@ interface TooltipState {
 const TOOLTIP_GAP = 9;
 const TOOLTIP_ESTIMATED_WIDTH = 180;
 const TOOLTIP_EDGE_MARGIN = 10;
+const TOOLTIP_ID = "ingen-global-tooltip";
 
 function tooltipTextFor(element: HTMLElement): string {
-  const custom = element.getAttribute("data-tooltip")?.trim();
-  if (custom) {
-    return custom;
-  }
-  return element.getAttribute("title")?.trim() ?? "";
+  return element.getAttribute("data-tooltip")?.trim() ?? "";
 }
 
 function tooltipTargetFrom(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) {
     return null;
   }
-  const element = target.closest<HTMLElement>("[data-tooltip], [title]");
+  const element = target.closest<HTMLElement>("[data-tooltip]");
   if (!element || element.closest("[data-tooltip-disabled='true']")) {
     return null;
   }
@@ -69,38 +66,49 @@ export function GlobalTooltip() {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const activeElementRef = useRef<HTMLElement | null>(null);
   const activeNativeTitleRef = useRef<string | null>(null);
+  const activeDescribedByRef = useRef<string | null | undefined>(undefined);
 
-  const restoreNativeTitle = useCallback(() => {
+  const restoreActiveAttributes = useCallback(() => {
     const active = activeElementRef.current;
     if (active && activeNativeTitleRef.current !== null) {
       active.setAttribute("title", activeNativeTitleRef.current);
     }
+    if (active) {
+      if (activeDescribedByRef.current !== undefined && activeDescribedByRef.current !== null) {
+        active.setAttribute("aria-describedby", activeDescribedByRef.current);
+      } else {
+        active.removeAttribute("aria-describedby");
+      }
+    }
     activeElementRef.current = null;
     activeNativeTitleRef.current = null;
+    activeDescribedByRef.current = undefined;
   }, []);
 
   const showFor = useCallback(
     (element: HTMLElement | null) => {
       if (!element) {
-        restoreNativeTitle();
+        restoreActiveAttributes();
         setTooltip(null);
         return;
       }
       if (activeElementRef.current !== element) {
-        restoreNativeTitle();
+        restoreActiveAttributes();
       }
       const text = tooltipTextFor(element);
       const title = element.getAttribute("title");
       if (title !== null) {
-        activeElementRef.current = element;
         activeNativeTitleRef.current = title;
         element.removeAttribute("title");
-      } else {
-        activeElementRef.current = element;
       }
+      if (activeDescribedByRef.current === undefined) {
+        activeDescribedByRef.current = element.getAttribute("aria-describedby");
+        element.setAttribute("aria-describedby", TOOLTIP_ID);
+      }
+      activeElementRef.current = element;
       setTooltip(tooltipStateFor(element, text));
     },
-    [restoreNativeTitle]
+    [restoreActiveAttributes]
   );
 
   useEffect(() => {
@@ -115,7 +123,7 @@ export function GlobalTooltip() {
       if (nextTarget instanceof Node && active.contains(nextTarget)) {
         return;
       }
-      restoreNativeTitle();
+      restoreActiveAttributes();
       setTooltip(null);
     };
     const refresh = () => {
@@ -123,18 +131,14 @@ export function GlobalTooltip() {
       if (!active) {
         return;
       }
-      const text =
-        active.getAttribute("data-tooltip")?.trim() ||
-        activeNativeTitleRef.current ||
-        active.getAttribute("title")?.trim() ||
-        "";
+      const text = active.getAttribute("data-tooltip")?.trim() || "";
       setTooltip(tooltipStateFor(active, text));
     };
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") {
         return;
       }
-      restoreNativeTitle();
+      restoreActiveAttributes();
       setTooltip(null);
     };
 
@@ -153,9 +157,9 @@ export function GlobalTooltip() {
       document.removeEventListener("keydown", dismissOnEscape, true);
       window.removeEventListener("scroll", refresh, true);
       window.removeEventListener("resize", refresh);
-      restoreNativeTitle();
+      restoreActiveAttributes();
     };
-  }, [restoreNativeTitle, showFor]);
+  }, [restoreActiveAttributes, showFor]);
 
   if (!tooltip) {
     return null;
@@ -164,6 +168,7 @@ export function GlobalTooltip() {
   return (
     <div
       className={["globalTooltip", `globalTooltip--${tooltip.placement}`].join(" ")}
+      id={TOOLTIP_ID}
       role="tooltip"
       style={
         {

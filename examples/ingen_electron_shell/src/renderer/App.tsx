@@ -1399,7 +1399,7 @@ export function App() {
                       : undefined
                 }
                 aria-expanded={control.command === "toggle_left_panel" ? snapshot.leftPanelOpen : undefined}
-                title={control.label}
+                data-tooltip={control.label}
                 key={control.id}
                 onClick={() => void dispatch(control)}
               >
@@ -1416,7 +1416,7 @@ export function App() {
                 type="button"
                 className={control.id === "window-close" ? "windowButton windowButton--danger" : "windowButton"}
                 aria-label={control.label}
-                title={control.label}
+                data-tooltip={control.label}
                 key={control.id}
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
@@ -1475,7 +1475,7 @@ export function App() {
                 type="button"
                 className="workspaceHeader__close"
                 aria-label="Close LLM Provider"
-                title="Close LLM Provider"
+                data-tooltip="Close LLM provider"
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
                     return;
