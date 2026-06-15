@@ -107,7 +107,13 @@ describe("assistant progressive response feed", () => {
     expect(brainCanvasSource).not.toContain("value={personalityMemory.manifest}");
     expect(brainCanvasSource).toContain("Choose how the agent speaks while it works");
     expect(brainCanvasSource).not.toContain("How the agent sounds when it thinks");
+    expect(brainCanvasSource).toContain("BRAIN_PERSONALITY_PRESETS");
+    expect(brainCanvasSource).toContain('label: "Elon Musk"');
+    expect(brainCanvasSource).toContain("Do not impersonate Elon Musk");
+    expect(brainCanvasSource).toContain("applyPersonalityPreset");
     expect(stylesSource).toContain(".brainPersonalityMacroRow");
+    expect(stylesSource).toContain(".brainPersonalityPresetStack");
+    expect(stylesSource).toContain(".brainPersonalityPreset::before");
     expect(stylesSource).toContain("overflow: hidden;");
     expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");
     expect(mainSource).toContain("function brainPersonalityContextManifest");

@@ -9832,6 +9832,73 @@ ol.assistantText__list li::before {
   align-items: center;
   justify-content: start;
   gap: 3px;
+.brainPersonalityPresetStack {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 3px;
+}
+
+.brainPersonalityPreset {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: min(168px, 100%);
+  max-width: 210px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 70%);
+  border-radius: 7px;
+  color: #f1d596;
+  background: color-mix(in oklab, #090805, transparent 8%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+
+.brainPersonalityPreset::before,
+.brainPersonalityPreset::after {
+  position: absolute;
+  inset: auto 8px -4px 8px;
+  height: 4px;
+  content: "";
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 76%);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.brainPersonalityPreset::after {
+  inset-right: 15px;
+  inset-left: 15px;
+  bottom: -7px;
+  opacity: 0.42;
+}
+
+.brainPersonalityPreset:hover,
+.brainPersonalityPreset:focus-visible {
+  border-color: color-mix(in oklab, #ffbf48, transparent 42%);
+  color: #fff0b9;
+  outline: 0;
+}
+
+.brainPersonalityPreset span {
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.1;
+}
+
+.brainPersonalityPreset small {
+  color: var(--forge-muted);
+  font-size: 10px;
+  font-weight: 560;
+  line-height: 1.35;
+}
+
   width: fit-content;
   max-width: 100%;
 }
