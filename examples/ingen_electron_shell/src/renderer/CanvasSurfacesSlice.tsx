@@ -286,10 +286,14 @@ function BangerMapsCesiumViewport({
         const Cesium = await import("cesium");
         if (disposed || !hostRef.current) return;
         const cesiumIonAccessToken = await resolveCesiumIonAccessToken(config);
-        const usingCesiumIon = Boolean(cesiumIonAccessToken);
+        const usingCesiumIon = true;
         if (cesiumIonAccessToken) {
           Cesium.Ion.defaultAccessToken = cesiumIonAccessToken;
-        } else {
+        }
+        if (!cesiumIonAccessToken) {
+          onStatus("Cesium ion default token loading Google photorealistic 3D Tiles");
+        }
+        if (!usingCesiumIon) {
           const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
           if (googleMapsEndpoint) {
             Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
