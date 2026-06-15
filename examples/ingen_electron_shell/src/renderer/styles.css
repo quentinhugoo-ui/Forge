@@ -9335,16 +9335,8 @@ ol.assistantText__list li::before {
   z-index: 12;
   margin: -12px calc(-1 * var(--brain-canvas-inline-pad)) 0;
   padding: 12px var(--brain-canvas-inline-pad) 8px;
-  background: var(--forge-bg);
+  background: transparent;
   isolation: isolate;
-}
-
-.brainCanvas__stickyChrome::before {
-  position: absolute;
-  inset: -12px 0 -1px;
-  z-index: -1;
-  content: "";
-  background: var(--forge-bg);
 }
 
 .brainCanvas__stickyChrome::after {
@@ -9358,9 +9350,9 @@ ol.assistantText__list li::before {
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    var(--forge-bg) 0,
-    color-mix(in oklab, var(--forge-bg), transparent 16%) 8px,
-    color-mix(in oklab, var(--forge-bg), transparent 58%) 16px,
+    color-mix(in oklab, var(--forge-bg), transparent 24%) 0,
+    color-mix(in oklab, var(--forge-bg), transparent 46%) 9px,
+    color-mix(in oklab, var(--forge-bg), transparent 76%) 17px,
     transparent 100%
   );
 }
