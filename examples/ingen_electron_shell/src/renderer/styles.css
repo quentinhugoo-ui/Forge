@@ -9347,7 +9347,27 @@ ol.assistantText__list li::before {
   background: var(--forge-bg);
 }
 
+.brainCanvas__stickyChrome::after {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -24px;
+  z-index: 0;
+  height: 24px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--forge-bg) 0,
+    color-mix(in oklab, var(--forge-bg), transparent 16%) 8px,
+    color-mix(in oklab, var(--forge-bg), transparent 58%) 16px,
+    transparent 100%
+  );
+}
+
 .brainCanvas__head {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -9399,6 +9419,8 @@ ol.assistantText__list li::before {
 }
 
 .brainCanvas__tabs {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 30px;
   margin-top: 12px;
