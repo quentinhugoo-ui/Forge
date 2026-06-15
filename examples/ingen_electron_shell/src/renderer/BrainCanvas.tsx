@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
+  BRAIN_SCRAPERS_COMMAND,
   BRAIN_SCRAPLING_MCP_COMMAND,
   type BrainCodeActCommand,
   type HardwareMetric,
@@ -225,6 +226,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/questionnaire_") return <Glyph kind="questionnaire" />;
   const stroke: Partial<Record<BrainCodeActCommand, string>> = {
     "/searcharchive_": "archive",
+    [BRAIN_SCRAPERS_COMMAND]: "globe",
     "/sciencebrain_": "flask",
     "/codingbrain_": "code",
     "/newimage_": "image",
@@ -326,6 +328,7 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/codingbrain_": "Switch to coding mode for software projects, files, bugs, builds, and developer tasks.",
   "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
   "/googleweb_": "Search the web for current public information.",
+  [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, citations, and provenance.",
   [BRAIN_SCRAPLING_MCP_COMMAND]: "Use Scrapling MCP for targeted web extraction, dynamic pages, bulk scraping, screenshots, and compact provenance.",
   "/gmail_": "Use Gmail to find messages, summarize email, or prepare replies.",
   "/airbnb_": "Use Airbnb to search for stays by place, dates, guests, and budget.",

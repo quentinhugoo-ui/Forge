@@ -31,6 +31,8 @@ pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_";
 pub const BRAIN_RENAME_SESSION_RESULT_SCHEMA: &str = "forge.brain.rename_session.result.v1";
 pub const BRAIN_GOOGLEWEB_COMMAND: &str = "/googleweb_";
 pub const BRAIN_GOOGLEWEB_RESULT_SCHEMA: &str = "forge.webexplorer.googleweb.result.v1";
+pub const BRAIN_SCRAPERS_COMMAND: &str = "/scrapers_";
+pub const BRAIN_SCRAPERS_RESULT_SCHEMA: &str = "forge.scrapers.mcp.result.v1";
 pub const BRAIN_SCRAPLING_MCP_COMMAND: &str = "/scrapling_mcp_";
 pub const BRAIN_SCRAPLING_MCP_RESULT_SCHEMA: &str = "forge.scrapling.mcp.result.v1";
 pub const BRAIN_MAPS_COMMAND: &str = "/maps_";
@@ -67,6 +69,7 @@ pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
 pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one standalone Brain-owned compact line /\"nomduchat\"_renamechat_ after identifying the first user message subject. The app uses the quoted nomduchat field as the sidebar title. The event is internal: never merge it with visible prose, never echo this line in the user-visible answer, and never describe the rename. Use 2-5 natural words, like Codex or Claude; avoid copying the prompt or using only a proper noun.";
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants current web information and no specific module owns the request. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
+pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ when the user needs robust web collection from one or more URLs and both selector-grade data plus clean RAG-ready Markdown. This Brain route fans out to Scrapling MCP and Crawl4AI MCP in parallel, then returns one compact merged manifest with structured fields, fit Markdown/chunks, citations, fetch metadata and provenance. Prefer this over choosing only /scrapling_mcp_ when the result should feed Brain memory, RAG, agents, research notes, or downstream comparison. Use /scrapling_mcp_ directly for pure selector extraction, screenshots, sessions, or difficult dynamic targets. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, Maps/geography routing, local files, image work, or generic Google search.";
 pub const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION: &str = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_.";
 pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on Google Earth for any detected geographic place. For geography alone, Maps is the only WebExplorer page. For geography plus travel/vacation/stay intent, open Maps first and Airbnb next. Prefer over /sciencebrain_ and /googleweb_ for ordinary geographic context; use Brain home city when no target is specified. Do not read device location silently; current-location use requires explicit user permission.";
 pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail.";
@@ -566,6 +569,7 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_searcharchive_codeact_template(),
         brain_rename_session_codeact_template(),
         brain_googleweb_codeact_template(),
+        brain_scrapers_codeact_template(),
         brain_scrapling_mcp_codeact_template(),
         brain_maps_codeact_template(),
         brain_gmail_codeact_template(),
@@ -846,6 +850,97 @@ pub fn brain_scrapling_mcp_codeact_template() -> BrainGeneralCodeActTemplate {
                     "screenshot_artifact".to_string(),
                 ],
                 description: "Return bounded extracted data, provenance, fetch metadata and artifact refs instead of full-page HTML.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_SCRAPERS_COMMAND.to_string(),
+        section: "mcp".to_string(),
+        purpose: "Fan out a bounded web collection request to Scrapling MCP and Crawl4AI MCP at the same time. Scrapling owns resilient selector extraction, adaptive/dynamic fetching, screenshots and session-aware evidence; Crawl4AI owns clean Markdown, fit_markdown, RAG chunks, citations and content filters. The host waits for both bounded results, records partial failures, and returns a single compact merged manifest with provenance instead of raw HTML.".to_string(),
+        result_schema: BRAIN_SCRAPERS_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "urls".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "One URL, comma-separated URLs, or a JSON array of public target URLs to send to both Scrapling MCP and Crawl4AI MCP.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "goal".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Short collection objective so both MCP calls can filter extraction, Markdown and provenance to what the user needs.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "selectors".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional CSS/XPath selectors or named fields for Scrapling. Leave empty when only page-level facts or Markdown chunks are needed.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "markdown_query".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional query for Crawl4AI BM25/pruning filters and fit_markdown. Reuse goal when empty.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "crawl_depth".to_string(),
+                required: false,
+                default_value: "single_page".to_string(),
+                allowed_values: vec![
+                    "single_page".to_string(),
+                    "same_domain_depth_1".to_string(),
+                    "same_domain_depth_2".to_string(),
+                    "docs_site_bounded".to_string(),
+                ],
+                description: "Bounded crawl shape. Prefer single_page unless the user asks for a small site, docs set, or comparison across linked pages.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "backends".to_string(),
+                required: false,
+                default_value: "scrapling,crawl4ai".to_string(),
+                allowed_values: vec!["scrapling,crawl4ai".to_string()],
+                description: "Parallel MCP fan-out target. This aggregator intentionally runs both backends together and merges their evidence.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "merge_policy".to_string(),
+                required: false,
+                default_value: "structured_fields_then_fit_markdown".to_string(),
+                allowed_values: vec![
+                    "structured_fields_then_fit_markdown".to_string(),
+                    "markdown_then_structured_evidence".to_string(),
+                    "compare_and_dedupe".to_string(),
+                ],
+                description: "How to reconcile results: prefer selector facts first, Markdown narrative first, or deduplicate and compare both evidence streams.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "policy".to_string(),
+                required: false,
+                default_value: "respect_robots_terms_rate_limits_privacy".to_string(),
+                allowed_values: vec!["respect_robots_terms_rate_limits_privacy".to_string()],
+                description: "Collection guardrail. Refuse or ask for confirmation when target policy is unclear, sensitive, private, authenticated or disallowed.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "merged_manifest".to_string(),
+                allowed_values: vec![
+                    "merged_manifest".to_string(),
+                    "structured_items_and_markdown".to_string(),
+                    "rag_chunks".to_string(),
+                    "provenance_only".to_string(),
+                ],
+                description: "Return compact extracted fields, clean Markdown or chunks, citations, fetch metadata, proof/provenance and artifact refs; never return full raw HTML by default.".to_string(),
             },
         ],
     };
@@ -2534,6 +2629,34 @@ mod tests {
         assert!(brain_general_codeact_templates()
             .iter()
             .any(|candidate| candidate.command == BRAIN_SCRAPLING_MCP_COMMAND));
+    }
+
+    #[test]
+    fn brain_exposes_scrapers_as_parallel_mcp_codeact_template() {
+        let template = brain_scrapers_codeact_template();
+
+        assert_eq!(template.command, BRAIN_SCRAPERS_COMMAND);
+        assert_eq!(template.section, "mcp");
+        assert_eq!(template.result_schema, BRAIN_SCRAPERS_RESULT_SCHEMA);
+        assert_eq!(template.proof_hash.len(), 40);
+        assert!(template.purpose.contains("Scrapling MCP"));
+        assert!(template.purpose.contains("Crawl4AI MCP"));
+        assert!(template.purpose.contains("same time"));
+        assert!(template.slots.iter().any(|slot| slot.name == "urls" && slot.required));
+        assert!(template.slots.iter().any(|slot| slot.name == "goal" && slot.required));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "backends" && slot.default_value == "scrapling,crawl4ai"
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "merge_policy"
+                && slot.allowed_values.contains(&"structured_fields_then_fit_markdown".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "output" && slot.allowed_values.contains(&"rag_chunks".to_string())
+        }));
+        assert!(brain_general_codeact_templates()
+            .iter()
+            .any(|candidate| candidate.command == BRAIN_SCRAPERS_COMMAND));
     }
 
     #[test]

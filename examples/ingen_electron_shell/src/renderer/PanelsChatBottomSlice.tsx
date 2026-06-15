@@ -12,6 +12,7 @@ import {
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
+  BRAIN_SCRAPERS_COMMAND,
   BRAIN_SCRAPLING_MCP_COMMAND,
   BRAIN_GOOGLE_AGENDA_COMMAND,
   BRAIN_NAMED_COMPUTE_COMMAND,
@@ -1269,6 +1270,7 @@ const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
+  [BRAIN_SCRAPERS_COMMAND, "parallel scraper MCP request prepared"],
   [BRAIN_SCRAPLING_MCP_COMMAND, "Scrapling MCP extraction prepared"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
@@ -2750,6 +2752,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
   if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
   if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <SearchArchiveCodeActIcon />;
+  if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
   if (command === BRAIN_GOOGLE_AGENDA_COMMAND) return <CalendarCodeActIcon />;
   return <GenericCodeActIcon />;
