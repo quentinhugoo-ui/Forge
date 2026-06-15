@@ -1998,13 +1998,31 @@ function assistantVisibleAnimationSource(text: string): string {
   return normalized.slice(0, lastVisibleEnd || normalized.trimEnd().length);
 }
 
+const ASSISTANT_INLINE_ATOMIC_PATTERN = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|`[^`]+?`)/g;
+
+function assistantInlineAtomicRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let match: RegExpExecArray | null;
+  ASSISTANT_INLINE_ATOMIC_PATTERN.lastIndex = 0;
+  while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  return ranges;
+}
+
+function assistantBreakpointInsideAtomicRange(point: number, ranges: Array<{ start: number; end: number }>): boolean {
+  return ranges.some((range) => point > range.start && point < range.end);
+}
+
 function assistantRevealBreakpoints(text: string): number[] {
   const breakpoints: number[] = [];
+  const atomicRanges = assistantInlineAtomicRanges(text);
   const pattern = /\S+\s*|\s+/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    if (/\S/.test(match[0])) {
-      breakpoints.push(match.index + match[0].length);
+    const point = match.index + match[0].length;
+    if (/\S/.test(match[0]) && !assistantBreakpointInsideAtomicRange(point, atomicRanges)) {
+      breakpoints.push(point);
     }
   }
   if (text.length > 0 && breakpoints[breakpoints.length - 1] !== text.length) {
@@ -2705,10 +2723,10 @@ function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCom
 
 function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|\*[^*\n]+?\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
+  ASSISTANT_INLINE_ATOMIC_PATTERN.lastIndex = 0;
+  while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null) {
     if (match.index > cursor) {
       nodes.push(...assistantPlainTextNodes(text.slice(cursor, match.index), `${keyPrefix}-plain-${cursor}`, onUseMathInCompute, writing));
     }
@@ -2720,7 +2738,11 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
       nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("__")) {
+      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith("*")) {
+      nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("_")) {
       nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
     } else {
       nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);

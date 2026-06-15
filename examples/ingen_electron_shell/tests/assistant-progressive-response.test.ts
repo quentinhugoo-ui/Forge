@@ -71,6 +71,19 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("prefersReducedMotion()");
   });
 
+  it("reveals styled inline markdown only at parsed-safe breakpoints", () => {
+    expect(animationSource).toContain("ASSISTANT_INLINE_ATOMIC_PATTERN");
+    expect(animationSource).toContain("function assistantInlineAtomicRanges");
+    expect(animationSource).toContain("function assistantBreakpointInsideAtomicRange");
+    expect(animationSource).toContain("const atomicRanges = assistantInlineAtomicRanges(text)");
+    expect(animationSource).toContain("!assistantBreakpointInsideAtomicRange(point, atomicRanges)");
+    expect(animationSource).toContain("while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null)");
+    expect(animationSource).toContain("__[^_\\n]+?__");
+    expect(animationSource).toContain("_[^_\\n]+?_");
+    expect(animationSource).toContain('} else if (token.startsWith("__"))');
+    expect(animationSource).toContain('} else if (token.startsWith("_"))');
+  });
+
   it("runs agent action requests as a visible loop stream", () => {
     expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
