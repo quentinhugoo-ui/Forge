@@ -7,7 +7,6 @@ import {
   BRAIN_NEWBRAIN_COMMAND,
   BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPLING_MCP_COMMAND,
   BRAIN_SECURITYSCAN_COMMAND,
   BRAIN_WEBACT_COMMAND,
   type BrainCodeActCommand,
@@ -39,7 +38,7 @@ import {
   type BrainLearningMemoryEntry
 } from "./brain-user-memory-store";
 import { headerShadowStore } from "./header-shadow-store";
-import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon, ScraplingIcon } from "./module-logos";
+import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon } from "./module-logos";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
@@ -238,7 +237,6 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/gmail_" || command === "/gmail_com") return <GmailIcon />;
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
-  if (command === BRAIN_SCRAPLING_MCP_COMMAND) return <ScraplingIcon />;
   if (command === BRAIN_CODEDOCS_COMMAND) return <Glyph kind="database" />;
   if (command === BRAIN_GITHUB_MCP_COMMAND) return <Glyph kind="code" />;
   if (command === BRAIN_WEBACT_COMMAND) return <Glyph kind="globe" />;
@@ -283,8 +281,7 @@ export const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = 
 const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
 const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
 const MCP_COMMANDS: BrainCodeActCommand[] = [
-  BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPLING_MCP_COMMAND
+  BRAIN_SCRAPERS_COMMAND
 ];
 
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
@@ -353,7 +350,6 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
   "/googleweb_": "Search the web for current public information.",
   [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, links, image/media URLs, artifacts, and provenance.",
-  [BRAIN_SCRAPLING_MCP_COMMAND]: "Use Scrapling MCP for targeted web extraction, dynamic pages, bulk scraping, screenshots, and compact provenance.",
   [BRAIN_CODEDOCS_COMMAND]: "Use Context7 MCP for current library docs, API signatures, setup steps, and code examples before coding against dependencies.",
   [BRAIN_GITHUB_MCP_COMMAND]: "Use GitHub MCP for remote repositories, code search, issues, PRs, Actions/CI, releases, and review triage.",
   [BRAIN_WEBACT_COMMAND]: "Use Playwright MCP to navigate, snapshot, click, type, screenshot, and verify browser flows.",

@@ -15,10 +15,10 @@ import {
 } from "../shared/ipc-contract";
 import tokens from "../shared/generated/design-tokens.generated.json";
 import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice";
+import { BrainWorkspaceChrome, type BrainSpace } from "./BrainCanvas";
 import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
-import { BrainWorkspaceChrome, type BrainSpace } from "./BrainCanvas";
 import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
 import {
   BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT,
@@ -308,8 +308,8 @@ export function App() {
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [canvasMapsClosing, setCanvasMapsClosing] = useState(false);
-  const [codingLivePreview, setCodingLivePreview] = useState<CodingLivePreviewTarget | null>(null);
   const [brainSpace, setBrainSpace] = useState<BrainSpace>("memory");
+  const [codingLivePreview, setCodingLivePreview] = useState<CodingLivePreviewTarget | null>(null);
   const [widgetMode, setWidgetMode] = useState(false);
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");

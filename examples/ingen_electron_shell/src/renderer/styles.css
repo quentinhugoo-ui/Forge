@@ -9904,7 +9904,7 @@ ol.assistantText__list li::before {
   position: fixed;
   left: var(--left-panel-offset);
   right: 0;
-  top: 96px;
+  top: 132px;
   bottom: 0;
   min-width: 0;
   padding: 12px var(--brain-canvas-inline-pad) 72px;

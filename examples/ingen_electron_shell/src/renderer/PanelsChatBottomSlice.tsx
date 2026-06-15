@@ -13,7 +13,6 @@ import {
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPLING_MCP_COMMAND,
   BRAIN_GOOGLE_AGENDA_COMMAND,
   BRAIN_NAMED_COMPUTE_COMMAND,
   BRAIN_NEWCOMPUTE_COMMAND,
@@ -1293,7 +1292,6 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
   [BRAIN_SCRAPERS_COMMAND, "parallel scraper MCP request prepared"],
-  [BRAIN_SCRAPLING_MCP_COMMAND, "Scrapling MCP extraction prepared"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
@@ -4420,7 +4418,7 @@ function selfDirectedContinuationPrompt({
       `prior_goal="${compactSelfDirectedText(goal).replace(/"/g, "'")}"`,
       `completion_evidence="${compactSelfDirectedText(previousAssistantText, 360).replace(/"/g, "'")}"`,
       "role=agent_authored_prompt_visible_in_composer",
-      "instruction=Invent the next stronger project direction yourself. Extend the result, raise quality, add missing professional depth, and start a new loop stream. If the new direction is ambiguous, open /questionnaire_; otherwise begin with the next concrete action and CodeAct event."
+      "instruction=Invent the next stronger project direction yourself. Extend the result, raise quality, add missing professional depth, and start a new action cycle. If the new direction is ambiguous, open /questionnaire_; otherwise begin with the next concrete action and CodeAct event."
     ].join("\n");
   }
   return [
@@ -4433,7 +4431,7 @@ function selfDirectedContinuationPrompt({
     `brain_switches=${BRAIN_CODING_COMMAND} ${BRAIN_SCIENCE_COMMAND}`,
     `codeact_floor=${BRAIN_GOOGLEWEB_COMMAND} ${BRAIN_NEWCOMPUTE_COMMAND} ${BRAIN_SELECTCOMPUTE_COMMAND} ${BRAIN_NEWMODULE_COMMAND} ${BRAIN_NEWOBJECT_COMMAND} ${BRAIN_FRONTDESIGN_COMMAND}`,
     "guardrails=no payment, no destructive delete, no credential action and no irreversible external submit without explicit human confirmation.",
-    "loop_stream=Write one short paragraph that states the next action and tool, then emit the CodeAct/event below it.",
+    "action_flow=Write one short paragraph that states the next action and tool, then emit the CodeAct/event below it.",
     "stop_condition=Use the final questionnaire answer as the definition of done. When satisfied, include SELF_DIRECTED_GOAL_REACHED reason=\"...\" next_prompt=\"...\" so the UI can inject a stronger next prompt.",
     "instruction=Continue the project from the user's direction. Pick the next concrete goal yourself, do the useful research or CodeAct, then either produce the next artifact or prepare the next autonomous prompt."
   ].join("\n");
@@ -4443,7 +4441,7 @@ function selfDirectedQuestionnaireAnswersPrompt(value: string): string {
   return [
     "SELF_DIRECTED_QUESTIONNAIRE_ANSWERS v1",
     "role=user_clarified_goal",
-    "instruction=The questionnaire is complete. Start autonomous loop stream work now. Use paragraph -> CodeAct event rhythm. Use the final answer as the stop condition.",
+    "instruction=The questionnaire is complete. Start autonomous multi-step work now. Use paragraph -> CodeAct event rhythm. Use the final answer as the stop condition.",
     "",
     value
   ].join("\n");

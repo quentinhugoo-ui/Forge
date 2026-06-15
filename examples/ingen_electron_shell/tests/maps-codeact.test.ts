@@ -38,19 +38,20 @@ describe("Maps CodeAct", () => {
     expect(request?.target).toBe("Yakushima");
   });
 
-  it("can rebuild a bare Maps request around Brain home-city coordinates", () => {
+  it("can build an explicit coordinate request without implying saved home location", () => {
     const request = createMapsCodeActRequest({
       command: MAPS_COMMAND,
-      target: "Marcq-en-Baroeul, France",
-      query: "Marcq-en-Baroeul, France",
-      keywords: ["brain_home_location", "google_geocoding"],
-      latitude: 50.6767,
-      longitude: 3.0946,
+      target: "Yakushima, Japan",
+      query: "Yakushima, Japan",
+      keywords: ["explicit_maps_target", "google_geocoding"],
+      latitude: 30.3586,
+      longitude: 130.5286,
       source: "explicit_codeact"
     });
 
-    expect(request.target).toBe("Marcq-en-Baroeul, France");
-    expect(request.url).toContain("https://earth.google.com/web/@50.67670000,3.09460000,0a");
+    expect(request.target).toBe("Yakushima, Japan");
+    expect(request.keywords).not.toContain("brain_home_location");
+    expect(request.url).toContain("https://earth.google.com/web/@30.35860000,130.52860000,0a");
     expect(request.proofHash).toMatch(/^[a-f0-9]{64}$/);
   });
 

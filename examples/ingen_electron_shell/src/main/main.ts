@@ -36,7 +36,6 @@ import {
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPLING_MCP_COMMAND,
   BRAIN_FRONTDESIGN_COMMAND,
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
@@ -4052,7 +4051,7 @@ function webExplorerCodeActInstructions(moduleId = ""): string {
     BRAIN_CODEACT_ROUTING_RULES,
     `Quand le Brain actif est general et qu'une demande correspond a ${BRAIN_SCIENCE_COMMAND} ou ${BRAIN_CODING_COMMAND}, active d'abord ce CodeAct de Brain avec une phrase naturelle courte; ne commence pas par une longue reponse specialisee sans switch.`,
     `N'utilise ${BRAIN_GOOGLEWEB_COMMAND} que pour une recherche web generique qui n'est couverte par aucun module specifique du Brain.`,
-    `Regle geographique stricte: lieu geographique detecte seul = ${BRAIN_MAPS_COMMAND}; lieu geographique + champ lexical voyage/vacances/sejour = ${BRAIN_MAPS_COMMAND} puis ${BRAIN_AIRBNB_COMMAND}. Pour une ville, un pays, une region, la meteo d'une ville, une carte, un trajet, Google Earth, une localisation ou des coordonnees sans vocabulaire voyage/vacances/sejour, ecris une phrase naturelle puis active ${BRAIN_MAPS_COMMAND}. Si le meme lieu apparait avec voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, voyageurs, logement, hotel, location ou reservation, ecris une phrase naturelle puis active d'abord ${BRAIN_MAPS_COMMAND}, puis ${BRAIN_AIRBNB_COMMAND} comme page suivante du WebExplorer. Ne lis jamais la position de l'ordinateur sans permission explicite.`,
+    `Regle geographique stricte: ${BRAIN_MAPS_COMMAND} exige une intention carte/localisation/itineraire/coordonnees/Google Earth/meteo locale explicite. Un nom de pays, ville, region ou periode historique dans une demande culturelle, litteraire, historique, de tableau, de vocabulaire ou d'explication ne suffit jamais: utilise plutot ${BRAIN_WEBSEARCH_COMMAND}, puis ${BRAIN_SCRAPERS_COMMAND} si des sources, images ou medias doivent enrichir la conversation. Si le meme lieu apparait avec voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, voyageurs, logement, hotel, location ou reservation, ecris une phrase naturelle puis active d'abord ${BRAIN_MAPS_COMMAND}, puis ${BRAIN_AIRBNB_COMMAND} comme page suivante du WebExplorer. Un ${BRAIN_MAPS_COMMAND} sans target ouvre une vue Earth neutre; n'utilise jamais user_home_location comme cible par defaut. Ne lis jamais la position de l'ordinateur sans permission explicite.`,
     `Si l'utilisateur demande de generer/creer une image, ecris une phrase naturelle puis active ${BRAIN_NEWIMAGE_COMMAND} avec say et prompt.`,
     `Si l'utilisateur demande de modifier/retoucher/transformer une image attachee, selectionnee ou visible dans le registre des documents de la session, ecris une phrase naturelle puis active ${BRAIN_EDITIMAGE_COMMAND} avec say, instruction et image_ref.`,
     `Pour une demande comme retirer un element de l'image, enlever le fond, changer les couleurs ou modifier l'image, n'ecris pas un prompt pour un outil externe: active ${BRAIN_EDITIMAGE_COMMAND}.`,
@@ -4430,7 +4429,7 @@ function brainIdentityMemoryManifest(): string {
   const assistant = brainIdentityContext.agentFirstName;
   const homeLocation = brainIdentityContext.userHomeLocation;
   if (!user && !assistant && !homeLocation) return "";
-  return `BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} user_home_location=${JSON.stringify(homeLocation)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Use user_home_location as user-confirmed living place only when location context is useful. Never invent missing identity or location fields. Never treat user_home_location as live device geolocation.`;
+  return `BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} user_home_location=${JSON.stringify(homeLocation)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Use user_home_location as user-confirmed living place only when the user asks about their saved/home context. Never invent missing identity or location fields. Never treat user_home_location as live device geolocation or as the default /maps_ target.`;
 }
 
 function brainDurableMemoryContextManifest(): string {
@@ -4709,7 +4708,7 @@ function mapsGeocodeQueryForRequest(request: MapsCodeActRequest): string {
   if (target && target !== MAPS_DEFAULT_TARGET) {
     return target;
   }
-  return normalizeBrainHomeLocation(brainIdentityContext.userHomeLocation);
+  return "";
 }
 
 function photonSuggestionToMapsGeocode(suggestion: CitySuggestion): MapsGeocodeResult | null {
@@ -4874,7 +4873,7 @@ async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<M
     command: request.command,
     target: query,
     query,
-    keywords: [...request.keywords, "brain_home_location", geocode.source],
+    keywords: [...request.keywords, "explicit_maps_target", geocode.source],
     latitude: geocode.latitude,
     longitude: geocode.longitude,
     source: request.source
@@ -4882,7 +4881,32 @@ async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<M
 }
 
 function userTextHasTravelOrStayIntent(value: string): boolean {
-  return /\b(airbnb|voyage|voyager|vacances|partir|depart|départ|destination|tourisme|touristique|visiter|visite|sejour|séjour|weekend|week-end|logement|loger|hebergement|hébergement|hotel|hôtel|auberge|reserver|réserver|reservation|réservation|booking|location|louer|appartement|maison|villa|chambre|nuits?|voyageurs?)\b/i.test(value);
+  return /\b(airbnb|voyage|voyager|vacances|partir|depart|destination|tourisme|touristique|visiter|visite|sejour|weekend|week-end|logement|loger|hebergement|hotel|auberge|reserver|reservation|booking|location|louer|appartement|maison|villa|chambre|nuits?|voyageurs?)\b/i.test(normalizedRoutingIntentText(value));
+}
+
+function normalizedRoutingIntentText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function userTextHasDirectMapsIntent(value: string): boolean {
+  const text = normalizedRoutingIntentText(value);
+  return /\b(carte|map|maps|google earth|localise|localiser|situe|situer|ou est|itineraire|route|trajet|coordonnees?|gps|latitude|longitude|geographie|geographique|contexte geographique|meteo|temperature|climat)\b/i.test(text);
+}
+
+function userTextHasKnowledgeOnlyPlaceIntent(value: string): boolean {
+  const text = normalizedRoutingIntentText(value);
+  return !userTextHasDirectMapsIntent(value) &&
+    !userTextHasTravelOrStayIntent(value) &&
+    /\b(litterature|histoire|historique|culture|mythologie|philosophie|poesie|theatre|auteur|auteurs|oeuvre|oeuvres|classe|classer|tableau|categorie|categories|explique|parle|raconte|resume|synthese|notion|notions|vocabulaire|mots?)\b/i.test(text);
+}
+
+function shouldSuppressMapsForUserText(value: string): boolean {
+  return Boolean(value.trim()) && userTextHasKnowledgeOnlyPlaceIntent(value);
 }
 
 function cleanInferredMapsTarget(value: string): string {
@@ -4902,10 +4926,9 @@ function inferGeographicTargetFromUserText(value: string): string {
     /\b(?:partir|aller)\s+(?:en\s+)?(?:vacances?|voyage|sejour|séjour|weekend|week-end)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:voyage|vacances|sejour|séjour|weekend|week-end|tourisme)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:partir|voyager|visiter|visite)\s+(?:a|à|au|aux|en|dans|de|d'|sur|pour)\s+(.{2,96})$/i,
-    /\b(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+(.{2,96})$/i,
     /\b(?:meteo|météo|temperature|température|climat)\s+(?:a|à|de|d'|sur|pour)\s+(.{2,96})$/i,
     /\b(?:ou|où)\s+est\s+(.{2,96})$/i,
-    /\b(?:carte|map|maps|google earth|localise|situe)\s+(?:de|d'|a|à|sur|pour)?\s*(.{2,96})$/i
+    /\b(?:carte|map|maps|google earth|localise|situe|itineraire|route|trajet|coordonnees|gps)\s+(?:de|d'|a|à|sur|pour|vers)?\s*(.{2,96})$/i
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -4914,20 +4937,27 @@ function inferGeographicTargetFromUserText(value: string): string {
       return target;
     }
   }
-  const simplePlaceIntro = text.match(/^(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+([A-ZÀ-Ý][\p{L}\p{M}' -]{1,96})$/iu);
-  const simplePlace = cleanInferredMapsTarget(simplePlaceIntro?.[1] ?? "");
-  if (simplePlace.length >= 2) {
-    return simplePlace;
-  }
   return "";
 }
 
 function inferMapsTargetFromUserText(value: string): string {
   const text = value.replace(/\s+/g, " ").trim();
-  if (!text || userTextHasTravelOrStayIntent(text)) {
+  if (!text || userTextHasTravelOrStayIntent(text) || shouldSuppressMapsForUserText(text) || !userTextHasDirectMapsIntent(text)) {
     return "";
   }
   return inferGeographicTargetFromUserText(text);
+}
+
+function stripMapsCodeActLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return trimmed !== BRAIN_MAPS_COMMAND && !trimmed.startsWith(`${BRAIN_MAPS_COMMAND} `);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function stripCompetingGeographicCodeActLines(text: string): string {
@@ -5118,13 +5148,12 @@ function brainBootManifest(): string {
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
     `scrapers_mcp_policy=${BRAIN_SCRAPERS_COMMAND} runs Scrapling MCP + Crawl4AI MCP in parallel for known URLs. Use after ${BRAIN_WEBSEARCH_COMMAND} or explicit URLs to enrich answers with clean Markdown, structured fields, links, image/video/audio URLs, screenshots/artifact refs and provenance. Return one compact SCRAPERS_RESULT/media_manifest; respect robots/terms/rate limits/privacy, stealth only when authorized.`,
-    `scrapling_mcp_policy=${BRAIN_SCRAPLING_MCP_COMMAND} is the preferred Brain route for targeted web extraction, bulk URL scraping, dynamic/JavaScript pages, screenshots, persistent sessions, adaptive selectors, or compact provenance when Gmail, Airbnb, Maps and generic Google search do not own the task. Return selector-driven manifests and proof/provenance, not full raw HTML. Respect robots.txt, site terms, rate limits and privacy; use stealth/anti-bot modes only for authorized targets or user-approved public-data collection.`,
     `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=General Brain is immutable and read-only. The agent must never write, patch or synthesize new CodeActs inside General Brain. When /newbrain_ is emitted, the host derives the specialized activator CodeAct such as /musicianbrain_ from explicit fields and stores it outside General Brain.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
     "learning_interrupt_markup=[[learn type=anti_pattern|working_pattern|user_preference|domain_rule|skill_candidate|codeact_candidate|research_candidate scope=session|project|domain confidence=0.00..1.00 promote=lesson,skill,task,codeact,research]]short candidate observation[[/learn]]",
-    "learning_interrupt_rule=During loop stream work, if a repeated avoidable error, stable correction, reusable solution, user preference, domain rule, skill candidate, CodeAct candidate or worthwhile research branch appears, emit exactly one compact [[learn ...]]...[[/learn]] candidate line near the relevant paragraph. Prefer promote=lesson when an observed error should become a replacement rule.",
+    "learning_interrupt_rule=During multi-step work, if a repeated avoidable error, stable correction, reusable solution, user preference, domain rule, skill candidate, CodeAct candidate or worthwhile research branch appears, emit exactly one compact [[learn ...]]...[[/learn]] candidate line near the relevant paragraph. Prefer promote=lesson when an observed error should become a replacement rule.",
     "learning_interrupt_guard=Learning interrupts are proposals only: never claim the Brain has persisted them until a user action or verified Brain/CodeAct promotion accepts them. Prefer at most one learning interrupt per turn unless the user asks for more.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`,
     "LOCAL_ACTION_ATLAS_BOOT v1",
@@ -5138,7 +5167,7 @@ function brainBootManifest(): string {
 
 function brainCodeActLoopRulesManifest(): string {
   return [
-    "codeact_loop_rule=Use Brain CodeActs as loop-stream events for every non-trivial task: one short natural paragraph, one meaningful CodeAct or AGENT_ACTION_JSON action when work is happening, then continue only after the host shows the event/result.",
+    "codeact_loop_rule=Use Brain CodeActs as action events for every non-trivial task: one short natural paragraph, one meaningful CodeAct or AGENT_ACTION_JSON action when work is happening, then continue only after the host shows the event/result.",
     "codeact_loop_rule=Do not turn CodeActs into raw visible prompt text. A CodeAct is a runtime event boundary; if the objective is not complete, continue with the next concrete event or verified action instead of a long chatbot answer."
   ].join("\n");
 }
@@ -5150,7 +5179,7 @@ function brainRuntimeReminderManifest(): string {
     "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
     brainPersonalityContextManifest(),
     `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
-    "codeact_loop_rule=For non-trivial work, Brain CodeActs are loop-stream events. Emit a short progress paragraph and the relevant CodeAct/action, then wait for host continuation instead of dumping a full final answer.",
+    "codeact_loop_rule=For non-trivial work, Brain CodeActs are action events. Emit a short progress paragraph and the relevant CodeAct/action, then wait for host continuation instead of dumping a full final answer.",
     "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
   ].join("\n");
 }
@@ -5251,6 +5280,17 @@ function isBrainCodeActSurfaceCommand(command: BrainCodeActCommand): boolean {
   );
 }
 
+function textLooksLikeMapBackedAnswerIntent(value: string): boolean {
+  const text = normalizedRoutingIntentText(value);
+  if (!text || userTextHasTravelOrStayIntent(text)) {
+    return false;
+  }
+  if (/^(ouvre|ouvrir|lance|affiche|montre)?\s*(google earth|maps?|carte)\s*$/.test(text)) {
+    return false;
+  }
+  return /\b(parle|explique|raconte|decris|presente|resume|synthese|analyse|compare|liste|classe|classer|tableau|qui|quoi|pourquoi|comment|histoire|historique|culture|origine|inspir|film|anime|oeuvre|lieu|ile|pays|ville|region)\b/i.test(text);
+}
+
 function shouldContinueAfterBrainCodeAct(params: {
   originalUserText: string;
   assistantText: string;
@@ -5270,7 +5310,7 @@ function shouldContinueAfterBrainCodeAct(params: {
     return false;
   }
   if (commands.every((command) => isBrainCodeActUserPauseCommand(command) || isBrainCodeActSurfaceCommand(command))) {
-    return false;
+    return commands.includes(BRAIN_MAPS_COMMAND) && textLooksLikeMapBackedAnswerIntent(params.originalUserText);
   }
   return (
     textLooksLikeLocalActionIntent(params.originalUserText) ||
@@ -5394,7 +5434,7 @@ function brainSegmentManifest(): string {
       `activated_by=${BRAIN_CODING_COMMAND}`,
       `rule=${BRAIN_CODING_COMMAND} is already active for this session; continue directly in Coding Brain and do not emit ${BRAIN_CODING_COMMAND} again unless a later turn explicitly switches away first.`,
       `visual_artifact_rule=For HTML/CSS/JS/React/Vite pages, animations or visual components, never answer with copy-paste code or "put this in a file" unless the user explicitly asked for snippet-only help. Create or modify the real local file with AGENT_ACTION_JSON first, wait for AGENT_ACTION_RESULT proof, then emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} path="verified absolute file path" kind="html|react|vite".`,
-      `coding_priority_mcp_policy=Use ${BRAIN_CODEDOCS_COMMAND} for Context7 current dependency docs once the package is known, ${BRAIN_GITHUB_MCP_COMMAND} for remote GitHub repo/issues/PR/CI/release context, ${BRAIN_WEBACT_COMMAND} for Playwright browser interaction or visual verification, and ${BRAIN_SECURITYSCAN_COMMAND} for Semgrep security/static-analysis checks before risky commits or PRs. These are Coding Brain CodeAct loop-stream events: emit the command, wait for the *_RESULT manifest, then continue with the next concrete action.`,
+      `coding_priority_mcp_policy=Use ${BRAIN_CODEDOCS_COMMAND} for Context7 current dependency docs once the package is known, ${BRAIN_GITHUB_MCP_COMMAND} for remote GitHub repo/issues/PR/CI/release context, ${BRAIN_WEBACT_COMMAND} for Playwright browser interaction or visual verification, and ${BRAIN_SECURITYSCAN_COMMAND} for Semgrep security/static-analysis checks before risky commits or PRs. These are Coding Brain action events: emit the command, wait for the *_RESULT manifest, then continue with the next concrete action.`,
       BRAIN_CODING_VISIBLE_CATALOG
     ].join("\n");
   }
@@ -5422,11 +5462,11 @@ function selfDirectedModeManifest(): string {
     `mandatory=After the correct Brain is active, and before starting project work for a natural user direction, emit ${BRAIN_QUESTIONNAIRE_COMMAND} to clarify the target. Do not skip this in Self-Directed mode.`,
     `questionnaire_format=Use title, intro, q1/q2/q3/q4/q5 maximum and qN_options. The final question must define the stop condition: ask exactly how the agent will know the objective is reached.`,
     "questionnaire_options=Use expert option cards, not vague Option 1/2/3 labels. Include one recommended option and one more ambitious/high-quality option when useful.",
-    "after_answers=When the user message starts SELF_DIRECTED_QUESTIONNAIRE_ANSWERS v1, begin autonomous loop stream work immediately; do not ask the same questionnaire again unless the answers are contradictory.",
-    "loop_stream=Write one short paragraph that states the next concrete action and why, then emit the relevant CodeAct command/event below it. Repeat this paragraph -> event rhythm while work remains.",
+    "after_answers=When the user message starts SELF_DIRECTED_QUESTIONNAIRE_ANSWERS v1, begin autonomous multi-step work immediately; do not ask the same questionnaire again unless the answers are contradictory.",
+    "work_rhythm=Write one short paragraph that states the next concrete action and why, then emit the relevant CodeAct command/event below it. Repeat this paragraph -> event rhythm while work remains.",
     `tool_policy=Use Brain CodeActs and specialized commands when useful: ${BRAIN_GOOGLEWEB_COMMAND} for web research, ${BRAIN_NEWCOMPUTE_COMMAND}/${BRAIN_SELECTCOMPUTE_COMMAND} for Monster, ${BRAIN_NEWMODULE_COMMAND} for module materialization, ${BRAIN_NEWOBJECT_COMMAND} for Banger objects, ${BRAIN_FRONTDESIGN_COMMAND} for native palette work.`,
     "goal_reached=When the user's explicit stop condition is satisfied, include a compact marker line: SELF_DIRECTED_GOAL_REACHED reason=\"short reason\" next_prompt=\"a stronger next project direction\".",
-    "continuation=When the user message starts SELF_DIRECTED_CONTINUATION v1 or SELF_DIRECTED_PROJECT_EXPANSION v1, continue loop stream work directly unless a new ambiguity truly requires /questionnaire_.",
+    "continuation=When the user message starts SELF_DIRECTED_CONTINUATION v1 or SELF_DIRECTED_PROJECT_EXPANSION v1, continue the work directly unless a new ambiguity truly requires /questionnaire_.",
     "guardrails=No payment, credential action, destructive deletion or irreversible external submission without explicit human confirmation."
   ].join("\n");
 }
@@ -6987,6 +7027,7 @@ function agentActionShouldRunFileOrganizationFallback(originalUserText: string, 
 function agentLoopNarrationContractManifest(): string {
   return [
     "LOOP_STREAM_NARRATION_CONTRACT v1",
+    "ACTION_NARRATION_CONTRACT v1",
     "voice_source=Follow BRAIN_PERSONALITY_MANIFEST when choosing warmth, rhythm, phrasing and how much human presence to show.",
     "visible_language=French; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
     "visible_step_shape=Each visible paragraph should make the step understandable: what was just learned, why the next move follows, and what action or verification comes next.",
@@ -15363,13 +15404,25 @@ function executeAssistantGoogleWebCodeAct(message: TranscriptMessage, parallelSe
   };
 }
 
-async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): Promise<TranscriptMessage> {
+async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0, originalUserText = ""): Promise<TranscriptMessage> {
   if (message.role !== "assistant") {
     return message;
   }
   const request = extractMapsCodeAct(message.text);
   if (!request) {
     return message;
+  }
+  if (shouldSuppressMapsForUserText(originalUserText)) {
+    const text = stripMapsCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
+    return {
+      ...message,
+      text,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        suppressedMapsCodeAct: request,
+        originalUserText
+      })
+    };
   }
   const resolvedRequest = await resolveMapsCodeActRequest(request);
   const navigation = navigateNativeWebExplorerToMaps(resolvedRequest, parallelSessionIndex);
@@ -15658,7 +15711,7 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
   ];
   if (segment === "coding") {
     lines.push(
-      "Coding Brain conserve les outils Windows/local action et le loop stream: pour creer du code, modifier un fichier, lancer un test ou inspecter le poste, utilise AGENT_ACTION_JSON puis attends AGENT_ACTION_RESULT avant de conclure.",
+      "Coding Brain conserve les outils Windows/local action et le rythme d'action: pour creer du code, modifier un fichier, lancer un test ou inspecter le poste, utilise AGENT_ACTION_JSON puis attends AGENT_ACTION_RESULT avant de conclure.",
       `Pour une demande visuelle HTML/CSS/JS/React/Vite, n'ecris pas de bloc de code a copier-coller: cree ou modifie un vrai fichier local avec AGENT_ACTION_JSON, verifie le resultat accepte, puis annonce l'ouverture du visuel et emets ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} avec le chemin absolu verifie.`
     );
   }
@@ -15679,7 +15732,7 @@ function brainCodeActLoopContinuationUserText(
     `codeact_events=${commandList || "none"}`,
     visiblePrior ? `previous_visible_progress=${visiblePrior}` : "",
     agentLoopNarrationContractManifest(),
-    "runtime_next=The previous Brain CodeAct was a loop-stream event, not a final answer if the requested work is not complete.",
+    "runtime_next=The previous Brain CodeAct was an action event, not a final answer if the requested work is not complete.",
     "control_line=Continue with the next useful CodeAct or exactly one AGENT_ACTION_JSON line when a real local action is needed.",
     "pause_policy=If the previous CodeAct opened UI, waits for user input, or is blocked on permission/confirmation, explain that pause compactly and do not invent an action.",
     "repeat_policy=Do not repeat the same CodeAct only to show activity. Use the next event only when it represents a real step."
@@ -15720,7 +15773,8 @@ async function injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(message: Tran
 async function executeAssistantModuleCodeActs(
   message: TranscriptMessage,
   moduleId: string,
-  parallelSessionIndex: number
+  parallelSessionIndex: number,
+  originalUserText = ""
 ): Promise<TranscriptMessage> {
   if (moduleId === "gmail") {
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
@@ -15734,7 +15788,7 @@ async function executeAssistantModuleCodeActs(
     next.text.includes(BRAIN_AIRBNB_COMMAND) &&
     !next.text.includes("MAPS_RESULT") &&
     !next.text.includes("AIRBNB_RESULT");
-  next = await executeAssistantMapsCodeAct(next, parallelSessionIndex);
+  next = await executeAssistantMapsCodeAct(next, parallelSessionIndex, originalUserText);
   if (shouldOpenAirbnbAfterMaps && next.text.includes("MAPS_RESULT")) {
     await waitForNativeMapsFirstVisual();
   }
@@ -16996,7 +17050,7 @@ async function executeUniversalLoopOrchestratorPass(params: {
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, params.originalUserText, params.moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, params.originalUserText, params.moduleId, params.parallelSessionIndex);
   throwIfAssistantRunCancelled(params.assistantRun);
-  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex);
+  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex, params.originalUserText);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, params.session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);

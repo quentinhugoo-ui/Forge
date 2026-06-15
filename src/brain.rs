@@ -43,8 +43,6 @@ pub const BRAIN_GOOGLEWEB_COMMAND: &str = "/googleweb_";
 pub const BRAIN_GOOGLEWEB_RESULT_SCHEMA: &str = "forge.webexplorer.googleweb.result.v1";
 pub const BRAIN_SCRAPERS_COMMAND: &str = "/scrapers_";
 pub const BRAIN_SCRAPERS_RESULT_SCHEMA: &str = "forge.scrapers.mcp.result.v1";
-pub const BRAIN_SCRAPLING_MCP_COMMAND: &str = "/scrapling_mcp_";
-pub const BRAIN_SCRAPLING_MCP_RESULT_SCHEMA: &str = "forge.scrapling.mcp.result.v1";
 pub const BRAIN_MAPS_COMMAND: &str = "/maps_";
 pub const BRAIN_MAPS_RESULT_SCHEMA: &str = "forge.webexplorer.maps.result.v1";
 pub const BRAIN_GMAIL_COMMAND: &str = "/gmail_";
@@ -65,7 +63,7 @@ pub const BRAIN_SEGMENT_RESULT_SCHEMA: &str = "forge.brain.segment.result.v1";
 pub const BRAIN_NEWBRAIN_COMMAND: &str = "/newbrain_";
 pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND: &str = "/modify\"<brain_name>\"brain_";
 pub const BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA: &str = "forge.brain.domain_brain.result.v1";
-pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is a hard module rule: geographic place detected alone means /maps_; geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. Ordinary city, place, local weather, map, route, country, region, island, coordinates, Google Earth, where-is, or geographic-context requests are geospatial tasks: prefer /maps_ and do not activate /sciencebrain_ unless the user explicitly asks for scientific meteorology, climate modeling, physics, engineering, or compute analysis. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Coding-specific MCP routes for dependency docs, remote repositories, browser automation and static security scanning are owned by Coding Brain; while active=general, activate /codingbrain_ before using them. Module priority: when the user asks about a city, place, country, region, island, local weather for a place, route, map, coordinates, Google Earth, where something is, or any geographic context without travel/vacation/stay intent, prefer /maps_ over /sciencebrain_, /airbnb_, /websearch_, and /googleweb_; use the Brain home city as the default maps target when no place is specified. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ discovers current sources, ranked URLs, citations and optional media candidates. Use media_intent only when visuals would improve the answer. After WEBSEARCH_RESULT, emit /scrapers_ with selected URLs when Markdown, media URLs/artifacts or structured extraction is needed; /websearch_ returns manifests, not raw page content, and does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Use /questionnaire_ from General, Science or Coding Brain when the goal is clear but key choices, constraints, scope, files, risks or success criteria are missing. Use /plan_ when a non-trivial task needs a visible multi-step action plan, milestones, ordering, or progress structure before or during execution.";
+pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is an explicit-intent module rule: use /maps_ only for map, localization, route, coordinates, where-is, local weather, Google Earth, or operational geographic-context intent. A country, city, region, island or historical place mentioned inside a cultural, historical, literary, vocabulary, table, classification or explanation request is not a Maps request; prefer /websearch_ and then /scrapers_ when source-backed or visual/media enrichment is useful. Geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Coding-specific MCP routes for dependency docs, remote repositories, browser automation and static security scanning are owned by Coding Brain; while active=general, activate /codingbrain_ before using them. Module priority: use /maps_ over /websearch_ only when the user explicitly asks for a map, route, localization, where-is, coordinates, local weather, Google Earth or operational geographic context; bare /maps_ opens a neutral Earth view and must never use the saved home city. For culture, history, literature, vocabulary, tables, classifications, general explanations or visual enrichment involving a place, use /websearch_ first and /scrapers_ next when URLs/media are needed. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ discovers current sources, ranked URLs, citations and optional media candidates. Use media_intent only when visuals would improve the answer. After WEBSEARCH_RESULT, emit /scrapers_ with selected URLs when Markdown, media URLs/artifacts or structured extraction is needed; /websearch_ returns manifests, not raw page content, and does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Use /questionnaire_ from General, Science or Coding Brain when the goal is clear but key choices, constraints, scope, files, risks or success criteria are missing; for specialized work, switch to the correct Brain segment first. Use /plan_ when a non-trivial task needs a visible multi-step action plan, milestones, ordering, or progress structure before or during execution.";
 pub const BRAIN_WORKSPACE_COMMAND: &str = "/workspace_";
 pub const BRAIN_CAPABILITIES_COMMAND: &str = "/capabilities_";
 pub const BRAIN_CAPABILITIES_RESULT_SCHEMA: &str = "forge.agent.capabilities.result.v1";
@@ -89,9 +87,8 @@ pub const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION: &str = "Use /github_ for GitHub 
 pub const BRAIN_WEBACT_COMMAND_DESCRIPTION: &str = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation.";
 pub const BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION: &str = "Use /securityscan_ for Semgrep MCP security and static-analysis checks on code paths or snippets, especially before commits, PRs, generated code, dependency-facing adapters, auth, filesystem, shell, network or deserialization changes. It returns a compact SECURITYSCAN_RESULT with findings and evidence; do not treat a clean scan as a full proof of security.";
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants to visually browse or manually inspect web results. Prefer /websearch_ when the assistant must answer with cited sources, discover URLs, rank sources, verify current information or feed /scrapers_. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
-pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Use /scrapling_mcp_ only for low-level selector/session/screenshot work. Respect robots/terms/rate limits/privacy; stealth only for authorized targets.";
-pub const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION: &str = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_.";
-pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on Google Earth for any detected geographic place. For geography alone, Maps is the only WebExplorer page. For geography plus travel/vacation/stay intent, open Maps first and Airbnb next. Prefer over /sciencebrain_ and /googleweb_ for ordinary geographic context; use Brain home city when no target is specified. Do not read device location silently; current-location use requires explicit user permission.";
+pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Scrapling selector/session/screenshot needs are handled inside this same command; do not expose a second Scrapling CodeAct. Respect robots/terms/rate limits/privacy; stealth only for authorized targets.";
+pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open Google Earth only for explicit map/localization/route/coordinates/where-is/local-weather/Google Earth intent. A place name in a cultural, historical, literary, vocabulary, table or explanation request is not enough; use /websearch_ then /scrapers_ for source/media enrichment. Bare /maps_ opens a neutral Earth view, never the saved home city. For travel/stay intent, open Maps first and Airbnb next. Never read device location without explicit permission.";
 pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail.";
 pub const BRAIN_GMAIL_COM_COMMAND_DESCRIPTION: &str = "Open the Gmail sign-in/mail entry URL directly in split-screen WebExplorer when the user asks to access or open Gmail. Use only for navigation to Gmail, not for generic mail reasoning or web search.";
 pub const BRAIN_AIRBNB_COMMAND_DESCRIPTION: &str = "Use Airbnb after /maps_ when a geographic place is detected together with travel/vacation/stay language: voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, home/apartment rental, vacation rental, booking, budget for stays, or short-term stay search. Do not use for city facts, local weather, geography, maps, or routes without travel/vacation/stay intent.";
@@ -100,7 +97,7 @@ pub const BRAIN_EDITIMAGE_COMMAND_DESCRIPTION: &str = "Edit an existing image at
 pub const BRAIN_QUESTIONNAIRE_COMMAND_DESCRIPTION: &str = "Ask a short paginated questionnaire when the user's goal is clear but key choices, constraints, scope, files, risks or success criteria are missing. Use only if guessing would hurt the result. Max 5 questions, one per page, three concrete expert options each; host adds Other. Skip trivial tasks or obvious safe defaults.";
 pub const BRAIN_PLAN_COMMAND_DESCRIPTION: &str = "Open the Plan panel when a non-trivial task needs a visible multi-step action plan before or during execution. Use for ordered steps, milestones, dependencies, verification gates, or progress structure. Keep it concise and actionable: title, optional context, 2-8 concrete steps, current focus, and stop condition. Do not use for one-step answers, tiny edits, or vague brainstorming.";
 pub const BRAIN_SCIENCE_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work. Physical product/prototype conception is engineering by default. Activate /sciencebrain_ before questionnaire or specialized answer; after activation, use the injected science brain catalog.";
-pub const BRAIN_CODING_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust/TypeScript/Electron, APIs, build systems, or developer tooling. Activate /codingbrain_ before the specialized answer; do not paste implementation code in the same Brain-switch message. After activation, continue in loop-stream mode with the injected coding brain catalog and local action tools.";
+pub const BRAIN_CODING_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust/TypeScript/Electron, APIs, build systems, or developer tooling. Activate /codingbrain_ before the specialized answer; do not paste implementation code in the same Brain-switch message. After activation, continue through the normal action cycle with the injected coding brain catalog and local action tools.";
 pub const BRAIN_NEWBRAIN_COMMAND_DESCRIPTION: &str = "Create a new specialized Brain scope for a durable domain such as marketing, trading, immobilier, science-notes or another recurring work area. Use only after the LLM has reasoned that repeated lessons, rules, skills, tasks or CodeAct drafts would pollute unrelated sessions if stored in a broad scope. This command never targets the root read-only catalog and cannot add commands there. When this command is emitted with an explicit brain_name, the host automatically derives a specialized activator CodeAct such as /musicianbrain_ in the specialized Brain registry, then future domain-specific lessons can be stored and injected only when relevant. The LLM chooses the domain, title, purpose, activation triggers, initial lesson/rule/skill/task/CodeAct categories and compact token budget; the host records the explicit fields and must not semantically infer the domain.";
 pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND_DESCRIPTION: &str = "Modify an existing specialized Brain named in the command form /modify\"<brain_name>\"brain_. Use when the LLM has a user-confirmed or strong candidate learning that belongs to that named Brain: observed error converted into replacement rule, conduct rule, reusable skill, follow-up task or CodeAct draft. This command targets only named specialized Brain scopes and never the root read-only catalog. The LLM supplies the brain_name, entry kind, evidence/observation, replacement rule when an error is being fixed, trigger, exceptions and compact content; the host only validates, stores and reinjects the explicit update.";
 pub const BRAIN_WORKSPACE_COMMAND_DESCRIPTION: &str = "Ask the user to choose a local project/workspace folder only for coding, repository, filesystem, build, script, or project-file work. Never use for web, Gmail, Airbnb, Brain memory, image generation, or image editing.";
@@ -594,7 +591,6 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_websearch_codeact_template(),
         brain_googleweb_codeact_template(),
         brain_scrapers_codeact_template(),
-        brain_scrapling_mcp_codeact_template(),
         brain_maps_codeact_template(),
         brain_gmail_codeact_template(),
         brain_gmail_com_codeact_template(),
@@ -771,7 +767,7 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_WEBSEARCH_COMMAND.to_string(),
         section: "websearch".to_string(),
-        purpose: "Run hosted OpenAI/Claude web-search discovery for current source-backed research. Use this when the answer needs fresh sources, ranked URLs, citations, verification, recent docs/releases/prices/laws/news/papers, web-grounded image discovery, media source pages, or URL candidates for /scrapers_. The host should return WEBSEARCH_RESULT as a compact answer/URL/citation/media manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
+        purpose: "Run hosted OpenAI/Claude web-search discovery for current source-backed research. Use this when the answer needs fresh sources, ranked URLs, citations, verification, recent docs/releases/prices/laws/news/papers, web-grounded image discovery, media source pages, or URL candidates for /scrapers_. The host should return WEBSEARCH_RESULT as a compact answer/URL/citation/media manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing action cycle with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
         result_schema: BRAIN_WEBSEARCH_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -794,7 +790,7 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                     "latest_status_check".to_string(),
                     "media_enrichment".to_string(),
                 ],
-                description: "Primary job for the hosted search tool. Use url_discovery_for_scrapers when the next loop-stream step should be /scrapers_ after URLs are found; use media_enrichment when a mostly-known answer would benefit from current images, video/audio source pages or visual references.".to_string(),
+                description: "Primary job for the hosted search tool. Use url_discovery_for_scrapers when the next action step should be /scrapers_ after URLs are found; use media_enrichment when a mostly-known answer would benefit from current images, video/audio source pages or visual references.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "providers".to_string(),
@@ -932,7 +928,7 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                     "suggest_scrapers_urls".to_string(),
                     "next_loop_scrapers".to_string(),
                 ],
-                description: "Set suggest_scrapers_urls when extraction may be useful; next_loop_scrapers tells the agent to emit /scrapers_ in the following loop-stream step with selected URLs when the user asked for full content, Markdown, images, artifacts or structured extraction. The runtime must not bypass the existing CodeAct loop.".to_string(),
+                description: "Set suggest_scrapers_urls when extraction may be useful; next_loop_scrapers tells the agent to emit /scrapers_ in the following action step with selected URLs when the user asked for full content, Markdown, images, artifacts or structured extraction. The runtime must not bypass the existing CodeAct loop.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "output".to_string(),
@@ -1089,7 +1085,7 @@ pub fn brain_github_mcp_codeact_template() -> BrainGeneralCodeActTemplate {
                     "ci_report".to_string(),
                     "issue_pr_summary".to_string(),
                 ],
-                description: "Compact result shape for loop-stream continuation, including tool names, repository coordinates and URLs/IDs when available.".to_string(),
+                description: "Compact result shape for action continuation, including tool names, repository coordinates and URLs/IDs when available.".to_string(),
             },
         ],
     };
@@ -1246,7 +1242,7 @@ pub fn brain_securityscan_codeact_template() -> BrainGeneralCodeActTemplate {
                     "sarif_summary".to_string(),
                     "ast_summary".to_string(),
                 ],
-                description: "Compact loop-stream result shape with findings, files, line refs, rule IDs and remediation hints when available.".to_string(),
+                description: "Compact action-result shape with findings, files, line refs, rule IDs and remediation hints when available.".to_string(),
             },
         ],
     };
@@ -1296,84 +1292,6 @@ pub fn brain_googleweb_codeact_template() -> BrainGeneralCodeActTemplate {
                 default_value: "conversation_and_navigation".to_string(),
                 allowed_values: vec!["conversation_and_navigation".to_string(), "navigation_only".to_string()],
                 description: "Default writes a bounded assistant status into the left transcript and navigates the WebExplorer on the right.".to_string(),
-            },
-        ],
-    };
-    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
-    template
-}
-
-pub fn brain_scrapling_mcp_codeact_template() -> BrainGeneralCodeActTemplate {
-    let mut template = BrainGeneralCodeActTemplate {
-        command: BRAIN_SCRAPLING_MCP_COMMAND.to_string(),
-        section: "mcp".to_string(),
-        purpose: "Route targeted web collection to Scrapling MCP when the user needs structured extraction, bulk URL scraping, dynamic or JavaScript-rendered content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of feeding full raw HTML to the LLM. The host must keep results bounded, selector-driven and manifest-sized, and must respect robots.txt, site terms, rate limits and privacy.".to_string(),
-        result_schema: BRAIN_SCRAPLING_MCP_RESULT_SCHEMA.to_string(),
-        proof_hash: String::new(),
-        slots: vec![
-            BrainCodeActTemplateSlot {
-                name: "mode".to_string(),
-                required: false,
-                default_value: "fetch".to_string(),
-                allowed_values: vec![
-                    "get".to_string(),
-                    "bulk_get".to_string(),
-                    "fetch".to_string(),
-                    "bulk_fetch".to_string(),
-                    "stealthy_fetch".to_string(),
-                    "bulk_stealthy_fetch".to_string(),
-                    "screenshot".to_string(),
-                    "open_session".to_string(),
-                    "close_session".to_string(),
-                    "list_sessions".to_string(),
-                ],
-                description: "Scrapling MCP operation. Prefer get/fetch and selectors first; use stealthy modes only for authorized targets or user-approved public-data collection.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "url".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Single target URL for get, fetch, stealthy_fetch or screenshot. Leave empty for bulk or session-list operations.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "urls".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Comma-separated or JSON-array target URLs for bulk_get, bulk_fetch or bulk_stealthy_fetch.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "selectors".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "CSS/XPath selectors or named fields to extract; keep the request targeted to reduce token cost.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "session".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Optional persistent Scrapling session id when cookies, navigation state or repeated requests must be reused.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "policy".to_string(),
-                required: false,
-                default_value: "respect_robots_terms_rate_limits_privacy".to_string(),
-                allowed_values: vec!["respect_robots_terms_rate_limits_privacy".to_string()],
-                description: "Collection guardrail. The host should refuse or ask for confirmation when target policy is unclear or sensitive.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "output".to_string(),
-                required: false,
-                default_value: "compact_manifest".to_string(),
-                allowed_values: vec![
-                    "compact_manifest".to_string(),
-                    "structured_items".to_string(),
-                    "screenshot_artifact".to_string(),
-                ],
-                description: "Return bounded extracted data, provenance, fetch metadata and artifact refs instead of full-page HTML.".to_string(),
             },
         ],
     };
@@ -1643,7 +1561,7 @@ pub fn brain_maps_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_MAPS_COMMAND.to_string(),
         section: "webexplorer".to_string(),
-        purpose: "Open the contained native WebExplorer on Google Earth while the assistant keeps conversing in the left transcript. Use this for every detected geographic place: cities, places, countries, regions, local weather at a place, where-is questions, maps, routes, coordinates, Google Earth, or ordinary geographic context. For geography alone, this is the only WebExplorer page. When the same place appears with voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, booking, or stay-search intent, emit this /maps_ command first and then /airbnb_ as the next WebExplorer page. Default uses the Brain home city when no target is specified; optional latitude and longitude slots let the LLM target explicit WGS84 coordinates. Device location must never be read silently; current-location flows require explicit user permission before any coordinate is used.".to_string(),
+        purpose: "Open the contained native WebExplorer on Google Earth while the assistant keeps conversing in the left transcript. Use this only for explicit map, localization, route, coordinates, where-is, local-weather, Google Earth or operational geographic-context intent. Do not use it just because a country, city, region or historical place appears in a cultural, historical, literary, vocabulary, table, classification or explanation request; use /websearch_ and then /scrapers_ for sourced visual/media enrichment instead. When the same place appears with voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, booking, or stay-search intent, emit this /maps_ command first and then /airbnb_ as the next WebExplorer page. Bare /maps_ opens a neutral Earth view; it must never use the saved Brain home city or device location as an implicit target. Optional latitude and longitude slots let the LLM target explicit WGS84 coordinates. Device location must never be read silently; current-location flows require explicit user permission before any coordinate is used.".to_string(),
         result_schema: BRAIN_MAPS_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -1652,7 +1570,7 @@ pub fn brain_maps_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: false,
                 default_value: "default_google_earth_view".to_string(),
                 allowed_values: Vec::new(),
-                description: "Human-readable city, place, country, region, weather-location, route, map, or coordinate target preserved in the proof. Leave default_google_earth_view when the user only asks to open Maps/Earth or when the Brain home city should be used.".to_string(),
+                description: "Human-readable city, place, country, region, weather-location, route, map, or coordinate target preserved in the proof. Leave default_google_earth_view only when the user asks to open Maps/Earth without a target; this opens a neutral Earth view and never the saved Brain home city.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "latitude".to_string(),
@@ -3589,7 +3507,7 @@ mod tests {
         assert!(template.purpose.contains("ranked URLs"));
         assert!(template.purpose.contains("/scrapers_"));
         assert!(template.purpose.contains("not raw HTML"));
-        assert!(template.purpose.contains("existing loop-stream"));
+        assert!(template.purpose.contains("existing action cycle"));
         assert!(template.slots.iter().any(|slot| slot.name == "query" && slot.required));
         assert!(template.slots.iter().any(|slot| {
             slot.name == "providers"
@@ -3626,7 +3544,7 @@ mod tests {
         assert!(template.slots.iter().any(|slot| {
             slot.name == "extract_intent"
                 && slot.allowed_values.contains(&"next_loop_scrapers".to_string())
-                && slot.description.contains("following loop-stream step")
+                && slot.description.contains("following action step")
         }));
         assert!(template.slots.iter().any(|slot| {
             slot.name == "output"
@@ -3716,30 +3634,6 @@ mod tests {
     }
 
     #[test]
-    fn brain_exposes_scrapling_mcp_as_general_codeact_template() {
-        let template = brain_scrapling_mcp_codeact_template();
-
-        assert_eq!(template.command, BRAIN_SCRAPLING_MCP_COMMAND);
-        assert_eq!(template.section, "mcp");
-        assert_eq!(template.result_schema, BRAIN_SCRAPLING_MCP_RESULT_SCHEMA);
-        assert_eq!(template.proof_hash.len(), 40);
-        assert!(template.purpose.contains("Scrapling MCP"));
-        assert!(template.purpose.contains("compact provenance"));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "mode" && slot.allowed_values.contains(&"stealthy_fetch".to_string())
-        }));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "selectors" && slot.description.contains("token cost")
-        }));
-        assert!(template.slots.iter().any(|slot| {
-            slot.name == "policy" && slot.default_value.contains("robots")
-        }));
-        assert!(brain_general_codeact_templates()
-            .iter()
-            .any(|candidate| candidate.command == BRAIN_SCRAPLING_MCP_COMMAND));
-    }
-
-    #[test]
     fn brain_exposes_scrapers_as_parallel_mcp_codeact_template() {
         let template = brain_scrapers_codeact_template();
 
@@ -3752,6 +3646,10 @@ mod tests {
         assert!(template.purpose.contains("same time"));
         assert!(template.purpose.contains("media metadata"));
         assert!(template.purpose.contains("MHTML"));
+        assert!(BRAIN_SCRAPERS_COMMAND_DESCRIPTION.contains("do not expose a second Scrapling CodeAct"));
+        assert!(!brain_general_codeact_templates()
+            .iter()
+            .any(|candidate| candidate.command == "/scrapling_mcp_"));
         assert!(template.slots.iter().any(|slot| slot.name == "urls" && slot.required));
         assert!(template.slots.iter().any(|slot| slot.name == "goal" && slot.required));
         assert!(template.slots.iter().any(|slot| {
@@ -3807,6 +3705,10 @@ mod tests {
         assert_eq!(template.result_schema, BRAIN_MAPS_RESULT_SCHEMA);
         assert_eq!(template.proof_hash.len(), 40);
         assert!(template.purpose.contains("Google Earth"));
+        assert!(template.purpose.contains("explicit map"));
+        assert!(template.purpose.contains("/websearch_ and then /scrapers_"));
+        assert!(BRAIN_CODEACT_ROUTING_RULES.contains("not a Maps request"));
+        assert!(BRAIN_MAPS_COMMAND_DESCRIPTION.contains("not enough"));
         assert!(template.purpose.contains("Device location must never be read silently"));
         assert!(template.slots.iter().any(|slot| {
             slot.name == "latitude" && slot.description.contains("WGS84")

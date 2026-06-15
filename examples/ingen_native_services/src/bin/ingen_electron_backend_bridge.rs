@@ -1000,8 +1000,6 @@ fn banger_maps_root_ingest_verifier() -> BangerMapsRootIngestVerifier {
     }
 }
 
-
-
 #[cfg(target_os = "windows")]
 fn run_banger_native_host(
     parent_window_handle: Option<&str>,
