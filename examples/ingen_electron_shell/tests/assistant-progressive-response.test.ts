@@ -8,6 +8,7 @@ const preloadSource = readFileSync(join(root, "src", "preload", "preload.ts"), "
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const ipcContractSource = readFileSync(join(root, "src", "shared", "ipc-contract.ts"), "utf8");
 const animationSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-action-loop.ts"), "utf8");
 const normalizedMainSource = mainSource.replace(/\r\n/g, "\n");
 
@@ -114,8 +115,18 @@ describe("assistant progressive response feed", () => {
 
   it("lets the composer stop an active assistant run", () => {
     expect(animationSource).toContain("snapshot.composer.assistantBusy");
-    expect(animationSource).toContain('activity = "thinking"');
-    expect(animationSource).toContain('activity="working"');
+    expect(animationSource).toContain('activityText = "is thinking"');
+    expect(animationSource).toContain("ASSISTANT_WORKING_STATUS_DELAY_MS");
+    expect(animationSource).toContain("ASSISTANT_WORKING_STATUS_EXIT_MS");
+    expect(animationSource).toContain("function AssistantWorkingStatus");
+    expect(animationSource).toContain("function agentWorkingStatusText");
+    expect(animationSource).toContain("latestTranscriptEvent(message.text)");
+    expect(animationSource).toContain("is running a confirmed shell command");
+    expect(animationSource).toContain("is inspecting files");
+    expect(animationSource).toContain("is applying a local action");
+    expect(stylesSource).toContain("assistantWorkingEvent--leaving");
+    expect(stylesSource).toContain("assistantWorkingStatusIn");
+    expect(stylesSource).toContain("assistantWorkingStatusOut");
     expect(animationSource).toContain("assistantWorking");
     expect(animationSource).toContain("assistantWorkingEvent");
     expect(animationSource).toContain("assistantStopActive");

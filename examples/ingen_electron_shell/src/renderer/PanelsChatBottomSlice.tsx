@@ -2744,6 +2744,54 @@ function activeAgentEventText(agentName: string, command: AgentActionEventComman
   return `${label} is applying a local action: ${agentActionEventText(command)}`;
 }
 
+function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
+  if (!event) {
+    return "is working";
+  }
+  if (isContextCompactionCommand(event.command)) {
+    return "is compressing context";
+  }
+  if (isBrainSegmentCommand(event.command)) {
+    return `is switching to ${brainSegmentName(event.command)}`;
+  }
+  if (!isAgentActionCommand(event.command)) {
+    return "is continuing the current step";
+  }
+  if (event.command === AGENT_LIST_COMMAND) {
+    return "is inspecting files";
+  }
+  if (event.command === AGENT_SEARCH_COMMAND) {
+    return "is searching the computer";
+  }
+  if (event.command === AGENT_READONLY_SHELL_COMMAND) {
+    return "is inspecting through the shell";
+  }
+  if (event.command === AGENT_SHELL_COMMAND) {
+    return "is running a confirmed shell command";
+  }
+  if (agentActionTone(event.command) === "destructive") {
+    return "is verifying a guarded local action";
+  }
+  if (agentActionTone(event.command) === "read") {
+    return "is checking local state";
+  }
+  return "is applying a local action";
+}
+
+function latestTranscriptEvent(text: string): TranscriptCodeActEvent | undefined {
+  const blocks = assistantMarkdownBlocks(text);
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.kind === "event") {
+      return block.event;
+    }
+    if (block.kind === "event_group") {
+      return block.events.at(-1);
+    }
+  }
+  return undefined;
+}
+
 interface AgentFileModificationSummary {
   fileName: string;
   path: string;
@@ -3223,9 +3271,8 @@ function AnimatedAssistantText({
   );
 }
 
-function PendingAssistantText({ agentName, activity = "thinking" }: { agentName: string; activity?: "thinking" | "working" }) {
+function PendingAssistantText({ agentName, activityText = "is thinking" }: { agentName: string; activityText?: string }) {
   const label = agentName.trim() || "Agent";
-  const activityText = activity === "working" ? "is working" : "is thinking";
   return (
     <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} ${activityText}`} role="status">
       <span className="sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox" aria-hidden="true">
@@ -3234,6 +3281,83 @@ function PendingAssistantText({ agentName, activity = "thinking" }: { agentName:
       <span className="assistantThinkingEvent__label">
         <strong>{label}</strong> {activityText}
       </span>
+    </div>
+  );
+}
+
+const ASSISTANT_WORKING_STATUS_DELAY_MS = 620;
+const ASSISTANT_WORKING_STATUS_EXIT_MS = 220;
+
+function AssistantWorkingStatus({
+  active,
+  activityKey,
+  activityText,
+  agentName
+}: {
+  active: boolean;
+  activityKey: string;
+  activityText: string;
+  agentName: string;
+}) {
+  const [phase, setPhase] = useState<"hidden" | "visible" | "leaving">("hidden");
+  const [renderedActivityText, setRenderedActivityText] = useState(activityText);
+  const phaseRef = useRef(phase);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  useEffect(() => {
+    let showTimer = 0;
+    let exitTimer = 0;
+    const reducedMotion = prefersReducedMotion();
+    const show = () => {
+      setRenderedActivityText(activityText);
+      setPhase("visible");
+    };
+
+    if (!active) {
+      if (phaseRef.current !== "hidden") {
+        setPhase(reducedMotion ? "hidden" : "leaving");
+        if (!reducedMotion) {
+          exitTimer = window.setTimeout(() => setPhase("hidden"), ASSISTANT_WORKING_STATUS_EXIT_MS);
+        }
+      }
+      return () => {
+        window.clearTimeout(showTimer);
+        window.clearTimeout(exitTimer);
+      };
+    }
+
+    if (reducedMotion) {
+      show();
+      return () => undefined;
+    }
+
+    if (phaseRef.current === "visible") {
+      setPhase("leaving");
+      exitTimer = window.setTimeout(() => {
+        setPhase("hidden");
+        showTimer = window.setTimeout(show, ASSISTANT_WORKING_STATUS_DELAY_MS);
+      }, ASSISTANT_WORKING_STATUS_EXIT_MS);
+    } else {
+      setPhase("hidden");
+      showTimer = window.setTimeout(show, ASSISTANT_WORKING_STATUS_DELAY_MS);
+    }
+
+    return () => {
+      window.clearTimeout(showTimer);
+      window.clearTimeout(exitTimer);
+    };
+  }, [active, activityKey, activityText]);
+
+  if (phase === "hidden") {
+    return null;
+  }
+
+  return (
+    <div className={`assistantWorkingEvent assistantWorkingEvent--${phase}`}>
+      <PendingAssistantText agentName={agentName} activityText={renderedActivityText} />
     </div>
   );
 }
@@ -3430,6 +3554,16 @@ function TranscriptCanvas({
             message.id === latestAssistantMessageId &&
             !assistantPending &&
             !message.id.startsWith("assistant-error-");
+          const assistantCanShowWorkingStatus =
+            role === "assistant" &&
+            message.id === latestAssistantMessageId &&
+            !assistantPending &&
+            !message.id.startsWith("assistant-error-");
+          const assistantWorkingEvent = assistantWorking ? latestTranscriptEvent(message.text) : undefined;
+          const assistantWorkingActivityText = assistantWorking ? agentWorkingStatusText(assistantWorkingEvent) : "is working";
+          const assistantWorkingActivityKey = assistantWorking
+            ? `${message.id}:${assistantWorkingEvent?.command ?? "prose"}:${message.text.length}`
+            : `${message.id}:idle`;
           const previousMessage = messages[index - 1];
           const followsVisualUserMessage =
             message.role !== "user" &&
@@ -3523,10 +3657,13 @@ function TranscriptCanvas({
                       <StaticAssistantText agentName={agentName} message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
                     )}
                   </div>
-                  {assistantWorking ? (
-                    <div className="assistantWorkingEvent">
-                      <PendingAssistantText agentName={agentName} activity="working" />
-                    </div>
+                  {assistantCanShowWorkingStatus ? (
+                    <AssistantWorkingStatus
+                      active={assistantWorking}
+                      activityKey={assistantWorkingActivityKey}
+                      activityText={assistantWorkingActivityText}
+                      agentName={agentName}
+                    />
                   ) : null}
                   {assistantAwaitingAnimation ? null : actions}
                 </div>
