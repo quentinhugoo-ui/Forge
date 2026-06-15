@@ -64,6 +64,11 @@ function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModul
   return null;
 }
 
+function assistantTextHasMapsSignal(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return normalized.includes("maps_result") || normalized.includes(BRAIN_MAPS_COMMAND);
+}
+
 interface CodingLivePreviewTarget {
   path: string;
   kind: "html" | "react" | "vite" | "unknown";
@@ -927,7 +932,7 @@ export function App() {
       return;
     }
     if (latestAssistant?.text.includes("AIRBNB_RESULT")) {
-      const keepMapsOpen = latestAssistant.text.includes("MAPS_RESULT") || latestAssistant.text.includes(BRAIN_MAPS_COMMAND);
+      const keepMapsOpen = assistantTextHasMapsSignal(latestAssistant.text);
       if (keepMapsOpen && !canvasMapsOpenRef.current) {
         openCanvasMaps(0);
       }
@@ -945,7 +950,7 @@ export function App() {
       openCanvasWebExplorer(0);
       return;
     }
-    if (latestAssistant?.text.includes("MAPS_RESULT")) {
+    if (latestAssistant && assistantTextHasMapsSignal(latestAssistant.text)) {
       openCanvasMaps(0);
     }
   }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview]);

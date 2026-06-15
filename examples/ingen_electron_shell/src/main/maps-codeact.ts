@@ -102,7 +102,8 @@ export function googleEarthUrl(latitude?: number, longitude?: number): string {
 
 function readMapsCommand(value: string): typeof MAPS_COMMAND | undefined {
   const trimmed = value.trim();
-  return trimmed === MAPS_COMMAND || trimmed.startsWith(`${MAPS_COMMAND} `) ? MAPS_COMMAND : undefined;
+  const lower = trimmed.toLowerCase();
+  return lower === MAPS_COMMAND || lower.startsWith(`${MAPS_COMMAND} `) ? MAPS_COMMAND : undefined;
 }
 
 function readCoordinate(value: unknown, min: number, max: number): number | undefined {

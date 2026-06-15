@@ -31,6 +31,13 @@ describe("Maps CodeAct", () => {
     expect(request?.url).toContain("https://earth.google.com/web/@48.85660000,2.35220000,0a");
   });
 
+  it("accepts assistant Maps command casing", () => {
+    const request = parseMapsCodeAct('/Maps_ target="Yakushima"');
+
+    expect(request?.command).toBe(MAPS_COMMAND);
+    expect(request?.target).toBe("Yakushima");
+  });
+
   it("can rebuild a bare Maps request around Brain home-city coordinates", () => {
     const request = createMapsCodeActRequest({
       command: MAPS_COMMAND,
