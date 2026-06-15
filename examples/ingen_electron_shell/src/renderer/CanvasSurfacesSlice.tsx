@@ -7,7 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { BangerPresentLoopBootstrapResult, BangerPreviewFrameResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
+import type { BangerGoogleTilesConfigResult, BangerPresentLoopBootstrapResult, BangerPreviewFrameResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
@@ -46,7 +46,32 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   const lastBoundsRef = useRef("");
   const [status, setStatus] = useState("Banger sphere viewport pending");
   const [frameDataUrl, setFrameDataUrl] = useState("");
+  const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
   const label = searchQuery?.replace(/\s+/g, " ").trim() || "Map";
+
+  useEffect(() => {
+    const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig as
+      | (() => Promise<BangerGoogleTilesConfigResult>)
+      | undefined;
+    if (!getTilesConfig) {
+      return undefined;
+    }
+    let active = true;
+    void getTilesConfig()
+      .then((result) => {
+        if (active) {
+          setTilesConfig(result);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setTilesConfig(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const getPreview = globalThis.window?.forgeShell?.getBangerPreviewFrame as
@@ -161,8 +186,25 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
     };
   }, []);
 
+  const tilesetEndpoint = redactedTilesetEndpoint(tilesConfig?.rootTilesetUrl);
+  const georeference = tilesConfig
+    ? `${tilesConfig.georeference.ellipsoid}:${tilesConfig.georeference.originLatitude.toFixed(5)}:${tilesConfig.georeference.originLongitude.toFixed(5)}`
+    : "WGS84:pending";
+
   return (
-    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label={`${label} - ${status}`}>
+    <div
+      ref={slotRef}
+      className="googleEarthDomFrame bangerSphereNativeFrame"
+      aria-label={`${label} - ${status}`}
+      data-tileset-schema={tilesConfig?.schema ?? "forge.banger.google_photorealistic_tiles_config.v1"}
+      data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
+      data-tileset-renderer-model={tilesConfig?.rendererModel ?? "cesium_for_unreal_style_3d_tileset"}
+      data-tileset-endpoint={tilesetEndpoint}
+      data-tileset-georeference={georeference}
+      data-tileset-lod={tilesConfig ? `${tilesConfig.lod.policy}:${tilesConfig.lod.maxScreenSpaceError}` : "screen_space_error:pending"}
+      data-tileset-attribution={tilesConfig?.attribution.mode ?? "visible_on_screen"}
+      data-tileset-cache={tilesConfig?.cache.authority ?? "banger_tileset_residency_cache"}
+    >
       {frameDataUrl ? (
         <img className="bangerSphereNativeFrame__preview" src={frameDataUrl} alt="" draggable={false} />
       ) : (
@@ -172,6 +214,21 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
       )}
     </div>
   );
+}
+
+function redactedTilesetEndpoint(value?: string): string {
+  if (!value) {
+    return "pending";
+  }
+  try {
+    const url = new URL(value);
+    if (url.searchParams.has("key")) {
+      url.search = "?key=redacted";
+    }
+    return url.toString();
+  } catch {
+    return "configured";
+  }
 }
 
 interface CanvasSessionFilesTab {

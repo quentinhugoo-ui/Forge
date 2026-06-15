@@ -114,6 +114,17 @@ export interface RustBangerPresentLoopBootstrap {
   sceneMeshHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
+  mapsTilesetContract?: {
+    schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1";
+    provider: "google_photorealistic_3d_tiles";
+    rendererContract: "Cesium3DTileset_style_native_streamer";
+    rootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
+    rootRequestTtlHours: 3;
+    attribution: {
+      required: true;
+      mode: "visible_on_screen";
+    };
+  } | null;
   previewWidth?: number;
   previewHeight?: number;
   previewByteCount?: number;
@@ -740,6 +751,7 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     sceneMeshHash: "",
     shaderSourceHash: "",
     renderPipelineHash: "",
+    mapsTilesetContract: null,
     frameHash: "",
     presentLoopHash: "",
     proofHash: "",

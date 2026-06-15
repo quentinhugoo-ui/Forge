@@ -136,6 +136,7 @@ struct BangerNativeHostProjection {
     scene_mesh_hash: String,
     shader_source_hash: String,
     render_pipeline_hash: String,
+    maps_tileset_contract: Option<BangerMapsTilesetContract>,
     frame_hash: String,
     present_loop_hash: String,
     proof_hash: String,
@@ -150,6 +151,109 @@ struct BangerNativeHostVerifier {
     frontier_hypothesis: &'static str,
     local_gate: &'static str,
     rollback_path: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsTilesetContract {
+    schema: &'static str,
+    provider: &'static str,
+    renderer_contract: &'static str,
+    root_tileset_endpoint: &'static str,
+    root_request_ttl_hours: u32,
+    georeference: BangerMapsGeoreference,
+    traversal: BangerMapsTraversalPolicy,
+    cache: BangerMapsResidencyCache,
+    attribution: BangerMapsAttributionPolicy,
+    credential_policy: &'static str,
+    interop_floor: BangerMapsInteropFloor,
+    contract_hash: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsGeoreference {
+    ellipsoid: &'static str,
+    origin_latitude: f64,
+    origin_longitude: f64,
+    origin_height_meters: f32,
+    world_origin_policy: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsTraversalPolicy {
+    lod_policy: &'static str,
+    max_screen_space_error: f32,
+    skip_level_of_detail: bool,
+    max_simultaneous_tile_loads: u32,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsResidencyCache {
+    authority: &'static str,
+    max_resident_tile_bytes: u64,
+    session_cache_key_policy: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsAttributionPolicy {
+    required: bool,
+    mode: &'static str,
+    policy: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsInteropFloor {
+    cesium_for_unreal: &'static str,
+    cesium_js: &'static str,
+    tileset: &'static str,
+}
+
+impl BangerMapsTilesetContract {
+    fn google_photorealistic_default() -> Self {
+        let contract_seed = "forge.banger.maps_photorealistic_3d_tiles_contract.v1:google_photorealistic_3d_tiles:Cesium3DTileset_style_native_streamer:WGS84";
+        Self {
+            schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1",
+            provider: "google_photorealistic_3d_tiles",
+            renderer_contract: "Cesium3DTileset_style_native_streamer",
+            root_tileset_endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
+            root_request_ttl_hours: 3,
+            georeference: BangerMapsGeoreference {
+                ellipsoid: "WGS84",
+                origin_latitude: 37.42207,
+                origin_longitude: -122.08409,
+                origin_height_meters: 0.0,
+                world_origin_policy: "CesiumGeoreference_style_floating_origin",
+            },
+            traversal: BangerMapsTraversalPolicy {
+                lod_policy: "screen_space_error",
+                max_screen_space_error: 16.0,
+                skip_level_of_detail: true,
+                max_simultaneous_tile_loads: 18,
+            },
+            cache: BangerMapsResidencyCache {
+                authority: "banger_tileset_residency_cache",
+                max_resident_tile_bytes: 512 * 1024 * 1024,
+                session_cache_key_policy: "root_session_hash_plus_tile_uri_without_api_key",
+            },
+            attribution: BangerMapsAttributionPolicy {
+                required: true,
+                mode: "visible_on_screen",
+                policy: "google_maps_platform_terms",
+            },
+            credential_policy: "api_key_redacted_from_logs_proofs_and_renderer_state",
+            interop_floor: BangerMapsInteropFloor {
+                cesium_for_unreal: "1.12+",
+                cesium_js: "1.91+",
+                tileset: "OGC_3D_Tiles",
+            },
+            contract_hash: sha256_hex(contract_seed.as_bytes()),
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -676,6 +780,11 @@ fn run_banger_native_host(
         scene_mesh_hash: scene_pipeline.scene_mesh_hash.clone(),
         shader_source_hash: scene_pipeline.shader_source_hash.clone(),
         render_pipeline_hash: scene_pipeline.render_pipeline_hash.clone(),
+        maps_tileset_contract: if scene_kind == "maps_sphere" {
+            Some(BangerMapsTilesetContract::google_photorealistic_default())
+        } else {
+            None
+        },
         frame_hash,
         present_loop_hash,
         proof_hash: String::new(),

@@ -7,6 +7,9 @@ import {
 export const MAPS_COMMAND = BRAIN_MAPS_COMMAND;
 export const MAPS_RESULT_SCHEMA = BRAIN_MAPS_RESULT_SCHEMA;
 export const MAPS_DEFAULT_TARGET = "default_google_earth_view";
+export const BANGER_MAPS_ROUTE = "banger://maps-sphere";
+export const BANGER_MAPS_TILESET_PROVIDER = "google_photorealistic_3d_tiles";
+export const BANGER_MAPS_RENDERER_CONTRACT = "forge.banger.google_photorealistic_tiles_config.v1";
 export const GOOGLE_EARTH_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 
@@ -71,7 +74,10 @@ export function renderMapsCodeActResult(request: MapsCodeActRequest): string {
     `target=${JSON.stringify(request.target)}`,
     `latitude=${request.latitude ?? ""}`,
     `longitude=${request.longitude ?? ""}`,
-    `url=${JSON.stringify(request.url)}`,
+    `route=${JSON.stringify(BANGER_MAPS_ROUTE)}`,
+    `visual_target=banger_native_maps_sphere`,
+    `tileset_provider=${BANGER_MAPS_TILESET_PROVIDER}`,
+    `renderer_contract=${BANGER_MAPS_RENDERER_CONTRACT}`,
     `source=${request.source}`,
     `proof_hash=sha256:${request.proofHash}`
   ].join("\n");

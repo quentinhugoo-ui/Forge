@@ -16893,9 +16893,39 @@ function installIpc(): void {
     const base = {
       schema,
       source: "render-resolver-proxy" as const,
+      provider: "google_photorealistic_3d_tiles" as const,
+      rendererModel: "cesium_for_unreal_style_3d_tileset" as const,
       rootTilesetUrl: "",
+      directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json" as const,
       requestBudget: 18,
+      rootRequestTtlHours: 3 as const,
       showCreditsOnScreen: true as const,
+      attribution: {
+        required: true as const,
+        mode: "visible_on_screen" as const,
+        policy: "google_maps_platform_terms" as const
+      },
+      georeference: {
+        ellipsoid: "WGS84" as const,
+        originLatitude: initialView.latitude,
+        originLongitude: initialView.longitude,
+        originHeightMeters: 0
+      },
+      lod: {
+        policy: "screen_space_error" as const,
+        maxScreenSpaceError: 16,
+        skipLevelOfDetail: true,
+        maxSimultaneousTileLoads: 18
+      },
+      cache: {
+        authority: "banger_tileset_residency_cache" as const,
+        maxResidentTileBytes: 512 * 1024 * 1024
+      },
+      interopFloor: {
+        cesiumForUnreal: "1.12+" as const,
+        cesiumJs: "1.91+" as const,
+        tileset: "OGC_3D_Tiles" as const
+      },
       initialView
     };
     if (!validateSender(event)) {
@@ -16927,9 +16957,15 @@ function installIpc(): void {
         proofHash: hashJson({
           schema,
           accepted: true,
+          provider: result.provider,
+          rendererModel: result.rendererModel,
           source: result.source,
-          endpoint: result.rootTilesetUrl,
+          endpoint: result.directRootTilesetEndpoint,
+          transportEndpoint: result.rootTilesetUrl,
           requestBudget: result.requestBudget,
+          lod: result.lod,
+          georeference: result.georeference,
+          attribution: result.attribution,
           initialView
         })
       };
@@ -16961,6 +16997,9 @@ function installIpc(): void {
         endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
         keyFingerprint: hashJson(apiKey).slice(0, 16),
         requestBudget: result.requestBudget,
+        lod: result.lod,
+        georeference: result.georeference,
+        attribution: result.attribution,
         initialView
       })
     };

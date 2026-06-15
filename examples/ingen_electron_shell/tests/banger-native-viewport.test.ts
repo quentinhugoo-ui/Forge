@@ -6,6 +6,7 @@ const appSource = readFileSync("src/renderer/App.tsx", "utf8");
 const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
+const mainSource = readFileSync("src/main/main.ts", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
@@ -75,11 +76,23 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("BangerNativeFrameTarget");
     expect(nativeBridgeSource).toContain("create_banger_frame_target");
     expect(nativeBridgeSource).toContain("persistent_resize_tracked_depth_target_v1");
+    expect(nativeBridgeSource).toContain("forge.banger.maps_photorealistic_3d_tiles_contract.v1");
+    expect(nativeBridgeSource).toContain("google_photorealistic_3d_tiles");
+    expect(nativeBridgeSource).toContain("Cesium3DTileset_style_native_streamer");
+    expect(nativeBridgeSource).toContain("CesiumGeoreference_style_floating_origin");
+    expect(nativeBridgeSource).toContain("screen_space_error");
+    expect(nativeBridgeSource).toContain("visible_on_screen");
   });
 
   it("paints the Maps sphere from the Banger preview frame returned by IPC", () => {
     expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
     expect(canvasSurfacesSource).toContain("getBangerPreviewFrame");
+    expect(canvasSurfacesSource).toContain("getBangerGoogleTilesConfig");
+    expect(canvasSurfacesSource).toContain("data-tileset-provider");
+    expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
+    expect(canvasSurfacesSource).toContain("data-tileset-georeference");
+    expect(canvasSurfacesSource).toContain("data-tileset-lod");
+    expect(canvasSurfacesSource).toContain("redactedTilesetEndpoint");
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
@@ -118,6 +131,13 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain(".shell--maps-canvas-open .transcriptTextFrame");
     expect(stylesSource).toContain("var(--transcript-media-avoidance-width)");
     expect(stylesSource).toContain("object-fit: cover");
+    expect(mainSource).toContain("provider: \"google_photorealistic_3d_tiles\"");
+    expect(mainSource).toContain("rendererModel: \"cesium_for_unreal_style_3d_tileset\"");
+    expect(mainSource).toContain("directRootTilesetEndpoint: \"https://tile.googleapis.com/v1/3dtiles/root.json\"");
+    expect(mainSource).toContain("rootRequestTtlHours: 3");
+    expect(mainSource).toContain("showCreditsOnScreen: true");
+    expect(mainSource).toContain("policy: \"screen_space_error\"");
+    expect(mainSource).toContain("authority: \"banger_tileset_residency_cache\"");
   });
 
   it("rebuilds stale Electron renderer assets before reusing the desktop fast path", () => {
