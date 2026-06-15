@@ -179,6 +179,9 @@ describe("assistant learning interrupts", () => {
     expect(manifest).toContain("BRAIN_DURABLE_MEMORY_MANIFEST v1");
     expect(manifest).toContain("injection_policy=session_boot_and_after_context_compaction");
     expect(manifest).toContain("specialized_brain_policy=The root catalog is read-only");
+    expect(manifest).toContain("newbrain_template_example=/newbrain_");
+    expect(manifest).toContain('brain_name="marketing"');
+    expect(manifest).toContain('token_budget="1200"');
     expect(manifest).toContain("specialized_brain[1]");
     expect(manifest).toContain("active_specialized_brain");
     expect(manifest).toContain('name="musician"');

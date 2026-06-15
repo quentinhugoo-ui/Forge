@@ -759,6 +759,7 @@ export function brainDurableMemoryManifestFromEntries(
     "source=brain_page_learning_memory",
     "injection_policy=session_boot_and_after_context_compaction",
     "specialized_brain_policy=The root catalog is read-only. Use /newbrain_ to create a named specialized Brain, /<name>brain_ to activate it, and /modify\"<name>\"brain_ to append explicit lessons, skills, tasks, or CodeAct drafts to that named Brain only.",
+    "newbrain_template_example=/newbrain_ brain_name=\"marketing\" title=\"Marketing Brain\" purpose=\"Store durable campaign strategy lessons, anti-patterns, reusable workflows and marketing CodeAct drafts.\" activation_triggers=\"campaign strategy, copywriting, funnel iteration\" initial_lessons=\"over-broad audience targeting -> define one concrete ICP before writing copy\" initial_rules=\"identify offer, audience, channel and metric before campaign ideas\" initial_skills=\"turn failed campaign notes into improved brief\" initial_tasks=\"review campaign learnings before next launch\" initial_codeacts=\"/campaign_brief_ offer=\\\"...\\\" audience=\\\"...\\\" channel=\\\"...\\\"\" token_budget=\"1200\"",
     "research_policy=Research branches are live work only; do not persist research unless it is later promoted into lessons, skills, tasks, or CodeAct drafts.",
     `learning_entries=${validLearningEntries.length}`,
     `codeact_drafts=${validCodeActs.length}`,
