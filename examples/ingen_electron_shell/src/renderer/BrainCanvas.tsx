@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_CODEDOCS_COMMAND,
@@ -778,14 +778,28 @@ function BrainLearningRegistry() {
   const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
   const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("lesson");
   const [draft, setDraft] = useState("");
+  const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const category = BRAIN_LEARNING_MEMORY_CATEGORIES.find((item) => item.id === activeCategory) ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY;
   const categoryEntries = entries.filter((entry) => entry.category === activeCategory);
+
+  const syncDraftTextareaHeight = () => {
+    const textarea = draftTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 62)}px`;
+  };
 
   useEffect(() => {
     const syncEntries = () => setEntries(readBrainLearningMemoryEntries());
     window.addEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncEntries);
     return () => window.removeEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncEntries);
   }, []);
+
+  useLayoutEffect(() => {
+    syncDraftTextareaHeight();
+  }, [activeCategory, draft]);
 
   const addEntry = () => {
     const next = appendBrainLearningMemoryEntry({
@@ -832,12 +846,16 @@ function BrainLearningRegistry() {
       <div className="brainLearningRegistry__composer">
         <span className="brainLearningRegistry__composerLabel">{category.title}</span>
         <textarea
+          ref={draftTextareaRef}
           value={draft}
           aria-label={category.title}
           placeholder={category.placeholder}
           rows={3}
           spellCheck={false}
-          onChange={(event) => setDraft(event.currentTarget.value)}
+          onChange={(event) => {
+            setDraft(event.currentTarget.value);
+            window.requestAnimationFrame(syncDraftTextareaHeight);
+          }}
         />
         <div className="brainLearningRegistry__actions">
           <button type="button" disabled={!draft.trim()} onClick={addEntry}>

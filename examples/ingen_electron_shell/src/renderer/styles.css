@@ -10037,10 +10037,13 @@ ol.assistantText__list li::before {
 }
 
 .brainLearningRegistry__composer textarea {
+  height: 62px;
   min-height: 62px;
   padding: 0;
   border: 0;
+  overflow: hidden;
   resize: none;
+  transition: height 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .brainLearningRegistry__composer textarea::placeholder {
@@ -11067,8 +11070,10 @@ ol.assistantText__list li::before {
   .brainActivators .brainRow code,
   .brainMemoryIdentity__label .brainGlyph,
   .brainMemoryIdentityField__edit,
-  .brainMemoryIdentityField__input {
+  .brainMemoryIdentityField__input,
+  .brainLearningRegistry__composer textarea {
     animation: none;
+    transition: none;
   }
 }
 
