@@ -4285,21 +4285,22 @@ function WidgetTranscriptPanel({
       ].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
     >
+      <button
+        type="button"
+        className="widgetTranscriptPanel__topTab"
+        aria-label="Reduire le panneau de conversation"
+        aria-expanded="true"
+        title="Reduire"
+        onClick={onReduce}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
         <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
           {sessionLabel}
         </strong>
-        <button
-          type="button"
-          className="widgetTranscriptPanel__reduce"
-          aria-label="Réduire le panneau de conversation"
-          title="Réduire"
-          onClick={onReduce}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-            <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
       </div>
       <div className="widgetTranscriptPanel__body">
         <TranscriptCanvas
@@ -4324,6 +4325,7 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
       type="button"
       className="widgetTranscriptTab"
       aria-label={`Agrandir la conversation : ${label}`}
+      aria-expanded="false"
       title={label}
       onClick={onOpen}
     >
