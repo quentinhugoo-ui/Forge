@@ -866,20 +866,18 @@ button {
 .widgetSystemTray {
   position: fixed;
   right: 14px;
-  bottom: calc(var(--bottom-controls-bottom) - 4px);
+  bottom: calc(var(--bottom-controls-bottom) - 3px);
   z-index: 45;
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 32px;
-  padding: 3px 6px;
-  color: var(--forge-chat-text);
-  background: var(--forge-chat-bg);
-  border: 0;
-  border-radius: 6px !important;
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  gap: 3px;
+  height: 30px;
+  padding: 0 5px;
+  color: color-mix(in oklab, #ffffff, transparent 10%);
+  background: color-mix(in oklab, #0a0a0c, transparent 24%);
+  border: 1px solid color-mix(in oklab, #ffffff, transparent 90%);
+  border-radius: 9px !important;
+  backdrop-filter: blur(10px);
   pointer-events: auto;
   font: 11px/1.1 "Geist", system-ui, sans-serif;
   animation: widgetSystemTrayIn 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -904,13 +902,13 @@ button {
   background: transparent;
   border: 0;
   border-radius: 6px !important;
-  cursor: pointer;
+  cursor: default;
   transition: background 120ms ease-out, transform 120ms ease-out;
 }
 
 .widgetSystemTray button:hover,
 .widgetSystemTray button:focus-visible {
-  background: color-mix(in oklab, var(--forge-chat-text), transparent 91%);
+  background: color-mix(in oklab, #ffffff, transparent 86%);
   outline: 0;
 }
 
@@ -921,8 +919,8 @@ button {
 .widgetSystemTray__icon {
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 26px;
+  width: 26px;
+  height: 24px;
 }
 
 .widgetSystemTray__icon svg {
@@ -935,7 +933,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  height: 26px;
+  height: 24px;
   padding: 0 5px;
 }
 
@@ -947,48 +945,35 @@ button {
 
 .widgetSystemTray__batteryPct {
   font-size: 9.5px;
-  opacity: 0.86;
+  opacity: 0.82;
   font-variant-numeric: tabular-nums;
 }
 
 .widgetSystemTray__clock {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   justify-content: center;
-  min-width: 58px;
+  width: auto;
   height: 26px;
-  margin-left: 7px;
-  padding: 1px 3px 1px 10px;
+  margin-left: 3px;
+  padding: 0 4px 0 9px;
   text-align: right;
   line-height: 1.05;
   white-space: nowrap;
 }
 
-.widgetSystemTray__clock::before {
-  content: "";
-  position: absolute;
-  left: 1px;
-  top: 5px;
-  bottom: 5px;
-  width: 1px;
-  background: color-mix(in oklab, var(--forge-chat-text), transparent 88%);
-}
-
 .widgetSystemTray__time {
-  font-size: 11.5px;
-  font-weight: 650;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
 }
 
 .widgetSystemTray__date {
-  margin-top: 1px;
-  font-size: 9.5px;
-  opacity: 0.78;
+  font-size: 9px;
+  opacity: 0.74;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
 }
 
 .navIconButton {
@@ -8913,9 +8898,25 @@ ol.assistantText__list li::before {
   z-index: 2;
   width: var(--transcript-media-width);
   height: var(--transcript-media-flow-height);
-  overflow: hidden;
-  filter: drop-shadow(0 24px 76px rgba(0, 0, 0, 0.42));
+  overflow: visible;
+  filter: none;
   pointer-events: none;
+}
+
+.mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
+  inset: 50% auto auto 50%;
+  width: min(58vw, 72vh, 760px);
+  height: min(58vw, 72vh, 760px);
+  overflow: visible;
+  transform: translate3d(-50%, -50%, 0);
+}
+
+.mapsCanvasGrid--earthActive .bangerSphereNativeFrame__preview {
+  object-fit: contain;
+}
+
+.mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallback {
+  overflow: visible;
 }
 
 .canvasSurfaces--mapsClosing .mapsCanvasGrid--earthActive .mapsCanvasPane {
@@ -8928,7 +8929,7 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 560px);
+  width: min(100%, 760px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
