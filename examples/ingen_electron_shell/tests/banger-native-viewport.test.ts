@@ -28,14 +28,18 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).not.toContain("native raster frame loading");
   });
 
-  it("does not mount a browser WebGL globe inside the Banger surface", () => {
+  it("keeps the Banger page native while allowing Cesium only in the Maps viewer", () => {
     expect(routerSource).not.toContain('from "cesium"');
     expect(routerSource).not.toContain('import("cesium")');
     expect(routerSource).not.toContain("new Cesium.Viewer");
     expect(routerSource).not.toContain("getBangerGoogleTilesConfig");
-    expect(routerSource).not.toContain("bangerCesiumViewport");
-    expect(stylesSource).not.toContain("bangerCesiumViewport");
-    expect(stylesSource).not.toContain("cesium-widget");
+    expect(canvasSurfacesSource).toContain('import("cesium")');
+    expect(canvasSurfacesSource).toContain("new Cesium.Viewer");
+    expect(canvasSurfacesSource).toContain("Cesium.Cesium3DTileset.fromUrl");
+    expect(canvasSurfacesSource).toContain("showCreditsOnScreen");
+    expect(canvasSurfacesSource).toContain("Banger Maps Cesium tileset failed; falling back to native sphere.");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport .cesium-widget-credits");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
     expect(stylesSource).toContain("content: none");
@@ -84,10 +88,13 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("visible_on_screen");
   });
 
-  it("paints the Maps sphere from the Banger preview frame returned by IPC", () => {
+  it("paints Maps from Cesium Google tiles first and falls back to the Banger preview frame", () => {
     expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
     expect(canvasSurfacesSource).toContain("getBangerPreviewFrame");
     expect(canvasSurfacesSource).toContain("getBangerGoogleTilesConfig");
+    expect(canvasSurfacesSource).toContain("BangerMapsCesiumViewport");
+    expect(canvasSurfacesSource).toContain("Cesium photorealistic tiles bootstrap");
+    expect(canvasSurfacesSource).toContain("Cesium Google photorealistic 3D Tiles live");
     expect(canvasSurfacesSource).toContain("data-tileset-provider");
     expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
     expect(canvasSurfacesSource).toContain("data-tileset-georeference");
@@ -96,6 +103,8 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
+    expect(canvasSurfacesSource).toContain("target?.latitude");
+    expect(canvasSurfacesSource).toContain("target?.longitude");
     expect(canvasSurfacesSource).toContain('aria-label={`${label} - ${status}`}');
     expect(canvasSurfacesSource).not.toContain('<span className="webExplorerNativeStatus">{label} - {status}</span>');
     expect(stylesSource).toContain(".bangerSphereNativeFrame__preview");
@@ -123,6 +132,10 @@ describe("Banger native viewport contract", () => {
     expect(appSource).toContain("canvasMapsClosing");
     expect(appSource).toContain("canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing");
     expect(appSource).toContain("closeCanvasMaps();");
+    expect(appSource).toContain("mapsViewportTarget");
+    expect(appSource).toContain("setMapsViewportTarget");
+    expect(appSource).toContain("latitude: typeof event.latitude === \"number\" ? event.latitude : undefined");
+    expect(appSource).toContain("mapsTarget={mapsViewportTarget}");
     expect(canvasSurfacesSource).toContain('mapsClosing ? "canvasSurfaces--mapsClosing" : ""');
     expect(stylesSource).toContain(".navIconButton--selected .shellIcon--nav-web");
     expect(stylesSource).toContain(".canvasSurfaces--mapsClosing .mapsCanvasGrid--earthActive .mapsCanvasPane");
