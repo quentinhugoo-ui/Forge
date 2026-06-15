@@ -4850,7 +4850,7 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     !widgetTranscriptCollapsed &&
     !composerQuestionnaire;
-  const widgetPanelExpanded = widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen);
+  const widgetPanelExpanded = widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen || permissionMenuOpen);
   useEffect(() => {
     const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
     if (!setWidgetPanelExpanded) {
