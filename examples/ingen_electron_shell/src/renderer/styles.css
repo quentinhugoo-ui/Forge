@@ -72,8 +72,8 @@ button {
   --transcript-bottom-breathing-room: 48px;
   --sidebar-motion: 340ms cubic-bezier(0.22, 1, 0.36, 1);
   --widget-side-exit-motion: 420ms cubic-bezier(0.22, 1, 0.36, 1);
-  --widget-header-exit-motion: 360ms cubic-bezier(0.22, 1, 0.36, 1);
-  --widget-canvas-exit-motion: 860ms cubic-bezier(0.22, 1, 0.36, 1);
+  --widget-header-exit-motion: 620ms cubic-bezier(0.32, 0, 0.16, 1);
+  --widget-canvas-exit-motion: 1080ms cubic-bezier(0.32, 0, 0.16, 1);
   width: 100vw;
   height: 100vh;
   background: var(--forge-bg);
@@ -11134,6 +11134,7 @@ ol.assistantText__list li::before {
 .shell--widget-mode .titlebar,
 .shell--widget-minimizing-header .workspaceHeader,
 .shell--widget-mode .workspaceHeader {
+  opacity: 0;
   transform: translate3d(0, calc(-100% - 72px), 0);
 }
 
@@ -11172,6 +11173,7 @@ ol.assistantText__list li::before {
 .shell--widget-mode .sidebarLedger,
 .shell--widget-canvas-hidden .shadowLedger,
 .shell--widget-mode .shadowLedger {
+  opacity: 0;
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 

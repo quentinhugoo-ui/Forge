@@ -11086,6 +11086,9 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.show();
   window.focus();
   animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
+  if (!widgetTaskbarHidden) {
+    armNativeWidgetTaskbarAutoHide(window);
+  }
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
@@ -12158,7 +12161,6 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     resetNativeWidgetClickThrough(window);
     resetNativeWidgetWindowShape(window);
     saveWidgetWindowRestoreState(window);
-    armNativeWidgetTaskbarAutoHide(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
     window.setAlwaysOnTop(true, "floating");
     const requestedDelay = typeof delayMs === "number" && Number.isFinite(delayMs) ? delayMs : WIDGET_WINDOW_SHRINK_DELAY_MS;
