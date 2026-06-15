@@ -114,6 +114,10 @@ describe("assistant progressive response feed", () => {
 
   it("lets the composer stop an active assistant run", () => {
     expect(animationSource).toContain("snapshot.composer.assistantBusy");
+    expect(animationSource).toContain('activity = "thinking"');
+    expect(animationSource).toContain('activity="working"');
+    expect(animationSource).toContain("assistantWorking");
+    expect(animationSource).toContain("assistantWorkingEvent");
     expect(animationSource).toContain("assistantStopActive");
     expect(animationSource).toContain('kind: "stop_assistant"');
     expect(animationSource).toContain("Stop assistant");

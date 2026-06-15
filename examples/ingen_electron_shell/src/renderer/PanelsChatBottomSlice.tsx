@@ -3191,15 +3191,16 @@ function AnimatedAssistantText({
   );
 }
 
-function PendingAssistantText({ agentName }: { agentName: string }) {
+function PendingAssistantText({ agentName, activity = "thinking" }: { agentName: string; activity?: "thinking" | "working" }) {
   const label = agentName.trim() || "Agent";
+  const activityText = activity === "working" ? "is working" : "is thinking";
   return (
-    <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} is thinking`} role="status">
+    <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} ${activityText}`} role="status">
       <span className="sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox" aria-hidden="true">
         <span className="loader" />
       </span>
       <span className="assistantThinkingEvent__label">
-        <strong>{label}</strong> is thinking
+        <strong>{label}</strong> {activityText}
       </span>
     </div>
   );
@@ -3229,6 +3230,7 @@ function TranscriptCanvas({
   agentName,
   parallelSessionIndex = 0,
   className = "chatCanvas",
+  assistantBusy = false,
   onEditImage,
   onUseMathInCompute
 }: {
@@ -3237,6 +3239,7 @@ function TranscriptCanvas({
   agentName: string;
   parallelSessionIndex?: number;
   className?: string;
+  assistantBusy?: boolean;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
 }) {
@@ -3389,6 +3392,12 @@ function TranscriptCanvas({
           if (!assistantPending && !message.text.trim() && attachments.length === 0) {
             return null;
           }
+          const assistantWorking =
+            assistantBusy &&
+            role === "assistant" &&
+            message.id === latestAssistantMessageId &&
+            !assistantPending &&
+            !message.id.startsWith("assistant-error-");
           const previousMessage = messages[index - 1];
           const followsVisualUserMessage =
             message.role !== "user" &&
@@ -3482,6 +3491,11 @@ function TranscriptCanvas({
                       <StaticAssistantText agentName={agentName} message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
                     )}
                   </div>
+                  {assistantWorking ? (
+                    <div className="assistantWorkingEvent">
+                      <PendingAssistantText agentName={agentName} activity="working" />
+                    </div>
+                  ) : null}
                   {assistantAwaitingAnimation ? null : actions}
                 </div>
               ) : (
@@ -4322,6 +4336,7 @@ export function PanelsChatBottomSlice({
                   agentName={brainAgentName}
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
+                  assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}
                   key={`parallel-transcript-${index}`}
                   onEditImage={stageImageForEdit}
                   onUseMathInCompute={useMathInCompute}
@@ -4336,6 +4351,7 @@ export function PanelsChatBottomSlice({
             messages={canvasMessages}
             agentName={brainAgentName}
             parallelSessionIndex={0}
+            assistantBusy={Boolean(snapshot.composer.assistantBusy)}
             onEditImage={stageImageForEdit}
             onUseMathInCompute={useMathInCompute}
           />

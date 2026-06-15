@@ -5503,6 +5503,16 @@ button {
   padding: 0 0 0 2px;
 }
 
+.assistantWorkingEvent {
+  display: inline-flex;
+  margin: 3px 0 0 2px;
+  opacity: 0.9;
+}
+
+.assistantWorkingEvent .assistantThinkingEvent {
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 14%);
+}
+
 .assistantText--pending .loader {
   background: linear-gradient(#0000 calc(1*100%/6), currentColor 0 calc(3*100%/6), #0000 0),
             linear-gradient(#0000 calc(2*100%/6), currentColor 0 calc(4*100%/6), #0000 0),
