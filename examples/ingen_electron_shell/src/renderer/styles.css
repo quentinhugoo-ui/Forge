@@ -8243,6 +8243,7 @@ ol.assistantText__list li::before {
 }
 
 .canvasSurfaces--webExplorerOpen,
+.canvasSurfaces--mapsOpen,
 .canvasSurfaces--codingLivePreviewOpen {
   top: 96px;
   right: 0;
@@ -8423,7 +8424,8 @@ ol.assistantText__list li::before {
   overflow-wrap: anywhere;
 }
 
-.canvasSurfaces--webExplorerOpen .parallelCanvasGrid {
+.canvasSurfaces--webExplorerOpen .parallelCanvasGrid,
+.canvasSurfaces--mapsOpen .parallelCanvasGrid {
   animation: none;
 }
 

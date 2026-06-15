@@ -45,7 +45,7 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   const slotRef = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef("");
   const [status, setStatus] = useState("Banger sphere viewport pending");
-  const label = searchQuery?.replace(/\s+/g, " ").trim() || "Maps sphere";
+  const label = searchQuery?.replace(/\s+/g, " ").trim() || "Map";
 
   useLayoutEffect(() => {
     const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
@@ -131,9 +131,9 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   }, []);
 
   return (
-    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label="Banger 3D sphere viewport">
+    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label="Map 3D sphere viewport">
       <div className="nativeViewportSlot__empty" aria-hidden="true" />
-      <span className="webExplorerNativeStatus">{label} · {status}</span>
+      <span className="webExplorerNativeStatus">{label} - {status}</span>
     </div>
   );
 }
@@ -271,9 +271,9 @@ function NativeBrowserPager({
       <button
         type="button"
         className={activePage === "maps" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
-        aria-label="Open Google Earth page"
+        aria-label="Open Map page"
         aria-pressed={activePage === "maps"}
-        title="Google Earth"
+        title="Map"
         onClick={() => onPageChange("maps")}
       >
         <GoogleEarthIcon />
@@ -1001,7 +1001,7 @@ export function CanvasSurfacesSlice({
     filesOpen ? "canvasSurfaces--filesOpen" : "",
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
     parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen || codingLivePreviewOpen ? "canvasSurfaces--parallelOpen" : "",
-    activeNativeBrowserSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
+    activeWebExplorerSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
     codingLivePreviewOpen ? "canvasSurfaces--codingLivePreviewOpen" : "",
     activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
     dualNativeBrowserOpen ? "canvasSurfaces--nativePager" : ""

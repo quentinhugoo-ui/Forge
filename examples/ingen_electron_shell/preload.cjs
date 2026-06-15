@@ -117,6 +117,15 @@ const forgeShell = {
   openGeoEntity(query) {
     return ipcRenderer.invoke("forge:maps-open-geo-entity", query);
   },
+  getBangerPreviewFrame() {
+    return ipcRenderer.invoke("forge:get-banger-preview-frame");
+  },
+  getBangerPresentLoopBootstrap(request) {
+    return ipcRenderer.invoke("forge:get-banger-present-loop-bootstrap", request);
+  },
+  getBangerGoogleTilesConfig() {
+    return ipcRenderer.invoke("forge:get-banger-google-tiles-config");
+  },
   showNativeTerminal(bounds) {
     return ipcRenderer.invoke("forge:terminal-show-native", bounds);
   },
