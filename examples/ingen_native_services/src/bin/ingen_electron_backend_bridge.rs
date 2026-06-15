@@ -1129,7 +1129,7 @@ fn vs_main(
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let normal = normalize(in.normal_hint);
     let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
-    let view_fade = clamp(length(in.world_pos.xz) / 42.0, 0.0, 1.0);
+    let view_fade = clamp(length(in.world_pos.xz) / 58.0, 0.0, 1.0);
     let lambert = clamp(dot(normal, sun_dir) * 0.62 + 0.38, 0.18, 1.0);
     let sky = mix(vec3<f32>(0.02, 0.035, 0.065), vec3<f32>(0.95, 0.48, 0.18), clamp(in.world_pos.y * 0.04 + 0.35, 0.0, 1.0));
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
@@ -1220,9 +1220,9 @@ fn banger_cube_index_bytes() -> Vec<u8> {
 
 #[cfg(target_os = "windows")]
 fn banger_scene_instance_bytes() -> Vec<u8> {
-    let mut instances = Vec::with_capacity(1400);
-    for z in -18..18 {
-        for x in -24..24 {
+    let mut instances = Vec::with_capacity(3400);
+    for z in -22..22 {
+        for x in -32..32 {
             let xf = x as f32;
             let zf = z as f32;
             let ridge = (xf * 0.21).sin() * 0.45 + (zf * 0.17).cos() * 0.34;
@@ -1310,12 +1310,12 @@ fn banger_view_projection_matrix(time_seconds: f32, viewport_width: u32, viewpor
     let aspect = (viewport_width as f32 / viewport_height.max(1) as f32).clamp(0.25, 4.0);
     let orbit = time_seconds * 0.08;
     let eye = [
-        15.5 * orbit.cos(),
-        8.2 + 0.45 * (time_seconds * 0.21).sin(),
-        20.0 + 15.5 * orbit.sin(),
+        19.5 * orbit.cos(),
+        9.6 + 0.55 * (time_seconds * 0.21).sin(),
+        26.0 + 19.5 * orbit.sin(),
     ];
     let view = banger_look_at_rh(eye, [0.0, -0.35, 2.5], [0.0, 1.0, 0.0]);
-    let projection = banger_perspective_rh_zo(58.0_f32.to_radians(), aspect, 0.05, 220.0);
+    let projection = banger_perspective_rh_zo(58.0_f32.to_radians(), aspect, 0.05, 280.0);
     banger_mat4_mul(projection, view)
 }
 
@@ -1508,7 +1508,7 @@ mod tests {
     #[test]
     fn packs_banger_scene_instances_for_one_indexed_draw() {
         let instance_bytes = banger_scene_instance_bytes();
-        assert!(instance_bytes.len() >= 1000 * 80);
+        assert!(instance_bytes.len() >= 3000 * 80);
         assert_eq!(instance_bytes.len() % 80, 0);
         assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 0.44);
         assert!(f32::from_le_bytes(instance_bytes[64..68].try_into().unwrap()) > 0.0);
