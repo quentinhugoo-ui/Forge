@@ -48,6 +48,17 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
   });
 
+  it("does not lock the transcript scroll while assistant text is streaming", () => {
+    expect(animationSource).toContain("TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX");
+    expect(animationSource).toContain("function transcriptIsNearBottom");
+    expect(animationSource).toContain("const followLatestTranscriptRef = useRef(true)");
+    expect(animationSource).toContain('container.addEventListener("scroll", updateFollowMode, { passive: true })');
+    expect(animationSource).toContain("followLatestTranscriptRef.current = transcriptIsNearBottom(container)");
+    expect(animationSource).toContain("if (!followLatestTranscriptRef.current && !transcriptIsNearBottom(container))");
+    expect(animationSource).toContain('followTranscriptLatest(container, latestMessage?.role === "user" ? "smooth" : "instant")');
+    expect(animationSource).not.toContain("followTranscriptLatest(messagesRef.current, \"smooth\")");
+  });
+
   it("runs agent action requests as a visible loop stream", () => {
     expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');

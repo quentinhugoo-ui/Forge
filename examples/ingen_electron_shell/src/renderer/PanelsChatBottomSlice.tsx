@@ -3864,7 +3864,7 @@ function TranscriptCanvas({
     if (!followLatestTranscriptRef.current && !transcriptIsNearBottom(container)) {
       return;
     }
-    followTranscriptLatest(container, "smooth");
+    followTranscriptLatest(container, latestMessage?.role === "user" ? "smooth" : "instant");
   }, [latestMessage?.id, latestMessage?.text]);
 
   const pinnedIds = new Set(visiblePins.map((pin) => pin.id));
