@@ -7384,8 +7384,8 @@ ol.assistantText__list li::before {
 .composer__send--stop::before {
   content: "";
   position: absolute;
-  width: 21px;
-  height: 21px;
+  width: 22px;
+  height: 22px;
   left: 50%;
   top: 50%;
   border-radius: 50% !important;
@@ -7409,6 +7409,8 @@ ol.assistantText__list li::before {
 .sendGlyph--stopSquare {
   position: relative;
   z-index: 2;
+  width: 16px;
+  height: 16px;
   color: var(--forge-chat-bg);
   fill: currentColor;
   stroke: none;
