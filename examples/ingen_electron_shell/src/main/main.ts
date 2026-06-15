@@ -11428,26 +11428,21 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.show();
   window.focus();
   animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
-  traceWidgetTaskbarStep("apply-widget-taskbar-arm", {
-    id: window.id,
-    previousTaskbarHidden: widgetTaskbarHidden
-  });
-  armNativeWidgetTaskbarAutoHide(window);
 }
 
-function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
+/* When the taskbar is toggled while the widget strip is already on screen,
+   slide the strip to the matching anchor: flush to the screen bottom when the
+   bar is hidden, lifted above the bar when it is shown again. */
+function repositionWidgetStripForTaskbar(window: BrowserWindow, taskbarHidden: boolean): void {
   if (window.isDestroyed() || widgetWindowRestoreState === null) {
     return;
   }
+  const bounds = widgetWindowBounds(window, { taskbarHidden });
+  traceWidgetTaskbarStep("reposition-widget-strip", { id: window.id, bounds, taskbarHidden });
   clearWidgetWindowBoundsAnimationTimer();
-  const bounds = widgetWindowBounds(window, { taskbarHidden: true });
-  console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
-  traceWidgetTaskbarStep("settle-widget-bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   window.setAlwaysOnTop(true, "floating");
-  window.setBounds(bounds, false);
-  window.show();
-  window.focus();
+  animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
@@ -12409,8 +12404,17 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
       }
-      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null) {
-        settleNativeWidgetWindowBounds(window);
+      if (
+        accepted &&
+        !window.isDestroyed() &&
+        widgetWindowRestoreState !== null &&
+        boundsLookLikeWidget(window.getBounds())
+      ) {
+        /* Only when the strip is already on screen (taskbar toggled via the
+           Windows icon): slide it to match. During the entry hide the window
+           is still full-screen, so this is skipped and the shrink animation is
+           left untouched. */
+        repositionWidgetStripForTaskbar(window, hidden);
       }
       traceWidgetTaskbarStep("taskbar-autohide-finished", { id: window.id, hidden, accepted, token });
     })();
@@ -12468,7 +12472,14 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  return scheduleNativeWidgetTaskbarAutoHide(window, !widgetTaskbarHidden);
+  const nextHidden = !widgetTaskbarHidden;
+  /* Slide the strip to its new anchor right away so the click feels instant;
+     the taskbar helper (ShowWindow + bookkeeping) runs in parallel rather than
+     gating the visible motion. */
+  if (boundsLookLikeWidget(window.getBounds())) {
+    repositionWidgetStripForTaskbar(window, nextHidden);
+  }
+  return scheduleNativeWidgetTaskbarAutoHide(window, nextHidden);
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
@@ -12529,6 +12540,10 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     saveWidgetWindowRestoreState(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
     window.setAlwaysOnTop(true, "floating");
+    /* Hide the taskbar immediately, in lockstep with the MINI activation. The
+       window is still full-screen here, so the strip reposition is skipped and
+       the delayed shrink animation below stays smooth. */
+    armNativeWidgetTaskbarAutoHide(window);
     const requestedDelay = typeof delayMs === "number" && Number.isFinite(delayMs) ? delayMs : WIDGET_WINDOW_SHRINK_DELAY_MS;
     const shrinkDelay = Math.max(0, Math.min(2_000, Math.round(requestedDelay)));
     console.info("Arming native widget window mode", { id: window.id, shrinkDelay, currentBounds: window.getBounds() });

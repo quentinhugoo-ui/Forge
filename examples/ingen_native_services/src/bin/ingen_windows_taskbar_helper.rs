@@ -18,6 +18,8 @@ const SMTO_ABORTIFHUNG: u32 = 0x0002;
 const WM_SETTINGCHANGE: u32 = 0x001A;
 const HWND_BROADCAST: *mut c_void = 0xffffusize as *mut c_void;
 const STUCK_RECTS_SETTINGS_INDEX: usize = 8;
+const SW_HIDE: i32 = 0;
+const SW_SHOW: i32 = 5;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -60,6 +62,13 @@ extern "system" {
 #[link(name = "user32")]
 extern "system" {
     fn FindWindowW(class_name: *const u16, window_name: *const u16) -> *mut c_void;
+    fn FindWindowExW(
+        parent: *mut c_void,
+        child_after: *mut c_void,
+        class_name: *const u16,
+        window_name: *const u16,
+    ) -> *mut c_void;
+    fn ShowWindow(hwnd: *mut c_void, n_cmd_show: i32) -> i32;
     fn SendMessageTimeoutW(
         hwnd: *mut c_void,
         msg: u32,
@@ -225,12 +234,41 @@ fn update_stuck_rects_auto_hide(hidden: bool) -> Result<(bool, i32), String> {
     result
 }
 
+/* Windows 11 ignores the programmatic ABS_AUTOHIDE flag for the visual
+   retract, so we additionally hide the taskbar windows outright with
+   ShowWindow. The Start button and tray are children of Shell_TrayWnd, so one
+   call clears the whole primary bar; Shell_SecondaryTrayWnd covers each extra
+   monitor. This is fully reversed by the matching SW_SHOW on restore. */
+fn show_taskbar_windows(show_cmd: i32) {
+    let primary_class = wide("Shell_TrayWnd");
+    let primary = unsafe { FindWindowW(primary_class.as_ptr(), null()) };
+    if !primary.is_null() {
+        unsafe {
+            ShowWindow(primary, show_cmd);
+        }
+    }
+
+    let secondary_class = wide("Shell_SecondaryTrayWnd");
+    let mut secondary = unsafe { FindWindowExW(std::ptr::null_mut(), std::ptr::null_mut(), secondary_class.as_ptr(), null()) };
+    while !secondary.is_null() {
+        unsafe {
+            ShowWindow(secondary, show_cmd);
+        }
+        secondary = unsafe { FindWindowExW(std::ptr::null_mut(), secondary, secondary_class.as_ptr(), null()) };
+    }
+}
+
 fn set_taskbar_hidden(hidden: bool) -> Result<(usize, usize, bool, i32), String> {
     let class_name = wide("Shell_TrayWnd");
     let hwnd = unsafe { FindWindowW(class_name.as_ptr(), null()) };
     if hwnd.is_null() {
         return Err("Shell_TrayWnd was not found".to_string());
     }
+
+    /* Toggle visibility first so the bar reacts instantly to the click; the
+       APPBAR state and registry bookkeeping below are off the visible critical
+       path (they take the bulk of the helper's time). */
+    show_taskbar_windows(if hidden { SW_HIDE } else { SW_SHOW });
 
     let mut data = AppBarData {
         hwnd,
@@ -249,6 +287,7 @@ fn set_taskbar_hidden(hidden: bool) -> Result<(usize, usize, bool, i32), String>
     }
 
     let (registry_path_found, registry_byte) = update_stuck_rects_auto_hide(hidden)?;
+
     Ok((current, target, registry_path_found, registry_byte))
 }
 

@@ -775,13 +775,15 @@ button {
 
 .widgetWindowsButton {
   position: fixed;
-  left: max(10px, calc(var(--chat-left) - 48px));
-  bottom: calc(var(--composer-bottom) + 24px);
+  /* Sit just left of the bottomControls row (Ask / permissions), centered on
+     its 20px line, rather than floating above the chat bar. */
+  left: max(8px, calc(var(--chat-left) - 30px));
+  bottom: calc(var(--bottom-controls-bottom) - 2px);
   z-index: 44;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   color: #00adef;
   background: transparent;
@@ -797,16 +799,59 @@ button {
 }
 
 .widgetWindowsButton svg {
-  width: 24px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
   fill: currentColor;
+  transition:
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 160ms ease-out;
 }
 
 .widgetWindowsButton:hover,
 .widgetWindowsButton:focus-visible {
-  color: color-mix(in oklab, #00adef, #ffffff 16%);
+  color: color-mix(in oklab, #00adef, #ffffff 22%);
   background: transparent;
   outline: 0;
+}
+
+.widgetWindowsButton:hover svg,
+.widgetWindowsButton:focus-visible svg {
+  transform: scale(1.16);
+  filter: drop-shadow(0 0 6px color-mix(in oklab, #00adef, transparent 55%));
+}
+
+.widgetWindowsButton:active svg {
+  transform: scale(1.04);
+}
+
+/* Discreet custom tooltip, anchored to the left of the icon. Replaces the
+   native title so it can be styled, kept short, and positioned. */
+.widgetWindowsButton::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: calc(100% + 9px);
+  top: 50%;
+  transform: translateY(-50%) translateX(4px);
+  padding: 3px 8px;
+  font: 10.5px/1.2 "Geist", system-ui, sans-serif;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: color-mix(in oklab, #ffffff, transparent 26%);
+  background: color-mix(in oklab, #0a0a0c, transparent 22%);
+  border: 1px solid color-mix(in oklab, #ffffff, transparent 90%);
+  border-radius: 6px !important;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease-out,
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.widgetWindowsButton:hover::after,
+.widgetWindowsButton:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 .shell--widget-mode .widgetWindowsButton {
@@ -11804,6 +11849,36 @@ ol.assistantText__list li::before {
   will-change: transform;
 }
 
+/* Restoring (exit of MINI) plays the entry choreography in reverse. The
+   minimizing classes are dropped phase by phase, so these rules keep the
+   motion transitions live as each surface's transform returns to rest —
+   otherwise removing the class would snap it back with no glide. */
+.shell--widget-restoring .titlebar,
+.shell--widget-restoring .workspaceHeader,
+.shell--widget-restoring .canvasSurfaces,
+.shell--widget-restoring .canvasCover,
+.shell--widget-restoring .profileCanvas,
+.shell--widget-restoring .chatCanvas,
+.shell--widget-restoring .parallelTranscriptGrid,
+.shell--widget-restoring .workspaceRequiredVeil,
+.shell--widget-restoring .sidebarLedger,
+.shell--widget-restoring .shadowLedger {
+  pointer-events: none;
+  transition: transform var(--widget-canvas-exit-motion), opacity var(--widget-canvas-exit-motion);
+  will-change: transform;
+}
+
+.shell--widget-restoring .leftPanel,
+.shell--widget-restoring .rightPanel,
+.shell--widget-restoring .canvasSplitPane,
+.shell--widget-restoring .canvasPlanetRail,
+.shell--widget-restoring .canvasFilesPane,
+.shell--widget-restoring .canvasTerminalPane {
+  pointer-events: none;
+  transition: transform var(--widget-side-exit-motion), opacity var(--widget-side-exit-motion);
+  will-change: transform;
+}
+
 .shell--widget-minimizing .bottomControls__widgetButton--active {
   color: color-mix(in oklab, var(--forge-muted), transparent 18%) !important;
   opacity: 0.82;
@@ -12090,6 +12165,16 @@ ol.assistantText__list li::before {
 .shell--widget-minimizing-canvas .bottomControls {
   transform: none;
   transition: left var(--widget-canvas-exit-motion), width var(--widget-canvas-exit-motion);
+}
+
+/* While the OS window grows back on exit, the chat bar must ride the window
+   bottom without interpolating (exactly as widget-mode pins it during the
+   entry shrink). Leaving a left/width transition on it here makes it fight the
+   per-frame window resize and vibrate. The locked position equals the centered
+   resting position, so dropping the lock at the end settles with no jump. */
+.shell--widget-restoring .composer,
+.shell--widget-restoring .bottomControls {
+  transition: none;
 }
 
 .shell--widget-minimizing .bottomControls code,

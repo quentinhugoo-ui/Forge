@@ -94,8 +94,8 @@ const BLOB_CAM_Y = 0.03;
 const BLOB_POINTER_REACH = 0.78;
 const BLOB_SCISSOR_PADDING_WORLD = 0.42;
 const BLOB_SCISSOR_PADDING_PIXELS = 96;
-const BLOB_VIEW_CENTER_X = 0.62;
-const BLOB_VIEW_CENTER_Y = 0.68;
+const BLOB_VIEW_CENTER_X = 0.72;
+const BLOB_VIEW_CENTER_Y = 0.78;
 const BLOB_POINTER_STRENGTH_EPSILON = 0.001;
 
 /* Live cursor shared between the React component and the render loop. */
@@ -284,7 +284,7 @@ const BRAIN_BLOB_WGSL = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
 const BOUND_RADIUS: f32 = 1.58;
 const BOUND_RADIUS2: f32 = BOUND_RADIUS * BOUND_RADIUS;
-const VIEW_CENTER: vec2<f32> = vec2<f32>(0.62, 0.68);
+const VIEW_CENTER: vec2<f32> = vec2<f32>(0.72, 0.78);
 const MOUSE_DEFORM_ENABLED: f32 = 1.0;
 
 struct Uniforms {
@@ -499,7 +499,9 @@ out vec4 outColor;
 const float TAU = 6.28318530718;
 const float BOUND_RADIUS = 1.58;
 const float BOUND_RADIUS2 = BOUND_RADIUS * BOUND_RADIUS;
-const vec2 VIEW_CENTER = vec2(0.62, 0.68);
+// gl_FragCoord is bottom-left origin, so the Y here is flipped (1 - 0.78)
+// to land on the same screen point as the top-left WGSL/scissor convention.
+const vec2 VIEW_CENTER = vec2(0.72, 0.22);
 const float MOUSE_DEFORM_ENABLED = 1.0;
 
 float sat(float v) { return clamp(v, 0.0, 1.0); }
@@ -1003,9 +1005,16 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
   };
 }
 
+/* Render phase gates what is visible. "pending" keeps both surfaces hidden
+   while the GPU device is still being requested, so the CSS fallback never
+   flashes as a giant square (the .shell border-radius:0 reset squares it off)
+   during the ~1s WebGPU init. "gpu" fades the canvas in; "css" reveals the
+   animated fallback only when neither WebGPU nor WebGL2 is available. */
+type BrainBlobPhase = "pending" | "gpu" | "css";
+
 export function BrainBlob() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [gpuReady, setGpuReady] = useState(false);
+  const [phase, setPhase] = useState<BrainBlobPhase>("pending");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1041,12 +1050,12 @@ export function BrainBlob() {
     window.addEventListener("mouseout", onPointerLeave, { passive: true });
 
     const markReady = () => {
-      if (!cancelled) setGpuReady(true);
+      if (!cancelled) setPhase("gpu");
     };
     const fallBackToWebGl = () => {
       if (cancelled) return;
       handle = initBrainBlobWebGl(canvas, pointer, markReady);
-      if (!handle) setGpuReady(false);
+      if (!handle) setPhase("css");
     };
 
     void initBrainBlobWebGpu(canvas, pointer, markReady)
@@ -1074,8 +1083,10 @@ export function BrainBlob() {
     };
   }, []);
 
+  const phaseClass =
+    phase === "gpu" ? "brainBlob brainBlob--webgpu" : phase === "css" ? "brainBlob brainBlob--css" : "brainBlob";
   return (
-    <div className={gpuReady ? "brainBlob brainBlob--webgpu" : "brainBlob"} aria-hidden="true">
+    <div className={phaseClass} aria-hidden="true">
       <canvas ref={canvasRef} className="brainBlob__canvas" />
       <div className="brainBlob__fallback" />
     </div>

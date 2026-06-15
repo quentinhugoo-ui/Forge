@@ -117,7 +117,19 @@ const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_SIDE_LEAD_MS + WIDGET_CANVAS_EXIT_M
 const WIDGET_NATIVE_SHRINK_LEAD_MS = 80;
 const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
-const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_NATIVE_SHRINK_LEAD_MS;
+/* The native OS window must not collapse to the widget strip until the CSS
+   canvas/header exit has slid that content up and out of frame. Collapsing
+   early (e.g. the old 80ms lead) chops the still-animating surfaces and reads
+   as a glitch, so we wait for the canvas exit to complete first. */
+const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_CANVAS_EXIT_MS;
+/* Fired at MINI press now (not at the canvas phase), so the OS window shrink
+   must wait out the side lead plus the canvas exit to stay off the still-
+   animating surfaces. */
+const WIDGET_ENTER_NATIVE_SHRINK_DELAY_MS = WIDGET_SIDE_LEAD_MS + WIDGET_NATIVE_SHRINK_DELAY_MS;
+/* Mirrors the native WIDGET_WINDOW_RESTORE_MS: on exit we let the OS window
+   grow back to full size (content held off-screen) before sliding surfaces in,
+   exactly as entry animates surfaces out before shrinking the window. */
+const WIDGET_NATIVE_RESTORE_MS = 560;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
 
 type WidgetLayoutLock = {
@@ -251,6 +263,7 @@ export function App() {
   const [widgetMode, setWidgetMode] = useState(false);
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
+  const [widgetRestoring, setWidgetRestoring] = useState(false);
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
@@ -428,6 +441,7 @@ export function App() {
     widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
     widgetMinimizingPhase !== "" ? "shell--widget-minimizing-sides" : "",
     widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-header" : "",
+    widgetRestoring ? "shell--widget-restoring" : "",
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
@@ -1074,21 +1088,43 @@ export function App() {
     if (!enabled) {
       void (async () => {
         const windowControls = globalThis.window?.forgeWindowControls;
-        const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
+        /* Reverse of the entry choreography. Hold the hidden layout on the
+           minimizing classes (they carry the motion transitions) under a
+           restoring flag so the swap off widget-mode never jumps. Then grow
+           the OS window back, slide the canvas/header down, and finally bring
+           the side surfaces in. */
+        setWidgetRestoring(true);
+        setWidgetMinimizingPhase("canvas");
+        setWidgetMode(false);
+        const nativeWidgetRestored = windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;
         });
+
+        await waitForWidgetMotion(WIDGET_NATIVE_RESTORE_MS);
         if (widgetModeSequenceRef.current !== sequenceToken) {
           return;
         }
-        clearDocumentWidgetModeClasses();
+        setWidgetMinimizingPhase("sides");
+
+        await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
         setWidgetMinimizingPhase("");
-        setWidgetMode(false);
+
+        await waitForWidgetMotion(WIDGET_SIDE_EXIT_MS);
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
+        setWidgetRestoring(false);
+        clearDocumentWidgetModeClasses();
         setWidgetLayoutLock(null);
-        if (nativeWidgetRestored === false) {
+        const nativeRestoreAccepted = await nativeWidgetRestored;
+        if (nativeRestoreAccepted === false) {
           console.warn("Native widget restore was not accepted.");
         }
-        releaseWidgetModeTransition(sequenceToken, 420);
+        releaseWidgetModeTransition(sequenceToken);
       })();
       return;
     }
@@ -1097,6 +1133,15 @@ export function App() {
       setWidgetLayoutLock(readWidgetLayoutLock());
       setWidgetMinimizingPhase("sides");
       setWidgetMode(false);
+      /* Arm native widget mode at MINI press: it saves the restore state, hides
+         the Windows taskbar now (in lockstep with the activation), and only
+         shrinks the OS window after the side lead + canvas exit have played. */
+      const windowControls = globalThis.window?.forgeWindowControls;
+      const nativeWidgetModeReady = windowControls?.setWidgetMode?.(true, WIDGET_ENTER_NATIVE_SHRINK_DELAY_MS)
+        .catch((error: unknown) => {
+          console.warn("Failed to arm native widget mode", error);
+          return false;
+        });
       if (snapshot.leftPanelOpen) {
         void headerShadowStore
           .dispatchControl({ id: "left-panel", command: "toggle_left_panel" })
@@ -1108,12 +1153,6 @@ export function App() {
         return;
       }
       setWidgetMinimizingPhase("canvas");
-      const windowControls = globalThis.window?.forgeWindowControls;
-      const nativeWidgetModeReady = windowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS)
-        .catch((error: unknown) => {
-          console.warn("Failed to arm native widget mode", error);
-          return false;
-        });
 
       await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
@@ -1226,10 +1265,10 @@ export function App() {
       <button
         type="button"
         className="widgetWindowsButton"
+        data-tooltip="Toggle taskbar"
         aria-hidden={!widgetMode}
-        aria-label="Afficher ou masquer la barre des taches Windows"
+        aria-label="Toggle Windows taskbar"
         tabIndex={widgetMode ? 0 : -1}
-        title="Afficher ou masquer la barre des taches Windows"
         onClick={() => {
           void globalThis.window?.forgeWindowControls?.toggleWidgetTaskbar?.();
         }}

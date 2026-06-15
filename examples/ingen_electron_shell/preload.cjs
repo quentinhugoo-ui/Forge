@@ -178,6 +178,14 @@ const forgeWindowControls = {
     console.info("[preload] forge:window-widget-click-through", { enabled });
     return ipcRenderer.invoke("forge:window-widget-click-through", enabled);
   },
+  setWidgetTaskbarAutoHide(enabled) {
+    console.info("[preload] forge:window-widget-taskbar-autohide", { enabled });
+    return ipcRenderer.invoke("forge:window-widget-taskbar-autohide", enabled);
+  },
+  toggleWidgetTaskbar() {
+    console.info("[preload] forge:window-widget-taskbar-toggle");
+    return ipcRenderer.invoke("forge:window-widget-taskbar-toggle");
+  },
   close() {
     console.info("[preload] forge:window-close");
     return ipcRenderer.invoke("forge:window-close");
