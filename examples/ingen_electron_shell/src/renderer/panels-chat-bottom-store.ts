@@ -10,7 +10,14 @@ import {
   type PanelsChatBottomSnapshot,
   type TranscriptMessage
 } from "../shared/ipc-contract";
-import { readBrainAgentMemory, readBrainUserLocationMemory, readBrainUserMemory } from "./brain-user-memory-store";
+import {
+  BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
+  BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
+  brainDurableMemoryManifest,
+  readBrainAgentMemory,
+  readBrainUserLocationMemory,
+  readBrainUserMemory
+} from "./brain-user-memory-store";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
 export interface PanelsChatBottomShadowManifest {
@@ -251,6 +258,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
   const subscribers = new Set<() => void>();
   let inFlightChatRequests = 0;
   let assistantStopSuppressed = false;
+  let lastSyncedBrainContext = "";
 
   function emit() {
     for (const subscriber of subscribers) {
@@ -269,6 +277,44 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       manifest: manifestFromSnapshot(snapshot)
     };
     emit();
+  }
+
+  function brainContextCommand(): Omit<PanelsChatBottomCommand, "version" | "requestId"> {
+    const userMemory = readBrainUserMemory();
+    const agentMemory = readBrainAgentMemory();
+    const locationMemory = readBrainUserLocationMemory();
+    return {
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation,
+      value: brainDurableMemoryManifest()
+    };
+  }
+
+  async function syncBrainContext(refreshAfter = false) {
+    if (!api) {
+      return;
+    }
+    const command = brainContextCommand();
+    const syncKey = JSON.stringify({
+      userFirstName: command.userFirstName ?? "",
+      agentFirstName: command.agentFirstName ?? "",
+      userHomeLocation: command.userHomeLocation ?? "",
+      value: command.value ?? ""
+    });
+    if (syncKey === lastSyncedBrainContext) {
+      return;
+    }
+    lastSyncedBrainContext = syncKey;
+    await api.dispatchPanelsChatBottomCommand({
+      version: FORGE_ELECTRON_IPC_VERSION,
+      requestId: makePanelsChatBottomRequestId(),
+      ...command
+    });
+    if (refreshAfter) {
+      await refresh();
+    }
   }
 
   async function dispatch(command: Omit<PanelsChatBottomCommand, "version" | "requestId">) {
@@ -410,6 +456,12 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       state = { ...state, manifest: manifestFromSnapshot(state.snapshot) };
       emit();
     }
+    if (command.kind === "update_brain_identity") {
+      outgoingCommand = brainContextCommand();
+    }
+    if (command.kind === "send_chat" || command.kind === "send_parallel_chat_batch") {
+      await syncBrainContext();
+    }
     if (command.kind === "send_chat" || command.kind === "send_parallel_chat_batch") {
       const userMemory = readBrainUserMemory();
       const agentMemory = readBrainAgentMemory();
@@ -454,6 +506,15 @@ export function createPanelsChatBottomStore(api = browserApi()) {
     ) {
       await sidebarShadowStore.boot();
     }
+  }
+
+  if (typeof window !== "undefined") {
+    const syncDurableBrainMemory = () => {
+      void syncBrainContext(true);
+    };
+    window.addEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncDurableBrainMemory);
+    window.addEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncDurableBrainMemory);
+    window.setTimeout(syncDurableBrainMemory, 0);
   }
 
   api?.onLlmProviderEvent?.((event) => {

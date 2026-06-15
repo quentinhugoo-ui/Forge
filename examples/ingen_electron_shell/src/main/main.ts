@@ -95,6 +95,7 @@ import {
   type AgentActionPathEntry,
   type AgentActionRequest,
   type AgentActionResult,
+  type BrainCodeActCommand,
   type NativeTerminalBounds,
   type NativeTerminalResult,
   type NativeWebExplorerBounds,
@@ -113,6 +114,14 @@ import {
   isRightPanelCommand,
   isNativeSection,
   isSidebarCommand
+} from "../shared/ipc-contract.js";
+import {
+  BRAIN_BRAIN_COMMAND,
+  BRAIN_GOOGLE_AGENDA_COMMAND,
+  BRAIN_NAMED_COMPUTE_COMMAND,
+  BRAIN_RUST_PORT_ADAPTER_COMMAND,
+  BRAIN_RUST_STATE_STORE_COMMAND,
+  BRAIN_WEB_COMMAND
 } from "../shared/ipc-contract.js";
 import {
   agentActionCapabilityDetailManifest,
@@ -4002,12 +4011,14 @@ interface BrainIdentityContext {
   userFirstName: string;
   agentFirstName: string;
   userHomeLocation: string;
+  durableMemoryManifest: string;
 }
 
 const brainIdentityContext: BrainIdentityContext = {
   userFirstName: "",
   agentFirstName: "",
-  userHomeLocation: ""
+  userHomeLocation: "",
+  durableMemoryManifest: ""
 };
 
 function brainIdentityStorePath(): string {
@@ -4026,6 +4037,15 @@ function normalizeBrainHomeLocation(value: unknown): string {
   return Array.from(compact).slice(0, 96).join("");
 }
 
+function normalizeBrainDurableMemoryManifest(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const compact = value.replace(/\r\n?/g, "\n").trim();
+  if (!compact || !compact.startsWith("BRAIN_DURABLE_MEMORY_MANIFEST v1")) {
+    return "";
+  }
+  return trimUtf8Bytes(compact, 8_000);
+}
+
 async function restoreBrainIdentityContextFromDisk(): Promise<void> {
   try {
     const raw = await readFile(brainIdentityStorePath(), "utf8");
@@ -4033,6 +4053,7 @@ async function restoreBrainIdentityContextFromDisk(): Promise<void> {
     brainIdentityContext.userFirstName = normalizeBrainIdentityName(parsed.userFirstName);
     brainIdentityContext.agentFirstName = normalizeBrainIdentityName(parsed.agentFirstName);
     brainIdentityContext.userHomeLocation = normalizeBrainHomeLocation(parsed.userHomeLocation);
+    brainIdentityContext.durableMemoryManifest = normalizeBrainDurableMemoryManifest(parsed.durableMemoryManifest);
   } catch {
     // No persisted identity yet; keep first-install fields blank.
   }
@@ -4054,6 +4075,10 @@ function brainIdentityMemoryManifest(): string {
   const homeLocation = brainIdentityContext.userHomeLocation;
   if (!user && !assistant && !homeLocation) return "";
   return `BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} user_home_location=${JSON.stringify(homeLocation)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Use user_home_location as user-confirmed living place only when location context is useful. Never invent missing identity or location fields. Never treat user_home_location as live device geolocation.`;
+}
+
+function brainDurableMemoryContextManifest(): string {
+  return brainIdentityContext.durableMemoryManifest;
 }
 
 type PhotonFeature = {
@@ -4677,13 +4702,18 @@ function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
   const nextUserFirstName = normalizeBrainIdentityName(command.userFirstName);
   const nextAgentFirstName = normalizeBrainIdentityName(command.agentFirstName);
   const nextUserHomeLocation = normalizeBrainHomeLocation(command.userHomeLocation);
+  const nextDurableMemoryManifest = command.kind === "update_brain_identity"
+    ? normalizeBrainDurableMemoryManifest(command.value)
+    : brainIdentityContext.durableMemoryManifest;
   const unchanged =
     brainIdentityContext.userFirstName === nextUserFirstName &&
     brainIdentityContext.agentFirstName === nextAgentFirstName &&
-    brainIdentityContext.userHomeLocation === nextUserHomeLocation;
+    brainIdentityContext.userHomeLocation === nextUserHomeLocation &&
+    brainIdentityContext.durableMemoryManifest === nextDurableMemoryManifest;
   brainIdentityContext.userFirstName = nextUserFirstName;
   brainIdentityContext.agentFirstName = nextAgentFirstName;
   brainIdentityContext.userHomeLocation = nextUserHomeLocation;
+  brainIdentityContext.durableMemoryManifest = nextDurableMemoryManifest;
   if (unchanged) return;
   void persistBrainIdentityContext();
   if (
@@ -4698,6 +4728,7 @@ function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
 
 function brainBootManifest(): string {
   const identityMemory = brainIdentityMemoryManifest();
+  const durableBrainMemory = brainDurableMemoryContextManifest();
   const generalBrainCodeActCommands = BRAIN_CODEACT_COMMANDS.filter((command) => command !== BRAIN_QUESTIONNAIRE_COMMAND);
   const commandDescriptions = BRAIN_CODEACT_COMMAND_DESCRIPTIONS
     .filter((item) => item.command !== BRAIN_QUESTIONNAIRE_COMMAND)
@@ -4709,6 +4740,7 @@ function brainBootManifest(): string {
     "source=src/brain.rs",
     "injection_policy=general_brain_once_at_session_start_and_after_compaction; specialized_brains_once_on_switch_and_after_compaction",
     identityMemory,
+    durableBrainMemory,
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
@@ -4723,9 +4755,17 @@ function brainBootManifest(): string {
     "LOCAL_ACTION_ATLAS_BOOT v1",
     "rule=This full local action atlas is injected at session boot and after conversation compaction only. Do not require the app to semantically guess local tool needs on each turn.",
     `capabilities_codeact=Emit AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40} whenever a task may involve local files, coding, Windows, browser, documents, cloud CLIs, virtualization or automation and the exact action is not obvious.`,
+    brainCodeActLoopRulesManifest(),
     agentActionRoutingHint(),
     actionManifest
   ].filter(Boolean).join("\n");
+}
+
+function brainCodeActLoopRulesManifest(): string {
+  return [
+    "codeact_loop_rule=Use Brain CodeActs as loop-stream events for every non-trivial task: one short natural paragraph, one meaningful CodeAct or AGENT_ACTION_JSON action when work is happening, then continue only after the host shows the event/result.",
+    "codeact_loop_rule=Do not turn CodeActs into raw visible prompt text. A CodeAct is a runtime event boundary; if the objective is not complete, continue with the next concrete event or verified action instead of a long chatbot answer."
+  ].join("\n");
 }
 
 function brainRuntimeReminderManifest(): string {
@@ -4734,6 +4774,7 @@ function brainRuntimeReminderManifest(): string {
     "boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction",
     "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
     `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
+    "codeact_loop_rule=For non-trivial work, Brain CodeActs are loop-stream events. Emit a short progress paragraph and the relevant CodeAct/action, then wait for host continuation instead of dumping a full final answer.",
     "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
   ].join("\n");
 }
@@ -4798,6 +4839,81 @@ function shouldForceInitialCodingVisualAction(originalUserText: string, assistan
     !extractAgentActionJsonRequest(assistantText) &&
     !assistantText.includes(BRAIN_CODING_LIVE_PREVIEW_COMMAND) &&
     !brainSegmentFromAssistantText(assistantText)
+  );
+}
+
+const BRAIN_CODEACT_COMMANDS_BY_LENGTH = [...BRAIN_CODEACT_COMMANDS].sort((left, right) => right.length - left.length);
+
+function brainCodeActCommandsFromAssistantText(text: string): BrainCodeActCommand[] {
+  const commands: BrainCodeActCommand[] = [];
+  for (const command of BRAIN_CODEACT_COMMANDS_BY_LENGTH) {
+    if (text.includes(command)) {
+      commands.push(command as BrainCodeActCommand);
+    }
+  }
+  return commands;
+}
+
+function isBrainCodeActUserPauseCommand(command: BrainCodeActCommand): boolean {
+  return (
+    command === BRAIN_QUESTIONNAIRE_COMMAND ||
+    command === BRAIN_WORKSPACE_COMMAND ||
+    command === BRAIN_NEWIMAGE_COMMAND ||
+    command === BRAIN_EDITIMAGE_COMMAND ||
+    command === BRAIN_CODING_LIVE_PREVIEW_COMMAND
+  );
+}
+
+function isBrainCodeActSurfaceCommand(command: BrainCodeActCommand): boolean {
+  return (
+    command === BRAIN_GOOGLEWEB_COMMAND ||
+    command === BRAIN_MAPS_COMMAND ||
+    command === BRAIN_GMAIL_COMMAND ||
+    command === BRAIN_GMAIL_COM_COMMAND ||
+    command === BRAIN_AIRBNB_COMMAND ||
+    command === BRAIN_WEB_COMMAND
+  );
+}
+
+function shouldContinueAfterBrainCodeAct(params: {
+  originalUserText: string;
+  assistantText: string;
+  activatedBrainSegment?: ActiveBrainSegmentId;
+  previousBrainSegment: BrainSegmentId;
+}): boolean {
+  if (extractAgentActionJsonRequest(params.assistantText)) {
+    return false;
+  }
+  if (params.activatedBrainSegment && params.activatedBrainSegment !== params.previousBrainSegment) {
+    return false;
+  }
+  const commands = brainCodeActCommandsFromAssistantText(params.assistantText).filter(
+    (command) => command !== BRAIN_RENAME_SESSION_COMMAND
+  );
+  if (commands.length === 0) {
+    return false;
+  }
+  if (commands.every((command) => isBrainCodeActUserPauseCommand(command) || isBrainCodeActSurfaceCommand(command))) {
+    return false;
+  }
+  return (
+    textLooksLikeLocalActionIntent(params.originalUserText) ||
+    textLooksLikeVisualCodingArtifactGoal(params.originalUserText) ||
+    commands.some(
+      (command) =>
+        command === BRAIN_CAPABILITIES_COMMAND ||
+        command === BRAIN_SEARCHARCHIVE_COMMAND ||
+        command === BRAIN_NEWCOMPUTE_COMMAND ||
+        command === BRAIN_SELECTCOMPUTE_COMMAND ||
+        command === BRAIN_NAMED_COMPUTE_COMMAND ||
+        command === BRAIN_NEWOBJECT_COMMAND ||
+        command === BRAIN_FRONTDESIGN_COMMAND ||
+        command === BRAIN_GOOGLE_AGENDA_COMMAND ||
+        command === BRAIN_BRAIN_COMMAND ||
+        command === BRAIN_NEWMODULE_COMMAND ||
+        command === BRAIN_RUST_PORT_ADAPTER_COMMAND ||
+        command === BRAIN_RUST_STATE_STORE_COMMAND
+    )
   );
 }
 
@@ -14446,6 +14562,27 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
   return lines.join("\n");
 }
 
+function brainCodeActLoopContinuationUserText(
+  userText: string,
+  previousAssistantText: string,
+  commands: BrainCodeActCommand[]
+): string {
+  const commandList = commands.filter((command) => command !== BRAIN_RENAME_SESSION_COMMAND).join(" ");
+  const visiblePrior = assistantCodeActVisibleText(previousAssistantText);
+  return [
+    userText || "Continue la demande utilisateur en cours.",
+    "",
+    "BRAIN_CODEACT_LOOP_CONTINUATION v1",
+    `codeact_events=${commandList || "none"}`,
+    visiblePrior ? `previous_visible_progress=${visiblePrior}` : "",
+    "rule=Le ou les CodeActs Brain precedents sont des evenements de loop stream, pas une reponse finale si le travail demande n'est pas termine.",
+    "rule=Continue avec un court paragraphe naturel en francais, puis le prochain CodeAct utile ou exactement une ligne AGENT_ACTION_JSON si une action locale reelle est necessaire.",
+    "rule=Si le CodeAct precedent ouvre une UI, attend un choix utilisateur, ou bloque sur une permission/confirmation, dis-le clairement en une phrase compacte et n'invente pas d'action.",
+    "rule=Ne repete pas le meme CodeAct juste pour afficher une activite. Utilise le prochain evenement seulement s'il represente une vraie etape.",
+    "rule=Pour le coding visuel, ne donne pas de gros bloc de code a copier-coller: cree/modifie le fichier local via AGENT_ACTION_JSON, attends AGENT_ACTION_RESULT, puis ouvre le preview avec /coding_live_preview_."
+  ].filter(Boolean).join("\n");
+}
+
 function waitForNativeMapsFirstVisual(): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, 900);
@@ -15874,6 +16011,56 @@ async function submitChatDraftForSessionInner(
   if (!searchArchiveRequest && activatedBrainSegment && activatedBrainSegment !== previousBrainSegment) {
     const continuationUserText = brainSegmentContinuationUserText(draft, activatedBrainSegment);
     const continuationAssistantMessageId = `assistant-response-${Date.now()}-${activatedBrainSegment}`;
+    const continuationLiveSink = createAssistantLiveTextSink({
+      baseTranscript: nextTranscript,
+      assistantMessageId: continuationAssistantMessageId,
+      agentEvents,
+      commitTranscript,
+      assistantRun
+    });
+    let continuationMessage = await buildAssistantTranscriptMessage(
+      continuationUserText,
+      providerAttachments,
+      message.id,
+      moduleId,
+      nextTranscript,
+      continuationLiveSink,
+      continuationAssistantMessageId
+    );
+    continuationMessage = await executeAssistantAgentActionLoop({
+      assistantMessage: continuationMessage,
+      baseTranscript: nextTranscript,
+      originalUserText: continuationUserText,
+      providerAttachments,
+      userMessageId: message.id,
+      moduleId,
+      agentEvents,
+      assistantRun,
+      commitTranscript
+    });
+    throwIfAssistantRunCancelled(assistantRun);
+    continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
+    continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
+    continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);
+    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
+    continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
+    continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
+    continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
+    await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(continuationMessage);
+    nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, continuationMessage, requestSessionId, commitTranscript);
+    archiveTranscriptMessage(session, continuationMessage);
+  } else if (
+    !searchArchiveRequest &&
+    shouldContinueAfterBrainCodeAct({
+      originalUserText: draft,
+      assistantText: assistantMessage.text,
+      activatedBrainSegment,
+      previousBrainSegment
+    })
+  ) {
+    const commands = brainCodeActCommandsFromAssistantText(assistantMessage.text);
+    const continuationUserText = brainCodeActLoopContinuationUserText(draft, assistantMessage.text, commands);
+    const continuationAssistantMessageId = `assistant-response-${Date.now()}-brain-codeact`;
     const continuationLiveSink = createAssistantLiveTextSink({
       baseTranscript: nextTranscript,
       assistantMessageId: continuationAssistantMessageId,

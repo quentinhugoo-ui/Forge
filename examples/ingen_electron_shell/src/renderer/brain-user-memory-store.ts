@@ -82,6 +82,14 @@ const MAX_LEARNING_MEMORY_ENTRIES = 120;
 const MAX_CUSTOM_CODEACT_ENTRIES = 80;
 const MAX_LEARNING_TEXT_LENGTH = 1200;
 const MAX_CODEACT_FIELD_LENGTH = 2200;
+const MAX_DURABLE_MANIFEST_LENGTH = 7000;
+const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["anti_pattern", "conduct_rule", "skill", "task"];
+const DURABLE_MANIFEST_CATEGORY_KEYS: Record<BrainLearningMemoryCategory, string> = {
+  anti_pattern: "errors_to_avoid",
+  conduct_rule: "conduct_rules",
+  skill: "skills",
+  task: "tasks"
+};
 
 const fallbackBrainUserMemory: BrainUserMemorySlot = {
   schema: "ingen.brain.memory.user_identity.v1",
@@ -358,6 +366,52 @@ export function appendBrainCustomCodeAct(input: {
 
 export function removeBrainCustomCodeAct(id: string): BrainCustomCodeActEntry[] {
   return writeBrainCustomCodeActs(readBrainCustomCodeActs().filter((entry) => entry.id !== id));
+}
+
+function durableManifestMemoryLine(entry: BrainLearningMemoryEntry, index: number): string {
+  const key = DURABLE_MANIFEST_CATEGORY_KEYS[entry.category];
+  return `${key}[${index}]=trust=${entry.trust} source=${entry.source} text=${JSON.stringify(trimmedSingleLine(entry.text, 360))}`;
+}
+
+function durableManifestCodeActLine(entry: BrainCustomCodeActEntry, index: number): string {
+  return [
+    `codeact_draft[${index}]`,
+    `command=${JSON.stringify(normalizeBrainCustomCodeActCommand(entry.command))}`,
+    `trust=${entry.trust}`,
+    `source=${entry.source}`,
+    `description=${JSON.stringify(trimmedSingleLine(entry.description, 320))}`,
+    entry.template ? `template=${JSON.stringify(trimmedMultiline(entry.template, 620))}` : ""
+  ].filter(Boolean).join(" ");
+}
+
+export function brainDurableMemoryManifestFromEntries(
+  learningEntries: BrainLearningMemoryEntry[],
+  customCodeActs: BrainCustomCodeActEntry[]
+): string {
+  const validLearningEntries = learningEntries.filter(isBrainLearningMemoryEntry);
+  const validCodeActs = customCodeActs.filter(isBrainCustomCodeActEntry);
+  if (validLearningEntries.length === 0 && validCodeActs.length === 0) {
+    return "";
+  }
+  const lines = [
+    "BRAIN_DURABLE_MEMORY_MANIFEST v1",
+    "source=brain_page_learning_memory",
+    "injection_policy=session_boot_and_after_context_compaction",
+    "research_policy=Research branches are live work only; do not persist research unless it is later promoted into errors, rules, skills, tasks, or CodeAct drafts.",
+    `learning_entries=${validLearningEntries.length}`,
+    `codeact_drafts=${validCodeActs.length}`,
+    "rule=Treat user_confirmed entries as durable user Brain context. Treat agent_candidate entries as useful but still revisable candidates; obey them unless the user overrides them."
+  ];
+  for (const category of DURABLE_MANIFEST_CATEGORY_ORDER) {
+    const categoryEntries = validLearningEntries.filter((entry) => entry.category === category).slice(0, 8);
+    categoryEntries.forEach((entry, index) => lines.push(durableManifestMemoryLine(entry, index + 1)));
+  }
+  validCodeActs.slice(0, 6).forEach((entry, index) => lines.push(durableManifestCodeActLine(entry, index + 1)));
+  return trimmedMultiline(lines.join("\n"), MAX_DURABLE_MANIFEST_LENGTH);
+}
+
+export function brainDurableMemoryManifest(): string {
+  return brainDurableMemoryManifestFromEntries(readBrainLearningMemoryEntries(), readBrainCustomCodeActs());
 }
 
 export function dispatchBrainResearchParallelRequest(detail: Omit<BrainResearchParallelRequestDetail, "schema" | "createdAt">) {
