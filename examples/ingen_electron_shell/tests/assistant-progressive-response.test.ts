@@ -8,6 +8,7 @@ const preloadSource = readFileSync(join(root, "src", "preload", "preload.ts"), "
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const ipcContractSource = readFileSync(join(root, "src", "shared", "ipc-contract.ts"), "utf8");
 const animationSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const brainCanvasSource = readFileSync(join(root, "src", "renderer", "BrainCanvas.tsx"), "utf8");
 const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-action-loop.ts"), "utf8");
 const brainMemorySource = readFileSync(join(root, "src", "renderer", "brain-user-memory-store.ts"), "utf8");
@@ -100,6 +101,12 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("voice=Sound like a present, capable desktop agent");
     expect(brainMemorySource).toContain("voice=Sound like a present, capable desktop agent");
     expect(brainMemorySource).toContain('parsed.trust !== "user_confirmed"');
+    expect(brainCanvasSource).toContain("personalityManifestToMacroRows");
+    expect(brainCanvasSource).toContain('line !== "BRAIN_PERSONALITY_MANIFEST v1"');
+    expect(brainCanvasSource).toContain("personalityMacroRowsToManifest");
+    expect(brainCanvasSource).not.toContain("value={personalityMemory.manifest}");
+    expect(stylesSource).toContain(".brainPersonalityMacroRow");
+    expect(stylesSource).toContain("overflow: hidden;");
     expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");
     expect(mainSource).toContain("function brainPersonalityContextManifest");
     expect(mainSource).toContain("personalityManifest");

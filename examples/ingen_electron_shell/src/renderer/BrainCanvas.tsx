@@ -1720,11 +1720,54 @@ function PersonalitySpace() {
   );
 }
 
+type BrainPersonalityMacroRow = {
+  key: string;
+  value: string;
+};
+
+function personalityManifestToMacroRows(manifest: string): BrainPersonalityMacroRow[] {
+  return manifest
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && line !== "BRAIN_PERSONALITY_MANIFEST v1")
+    .map((line) => {
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex <= 0) {
+        return { key: "note", value: line };
+      }
+      return {
+        key: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1).trim()
+      };
+    });
+}
+
+function personalityMacroRowsToManifest(rows: BrainPersonalityMacroRow[]): string {
+  return [
+    "BRAIN_PERSONALITY_MANIFEST v1",
+    ...rows
+      .map((row) => {
+        const key = row.key.trim() || "note";
+        const value = row.value.trim();
+        return value ? `${key}=${value}` : "";
+      })
+      .filter(Boolean)
+  ].join("\n");
+}
+
+function personalityMacroTextareaRows(value: string): number {
+  const explicitRows = value.split("\n").length;
+  const wrappedRows = Math.ceil(Math.max(value.length, 1) / 92);
+  return Math.min(5, Math.max(1, explicitRows, wrappedRows));
+}
+
 function PersonalityManifestSpace() {
   const userMemory = readBrainUserMemory();
   const agentMemory = readBrainAgentMemory();
   const locationMemory = readBrainUserLocationMemory();
   const [personalityMemory, setPersonalityMemory] = useState(() => readBrainPersonalityMemory());
+  const personalityRows = personalityManifestToMacroRows(personalityMemory.manifest);
 
   useEffect(() => {
     const syncMemory = () => setPersonalityMemory(readBrainPersonalityMemory());
@@ -1763,6 +1806,11 @@ function PersonalityManifestSpace() {
     commitPersonality(DEFAULT_BRAIN_PERSONALITY_MANIFEST);
   };
 
+  const commitPersonalityRow = (rowIndex: number, value: string) => {
+    const nextRows = personalityRows.map((row, index) => index === rowIndex ? { ...row, value } : row);
+    commitPersonality(personalityMacroRowsToManifest(nextRows));
+  };
+
   return (
     <div className="brainCanvas__space">
       <p className="brainCanvas__spaceIntro">
@@ -1783,14 +1831,21 @@ function PersonalityManifestSpace() {
             <span className="brainPersonalityManifestField__hint">
               Injected with the Brain manifest, after context compaction, and on Brain switches.
             </span>
-            <textarea
-              aria-label="Editable Brain personality manifest"
-              className="brainPersonalityManifestField__textarea"
-              value={personalityMemory.manifest}
-              rows={9}
-              spellCheck={false}
-              onChange={(event) => commitPersonality(event.currentTarget.value)}
-            />
+            <span className="brainPersonalityMacroList" aria-label="Editable Brain personality macros">
+              {personalityRows.map((row, index) => (
+                <span className="brainPersonalityMacroRow" key={`${row.key}-${index}`}>
+                  <span className="brainPersonalityMacroRow__key">{row.key}</span>
+                  <textarea
+                    aria-label={`Personality macro ${row.key}`}
+                    className="brainPersonalityMacroRow__value"
+                    value={row.value}
+                    rows={personalityMacroTextareaRows(row.value)}
+                    spellCheck={false}
+                    onChange={(event) => commitPersonalityRow(index, event.currentTarget.value)}
+                  />
+                </span>
+              ))}
+            </span>
           </label>
           <div className="brainPersonalityEditor__actions">
             <button type="button" onClick={resetPersonality}>

@@ -9670,6 +9670,13 @@ ol.assistantText__list li::before {
   padding: 8px 10px;
 }
 
+.brainMemoryIdentity--personality {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 720px);
+  max-width: 720px;
+}
+
 .brainMemoryIdentity__label {
   display: inline-flex;
   align-items: center;
@@ -9679,13 +9686,6 @@ ol.assistantText__list li::before {
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 11px;
   font-weight: 650;
-.brainMemoryIdentity--personality {
-  display: grid;
-  gap: 8px;
-  width: min(100%, 720px);
-  max-width: 720px;
-}
-
 }
 
 .brainMemoryIdentity__fields {
@@ -9705,15 +9705,6 @@ ol.assistantText__list li::before {
   border-bottom: 0;
 }
 
-.brainMemoryIdentityField__body {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.brainMemoryIdentityField__label {
-  color: var(--forge-muted);
-  font-size: 11px;
 .brainPersonalityManifestField {
   position: relative;
   z-index: 1;
@@ -9727,29 +9718,6 @@ ol.assistantText__list li::before {
   color: var(--forge-muted);
   font-size: 11px;
   line-height: 1.4;
-}
-
-.brainPersonalityManifestField__textarea {
-  width: 100%;
-  min-height: 190px;
-  resize: vertical;
-  padding: 9px 0;
-  border: 0;
-  border-top: 1px solid color-mix(in oklab, #ffbf48, transparent 72%);
-  border-bottom: 1px solid color-mix(in oklab, #ffbf48, transparent 78%);
-  outline: 0;
-  color: #f1d596;
-  background: transparent;
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11.5px;
-  line-height: 1.55;
-  caret-color: var(--forge-accent);
-  text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 90%);
-}
-
-.brainPersonalityManifestField__textarea:focus {
-  color: #fff0b9;
-  border-color: color-mix(in oklab, #ffbf48, transparent 46%);
 }
 
 .brainPersonalityEditor__actions {
@@ -9788,6 +9756,72 @@ ol.assistantText__list li::before {
   margin: 0;
 }
 
+.brainPersonalityMacroList {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 0 2px;
+  border-top: 1px solid color-mix(in oklab, #ffbf48, transparent 72%);
+}
+
+.brainPersonalityMacroRow {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.26fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 0 8px;
+  border-bottom: 1px solid color-mix(in oklab, #ffbf48, transparent 84%);
+}
+
+.brainPersonalityMacroRow__key {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 68%);
+  border-radius: 5px;
+  color: color-mix(in oklab, #f1d596, var(--forge-muted) 18%);
+  background: color-mix(in oklab, #ffbf48, transparent 95%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.brainPersonalityMacroRow__value {
+  width: 100%;
+  min-height: 22px;
+  resize: none;
+  overflow: hidden;
+  padding: 0 0 2px;
+  border: 0;
+  outline: 0;
+  color: #f1d596;
+  background: transparent;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  caret-color: var(--forge-accent);
+  text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 90%);
+}
+
+.brainPersonalityMacroRow__value:focus {
+  color: #fff0b9;
+}
+
+.brainMemoryIdentityField__body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.brainMemoryIdentityField__label {
+  color: var(--forge-muted);
+  font-size: 11px;
   line-height: 1.35;
 }
 
@@ -9853,7 +9887,9 @@ ol.assistantText__list li::before {
 .brainMemoryIdentity__label .brainGlyph,
 .brainMemoryIdentityField__edit,
 .brainMemoryIdentityField__input,
-.brainPersonalityManifestField__textarea {
+.brainPersonalityMacroRow__key,
+.brainPersonalityMacroRow__value,
+.brainPersonalityEditor__actions button {
   animation: brainSwitchForegroundColorize calc(var(--brain-blob-time, 3.8s) * 3) ease-in-out infinite;
 }
 
@@ -9865,8 +9901,7 @@ ol.assistantText__list li::before {
 
 .brainActivators .brainRow code,
 .brainMemoryIdentityField__input,
-.brainPersonalityManifestField__textarea,
-.brainPersonalityEditor__actions button {
+.brainPersonalityMacroRow__value {
   color: #f1d596;
   text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 86%);
 }
