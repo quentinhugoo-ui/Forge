@@ -21,6 +21,14 @@ export type WebSearchProviderRoute =
   | "claude_then_openai"
   | "both_parallel";
 export type WebSearchStatus = "ok" | "partial" | "error";
+export type WebSearchMediaIntent =
+  | "none"
+  | "image_enrichment"
+  | "video_enrichment"
+  | "audio_enrichment"
+  | "image_video_audio_enrichment";
+export type WebSearchContentTypes = "text" | "text_image" | "image";
+export type WebSearchMediaKind = "image" | "video" | "audio" | "page";
 
 export interface WebSearchCodeActRequest {
   schema: "forge.websearch.request.v1";
@@ -31,7 +39,8 @@ export interface WebSearchCodeActRequest {
     | "url_discovery_for_scrapers"
     | "citation_verification"
     | "comparative_research"
-    | "latest_status_check";
+    | "latest_status_check"
+    | "media_enrichment";
   providers: WebSearchProviderRoute;
   toolChoice: "auto" | "required";
   freshness: "auto" | "latest" | "past_day" | "past_week" | "past_month" | "past_year" | "any_time";
@@ -40,10 +49,19 @@ export interface WebSearchCodeActRequest {
   maxSearches: number;
   topKUrls: number;
   searchContextSize: "low" | "medium" | "high";
+  mediaIntent: WebSearchMediaIntent;
+  searchContentTypes: WebSearchContentTypes;
+  imageMaxResults: number;
+  mediaSafety: "urls_metadata_only_until_user_approval";
   userLocation: string;
   locale: "fr" | "en" | "auto";
   extractIntent: "none" | "suggest_scrapers_urls" | "next_loop_scrapers";
-  output: "compact_answer_url_citation_manifest" | "url_manifest_only" | "comparison_matrix" | "verification_report";
+  output:
+    | "compact_answer_url_citation_manifest"
+    | "url_manifest_only"
+    | "comparison_matrix"
+    | "verification_report"
+    | "media_manifest";
   source: "explicit_codeact";
   proofHash: string;
 }
@@ -63,6 +81,17 @@ export interface WebSearchCitation {
   provider: WebSearchProviderId;
 }
 
+export interface WebSearchMediaCandidate {
+  kind: WebSearchMediaKind;
+  url: string;
+  thumbnailUrl?: string;
+  sourceUrl?: string;
+  title?: string;
+  caption?: string;
+  mimeType?: string;
+  provider: WebSearchProviderId;
+}
+
 export interface WebSearchProviderResult {
   provider: WebSearchProviderId;
   status: WebSearchStatus;
@@ -72,6 +101,7 @@ export interface WebSearchProviderResult {
   answer: string;
   urls: WebSearchUrlCandidate[];
   citations: WebSearchCitation[];
+  media: WebSearchMediaCandidate[];
   warnings: string[];
   error?: string;
 }
@@ -88,6 +118,7 @@ export interface WebSearchBridgeResult {
   answer: string;
   urls: WebSearchUrlCandidate[];
   citations: WebSearchCitation[];
+  media: WebSearchMediaCandidate[];
   suggestedScraperUrls: string[];
   warnings: string[];
   proofHash: string;
@@ -114,7 +145,8 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
       "url_discovery_for_scrapers",
       "citation_verification",
       "comparative_research",
-      "latest_status_check"
+      "latest_status_check",
+      "media_enrichment"
     ], "source_backed_answer_and_ranked_urls"),
     providers: readChoice(fields.get("providers") ?? fields.get("provider"), [
       "auto",
@@ -139,6 +171,22 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
     maxSearches: clampNumber(fields.get("max_searches"), 1, 20, 5),
     topKUrls: clampNumber(fields.get("top_k_urls") ?? fields.get("top_k"), 1, 30, 8),
     searchContextSize: readChoice(fields.get("search_context_size"), ["low", "medium", "high"], "medium"),
+    mediaIntent: readChoice(fields.get("media_intent"), [
+      "none",
+      "image_enrichment",
+      "video_enrichment",
+      "audio_enrichment",
+      "image_video_audio_enrichment"
+    ], readMediaIntentFallback(fields)),
+    searchContentTypes: readChoice(fields.get("search_content_types"), [
+      "text",
+      "text_image",
+      "image"
+    ], readSearchContentTypesFallback(fields)),
+    imageMaxResults: clampNumber(fields.get("image_max_results") ?? fields.get("max_images"), 0, 30, 6),
+    mediaSafety: readChoice(fields.get("media_safety"), [
+      "urls_metadata_only_until_user_approval"
+    ], "urls_metadata_only_until_user_approval"),
     userLocation: clampText(fields.get("user_location") ?? "", 240),
     locale: readChoice(fields.get("locale") ?? fields.get("lang"), ["fr", "en", "auto"], "fr"),
     extractIntent: readChoice(fields.get("extract_intent"), [
@@ -150,7 +198,8 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
       "compact_answer_url_citation_manifest",
       "url_manifest_only",
       "comparison_matrix",
-      "verification_report"
+      "verification_report",
+      "media_manifest"
     ], "compact_answer_url_citation_manifest"),
     source: "explicit_codeact",
     proofHash: ""
@@ -189,6 +238,7 @@ export function renderWebSearchCodeActResult(result: WebSearchBridgeResult): str
     queries: provider.searchedQueries,
     urls: provider.urls.length,
     citations: provider.citations.length,
+    media: provider.media.length,
     error: provider.error
   }));
   return [
@@ -202,6 +252,7 @@ export function renderWebSearchCodeActResult(result: WebSearchBridgeResult): str
     `answer=${JSON.stringify(result.answer)}`,
     `urls=${JSON.stringify(result.urls.slice(0, 30))}`,
     `citations=${JSON.stringify(result.citations.slice(0, 30))}`,
+    `media=${JSON.stringify(result.media.slice(0, 30))}`,
     `suggested_scraper_urls=${JSON.stringify(result.suggestedScraperUrls.slice(0, 30))}`,
     `warnings=${JSON.stringify(result.warnings)}`,
     `proof_hash=sha256:${result.proofHash}`
@@ -292,6 +343,48 @@ function readChoice<T extends string>(value: unknown, choices: readonly T[], fal
   }
   const normalized = value.trim().toLowerCase();
   return choices.find((choice) => choice === normalized) ?? fallback;
+}
+
+function readMediaIntentFallback(fields: Map<string, string>): WebSearchMediaIntent {
+  const explicit = fields.get("media_intent")?.toLowerCase() ?? "";
+  if (
+    explicit === "image_enrichment" ||
+    explicit === "video_enrichment" ||
+    explicit === "audio_enrichment" ||
+    explicit === "image_video_audio_enrichment"
+  ) {
+    return explicit;
+  }
+  const output = fields.get("output")?.toLowerCase() ?? "";
+  const goal = fields.get("goal")?.toLowerCase() ?? "";
+  const query = fields.get("query")?.toLowerCase() ?? fields.get("q")?.toLowerCase() ?? fields.get("topic")?.toLowerCase() ?? "";
+  if (output === "media_manifest" || goal === "media_enrichment") {
+    return "image_enrichment";
+  }
+  if (/\b(video|audio|image|images|photo|photos|visual|thumbnail|poster)\b/u.test(query)) {
+    if (/\bvideo\b/u.test(query) && /\baudio\b/u.test(query)) {
+      return "image_video_audio_enrichment";
+    }
+    if (/\bvideo\b/u.test(query)) {
+      return "video_enrichment";
+    }
+    if (/\baudio\b/u.test(query)) {
+      return "audio_enrichment";
+    }
+    return "image_enrichment";
+  }
+  return "none";
+}
+
+function readSearchContentTypesFallback(fields: Map<string, string>): WebSearchContentTypes {
+  const mediaIntent = readMediaIntentFallback(fields);
+  if (mediaIntent === "image_enrichment" || mediaIntent === "image_video_audio_enrichment") {
+    return "text_image";
+  }
+  if (fields.get("output")?.toLowerCase() === "media_manifest") {
+    return "text_image";
+  }
+  return "text";
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {

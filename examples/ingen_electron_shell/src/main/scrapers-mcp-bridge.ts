@@ -563,6 +563,10 @@ function collectEvidence(values: unknown[], request: ScrapersCodeActRequest): No
     }
     if (typeof value !== "object") return;
     const record = value as Record<string, unknown>;
+    const mediaRecord = normalizeMediaRecord(record, path, request);
+    if (mediaRecord) {
+      media.push(mediaRecord);
+    }
     const keys = Object.keys(record);
     if (keys.some((key) => ["selector", "value", "name", "text", "attr"].includes(key))) {
       fields.push(sanitizePreview(record));
@@ -599,13 +603,20 @@ function collectStringEvidence(
   }
   for (const url of extractUrls(value)) {
     urls.add(url);
-    const item = {
-      url,
-      source_path: path.join(".") || "text"
-    };
-    if (isMediaKey(key) || isImageUrl(url)) {
+    const sourcePath = path.join(".") || "text";
+    if (isMediaKey(key) || isMediaUrl(url)) {
+      const item = {
+        kind: mediaKindForUrl(url, key),
+        url,
+        mimeType: mediaMimeType(url),
+        source_path: sourcePath
+      };
       if (request.media !== "none") media.push(item);
     } else if (request.links !== "none") {
+      const item = {
+        url,
+        source_path: sourcePath
+      };
       links.push(item);
     }
   }
@@ -994,11 +1005,107 @@ function extractUrls(value: string): string[] {
 }
 
 function isMediaKey(key: string): boolean {
-  return /\b(?:image|img|src|srcset|media|thumbnail|poster|video|audio)\b/iu.test(key);
+  return /\b(?:image|img|src|srcset|media|thumbnail|poster|video|audio|sound)\b/iu.test(key);
 }
 
-function isImageUrl(value: string): boolean {
-  return /\.(?:png|jpe?g|webp|gif|avif|svg)(?:[?#].*)?$/iu.test(value);
+function isMediaUrl(value: string): boolean {
+  return /\.(?:png|jpe?g|webp|gif|avif|svg|mp4|webm|mov|m4v|mp3|wav|ogg|flac|m4a)(?:[?#].*)?$/iu.test(value);
+}
+
+function normalizeMediaRecord(
+  record: Record<string, unknown>,
+  path: string[],
+  request: ScrapersCodeActRequest
+): Record<string, unknown> | undefined {
+  if (request.media === "none") {
+    return undefined;
+  }
+  const sourcePath = path.join(".");
+  const pathKey = sourcePath.toLowerCase();
+  const url = firstRecordString(record, [
+    "src",
+    "url",
+    "href",
+    "image_url",
+    "imageUrl",
+    "video_url",
+    "videoUrl",
+    "audio_url",
+    "audioUrl",
+    "poster",
+    "thumbnail",
+    "thumbnail_url",
+    "thumbnailUrl"
+  ]);
+  if (!url || !/^https?:\/\//iu.test(url)) {
+    return undefined;
+  }
+  const kind = mediaKindForUrl(url, pathKey);
+  if (!isMediaUrl(url) && kind === "page" && !/\b(?:media|image|images|audio|video|thumbnail|poster)\b/iu.test(pathKey)) {
+    return undefined;
+  }
+  const item: Record<string, unknown> = {
+    kind,
+    url,
+    mimeType: mediaMimeType(url),
+    source_path: sourcePath || "record"
+  };
+  for (const [target, keys] of Object.entries({
+    alt: ["alt", "alt_text", "altText"],
+    title: ["title", "name"],
+    caption: ["caption", "description", "desc"],
+    thumbnailUrl: ["thumbnail_url", "thumbnailUrl", "thumbnail"],
+    posterUrl: ["poster", "poster_url", "posterUrl"],
+    sourceUrl: ["source_url", "sourceUrl", "source_website_url", "sourceWebsiteUrl", "page_url", "pageUrl"]
+  })) {
+    const value = firstRecordString(record, keys);
+    if (value) {
+      item[target] = value;
+    }
+  }
+  for (const key of ["score", "width", "height", "duration", "size", "bytes"]) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      item[key] = value;
+    }
+  }
+  return item;
+}
+
+function firstRecordString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function mediaKindForUrl(url: string, hint = ""): "image" | "video" | "audio" | "page" {
+  const clean = url.split(/[?#]/u, 1)[0]?.toLowerCase() ?? "";
+  if (/\b(?:audio|sound)\b/iu.test(hint) || /\.(?:mp3|wav|ogg|flac|m4a)$/iu.test(clean)) return "audio";
+  if (/\bvideo\b/iu.test(hint) || /\.(?:mp4|webm|mov|m4v)$/iu.test(clean)) return "video";
+  if (/\b(?:image|img|thumbnail|poster)\b/iu.test(hint) || /\.(?:png|jpe?g|webp|gif|avif|svg)$/iu.test(clean)) return "image";
+  return "page";
+}
+
+function mediaMimeType(url: string): string | undefined {
+  const clean = url.split(/[?#]/u, 1)[0]?.toLowerCase() ?? "";
+  if (clean.endsWith(".png")) return "image/png";
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".avif")) return "image/avif";
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  if (clean.endsWith(".mp4")) return "video/mp4";
+  if (clean.endsWith(".webm")) return "video/webm";
+  if (clean.endsWith(".mov")) return "video/quicktime";
+  if (clean.endsWith(".mp3")) return "audio/mpeg";
+  if (clean.endsWith(".wav")) return "audio/wav";
+  if (clean.endsWith(".ogg")) return "audio/ogg";
+  if (clean.endsWith(".flac")) return "audio/flac";
+  return undefined;
 }
 
 function looksLikeBase64Artifact(key: string, value: string): boolean {

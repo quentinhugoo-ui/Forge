@@ -5,6 +5,7 @@ import {
   type WebSearchBridgeResult,
   type WebSearchCitation,
   type WebSearchCodeActRequest,
+  type WebSearchMediaCandidate,
   type WebSearchProviderId,
   type WebSearchProviderResult,
   type WebSearchProviderRoute,
@@ -30,8 +31,12 @@ export async function runWebSearchBridge(request: WebSearchCodeActRequest): Prom
   const status: WebSearchStatus = okCount === providers.length && providers.length > 0 ? "ok" : okCount > 0 ? "partial" : "error";
   const urls = dedupeUrls(providers.flatMap((provider) => provider.urls)).slice(0, request.topKUrls);
   const citations = dedupeCitations(providers.flatMap((provider) => provider.citations)).slice(0, request.topKUrls * 2);
+  const media = dedupeMedia(providers.flatMap((provider) => provider.media)).slice(0, request.imageMaxResults || request.topKUrls);
   const warnings = providers.flatMap((provider) => provider.warnings);
-  const suggestedScraperUrls = urls.map((item) => item.url).slice(0, request.topKUrls);
+  const suggestedScraperUrls = uniqueStrings([
+    ...urls.map((item) => item.url),
+    ...media.map((item) => item.sourceUrl || item.url).filter(Boolean)
+  ]).slice(0, request.topKUrls);
   const answer = compactAnswer(providers);
   const result: WebSearchBridgeResult = {
     schema: WEBSEARCH_RESULT_SCHEMA,
@@ -45,6 +50,7 @@ export async function runWebSearchBridge(request: WebSearchCodeActRequest): Prom
     answer,
     urls,
     citations,
+    media,
     suggestedScraperUrls,
     warnings,
     proofHash: ""
@@ -93,6 +99,16 @@ async function runOpenAiWebSearch(request: WebSearchCodeActRequest): Promise<Web
     const tool: Record<string, unknown> = {
       type: "web_search"
     };
+    const contentTypes = openAiSearchContentTypes(request);
+    if (contentTypes.length > 0) {
+      tool.search_content_types = contentTypes;
+    }
+    if (contentTypes.includes("image")) {
+      tool.image_settings = {
+        max_results: Math.max(1, request.imageMaxResults || 6),
+        caption: true
+      };
+    }
     const filters: Record<string, string[]> = {};
     if (request.allowedDomains.length > 0) filters.allowed_domains = request.allowedDomains;
     if (request.blockedDomains.length > 0) filters.blocked_domains = request.blockedDomains;
@@ -119,10 +135,15 @@ async function runOpenAiWebSearch(request: WebSearchCodeActRequest): Promise<Web
       ...item,
       provider: "openai" as const
     }));
+    const media = collectOpenAiMedia(parsed).slice(0, request.imageMaxResults || request.topKUrls).map((item) => ({
+      ...item,
+      provider: "openai" as const
+    }));
     return providerOk("openai", started, model, {
       answer,
       urls,
       citations,
+      media,
       searchedQueries: collectOpenAiQueries(parsed)
     });
   } catch (error) {
@@ -167,10 +188,15 @@ async function runClaudeWebSearch(request: WebSearchCodeActRequest): Promise<Web
       ...item,
       provider: "claude" as const
     }));
+    const media = collectClaudeMediaPageCandidates(parsed, request).slice(0, request.imageMaxResults || request.topKUrls).map((item) => ({
+      ...item,
+      provider: "claude" as const
+    }));
     return providerOk("claude", started, model, {
       answer,
       urls,
       citations,
+      media,
       searchedQueries: collectClaudeQueries(parsed)
     });
   } catch (error) {
@@ -187,6 +213,9 @@ function webSearchPrompt(request: WebSearchCodeActRequest): string {
     request.allowedDomains.length > 0 ? `Allowed domains: ${request.allowedDomains.join(", ")}` : "",
     request.blockedDomains.length > 0 ? `Blocked domains: ${request.blockedDomains.join(", ")}` : "",
     "Return a concise source-backed answer and rank the most useful URLs.",
+    request.mediaIntent !== "none"
+      ? `Media enrichment requested: ${request.mediaIntent}. Return/source media candidates conservatively, with captions and source pages when available. Do not fabricate media URLs.`
+      : "",
     "Do not include raw HTML or long page dumps.",
     request.extractIntent !== "none"
       ? "If extraction is needed, identify the exact URLs that should be passed to /scrapers_ next."
@@ -213,7 +242,7 @@ function providerOk(
   provider: WebSearchProviderId,
   started: number,
   model: string,
-  result: Pick<WebSearchProviderResult, "answer" | "urls" | "citations" | "searchedQueries">
+  result: Pick<WebSearchProviderResult, "answer" | "urls" | "citations" | "media" | "searchedQueries">
 ): WebSearchProviderResult {
   return {
     provider,
@@ -240,9 +269,25 @@ function providerError(
     answer: "",
     urls: [],
     citations: [],
+    media: [],
     warnings: [error],
     error
   };
+}
+
+function openAiSearchContentTypes(request: WebSearchCodeActRequest): string[] {
+  if (request.searchContentTypes === "image") {
+    return ["image"];
+  }
+  if (
+    request.searchContentTypes === "text_image" ||
+    request.mediaIntent === "image_enrichment" ||
+    request.mediaIntent === "image_video_audio_enrichment" ||
+    request.output === "media_manifest"
+  ) {
+    return ["image", "text"];
+  }
+  return [];
 }
 
 function collectOpenAiUrls(parsed: unknown): Array<Omit<WebSearchUrlCandidate, "provider">> {
@@ -272,6 +317,28 @@ function collectOpenAiCitations(parsed: unknown): Array<Omit<WebSearchCitation, 
     });
   });
   return dedupeCitationShape(citations);
+}
+
+function collectOpenAiMedia(parsed: unknown): Array<Omit<WebSearchMediaCandidate, "provider">> {
+  const media: Array<Omit<WebSearchMediaCandidate, "provider">> = [];
+  walkObjects(parsed, (record) => {
+    const type = firstString(record, ["type"]);
+    const imageUrl = firstString(record, ["image_url", "imageUrl", "url"]);
+    if (type !== "image_result" && !firstString(record, ["image_url", "imageUrl"])) {
+      return;
+    }
+    if (!imageUrl || !/^https?:\/\//i.test(imageUrl)) return;
+    media.push({
+      kind: "image",
+      url: imageUrl,
+      thumbnailUrl: firstString(record, ["thumbnail_url", "thumbnailUrl"]),
+      sourceUrl: firstString(record, ["source_website_url", "sourceWebsiteUrl", "source_url", "sourceUrl"]),
+      title: firstString(record, ["title"]),
+      caption: compactText(firstString(record, ["caption", "alt", "description"]), 260),
+      mimeType: mediaMimeType(imageUrl)
+    });
+  });
+  return dedupeMediaShape(media);
 }
 
 function collectOpenAiQueries(parsed: unknown): string[] {
@@ -327,6 +394,29 @@ function collectClaudeCitations(parsed: unknown): Array<Omit<WebSearchCitation, 
   return dedupeCitationShape(citations);
 }
 
+function collectClaudeMediaPageCandidates(
+  parsed: unknown,
+  request: WebSearchCodeActRequest
+): Array<Omit<WebSearchMediaCandidate, "provider">> {
+  if (request.mediaIntent === "none" && request.output !== "media_manifest") {
+    return [];
+  }
+  return collectClaudeUrls(parsed)
+    .filter((item) => {
+      const haystack = `${item.title ?? ""} ${item.snippet ?? ""}`.toLowerCase();
+      if (request.mediaIntent === "audio_enrichment") return /\b(audio|sound|music|podcast|ost|voice|clip)\b/u.test(haystack);
+      if (request.mediaIntent === "video_enrichment") return /\b(video|trailer|clip|gameplay|youtube|vimeo)\b/u.test(haystack);
+      return true;
+    })
+    .map((item) => ({
+      kind: "page" as const,
+      url: item.url,
+      sourceUrl: item.url,
+      title: item.title,
+      caption: compactText(item.snippet ?? item.pageAge ?? "", 260)
+    }));
+}
+
 function collectClaudeQueries(parsed: unknown): string[] {
   const queries: string[] = [];
   walkObjects(parsed, (record) => {
@@ -374,12 +464,20 @@ function dedupeCitations(values: WebSearchCitation[]): WebSearchCitation[] {
   return dedupeBy(values, (item) => `${canonicalUrl(item.url)}:${item.citedText ?? ""}`);
 }
 
+function dedupeMedia(values: WebSearchMediaCandidate[]): WebSearchMediaCandidate[] {
+  return dedupeBy(values, (item) => canonicalUrl(item.url));
+}
+
 function dedupeUrlShape<T extends { url: string }>(values: T[]): T[] {
   return dedupeBy(values, (item) => canonicalUrl(item.url));
 }
 
 function dedupeCitationShape<T extends { url: string; citedText?: string }>(values: T[]): T[] {
   return dedupeBy(values, (item) => `${canonicalUrl(item.url)}:${item.citedText ?? ""}`);
+}
+
+function dedupeMediaShape<T extends { url: string }>(values: T[]): T[] {
+  return dedupeBy(values, (item) => canonicalUrl(item.url));
 }
 
 function dedupeBy<T>(values: T[], keyFor: (value: T) => string): T[] {
@@ -435,6 +533,21 @@ function compactText(text: string, maxChars: number): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length <= maxChars) return clean;
   return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function mediaMimeType(url: string): string | undefined {
+  const clean = url.split(/[?#]/u, 1)[0]?.toLowerCase() ?? "";
+  if (clean.endsWith(".png")) return "image/png";
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".avif")) return "image/avif";
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  if (clean.endsWith(".mp4")) return "video/mp4";
+  if (clean.endsWith(".webm")) return "video/webm";
+  if (clean.endsWith(".mp3")) return "audio/mpeg";
+  if (clean.endsWith(".wav")) return "audio/wav";
+  return undefined;
 }
 
 function friendlyError(error: unknown): string {

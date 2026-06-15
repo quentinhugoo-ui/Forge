@@ -283,6 +283,11 @@ export function renderScrapersCodeActResult(result: ScrapersBridgeResult): strin
     `request_hash=sha256:${result.requestHash}`,
     `duration_ms=${result.durationMs}`,
     `providers=${JSON.stringify(providerSummary)}`,
+    `media_manifest=${boundedJson({
+      media: result.merged.media,
+      artifacts: result.merged.artifacts,
+      provenance: result.merged.provenance
+    }, 30_000)}`,
     `manifest=${boundedJson(manifest, 60_000)}`,
     `proof_hash=sha256:${result.proofHash}`
   ].join("\n");

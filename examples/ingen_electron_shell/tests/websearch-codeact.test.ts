@@ -42,6 +42,9 @@ describe("WebSearch CodeAct", () => {
       'max_searches="50"',
       'top_k_urls="99"',
       'search_context_size="high"',
+      'media_intent="image_enrichment"',
+      'search_content_types="text_image"',
+      'image_max_results="99"',
       'extract_intent="next_loop_scrapers"'
     ].join(" "));
 
@@ -57,6 +60,9 @@ describe("WebSearch CodeAct", () => {
       maxSearches: 20,
       topKUrls: 30,
       searchContextSize: "high",
+      mediaIntent: "image_enrichment",
+      searchContentTypes: "text_image",
+      imageMaxResults: 30,
       extractIntent: "next_loop_scrapers"
     });
     expect(request?.proofHash).toMatch(/^[a-f0-9]{64}$/);
@@ -101,11 +107,27 @@ describe("WebSearch CodeAct", () => {
         answer: "Use source-backed search first.",
         urls: [{ provider: "openai", url: "https://example.com/a", title: "Example" }],
         citations: [{ provider: "openai", url: "https://example.com/a", title: "Example" }],
+        media: [{
+          provider: "openai",
+          kind: "image",
+          url: "https://example.com/image.jpg",
+          thumbnailUrl: "https://example.com/thumb.jpg",
+          sourceUrl: "https://example.com/a",
+          caption: "Example image"
+        }],
         warnings: []
       }],
       answer: "Use source-backed search first.",
       urls: [{ provider: "openai", url: "https://example.com/a", title: "Example" }],
       citations: [{ provider: "openai", url: "https://example.com/a", title: "Example" }],
+      media: [{
+        provider: "openai",
+        kind: "image",
+        url: "https://example.com/image.jpg",
+        thumbnailUrl: "https://example.com/thumb.jpg",
+        sourceUrl: "https://example.com/a",
+        caption: "Example image"
+      }],
       suggestedScraperUrls: ["https://example.com/a"],
       warnings: [],
       proofHash: "b".repeat(64)
@@ -116,6 +138,7 @@ describe("WebSearch CodeAct", () => {
     expect(rendered).toContain("WEBSEARCH_RESULT");
     expect(rendered).toContain(`schema=${WEBSEARCH_RESULT_SCHEMA}`);
     expect(rendered).toContain("status=ok");
+    expect(rendered).toContain("media=");
     expect(rendered).toContain("suggested_scraper_urls");
   });
 
@@ -133,6 +156,7 @@ describe("WebSearch CodeAct", () => {
     expect(result.providers).toHaveLength(2);
     expect(result.warnings.join(" ")).toContain("API_KEY");
     expect(result.suggestedScraperUrls).toEqual([]);
+    expect(result.media).toEqual([]);
   });
 
   it("is wired into the existing module CodeAct loop without replacing the loopstream architecture", () => {

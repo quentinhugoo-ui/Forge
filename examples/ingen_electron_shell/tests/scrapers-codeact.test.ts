@@ -118,6 +118,7 @@ describe("Scrapers MCP CodeAct", () => {
     expect(rendered).toContain("SCRAPERS_RESULT");
     expect(rendered).toContain(`schema=${SCRAPERS_RESULT_SCHEMA}`);
     expect(rendered).toContain("status=partial");
+    expect(rendered).toContain("media_manifest=");
     expect(rendered).toContain('"backend":"scrapling"');
     expect(rendered).toContain('"backend":"crawl4ai"');
   });

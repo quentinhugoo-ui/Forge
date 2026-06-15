@@ -63,7 +63,7 @@ pub const BRAIN_SEGMENT_RESULT_SCHEMA: &str = "forge.brain.segment.result.v1";
 pub const BRAIN_NEWBRAIN_COMMAND: &str = "/newbrain_";
 pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND: &str = "/modify\"<brain_name>\"brain_";
 pub const BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA: &str = "forge.brain.domain_brain.result.v1";
-pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is a hard module rule: geographic place detected alone means /maps_; geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. Ordinary city, place, local weather, map, route, country, region, island, coordinates, Google Earth, where-is, or geographic-context requests are geospatial tasks: prefer /maps_ and do not activate /sciencebrain_ unless the user explicitly asks for scientific meteorology, climate modeling, physics, engineering, or compute analysis. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Module priority: when the user asks about a city, place, country, region, island, local weather for a place, route, map, coordinates, Google Earth, where something is, or any geographic context without travel/vacation/stay intent, prefer /maps_ over /sciencebrain_, /airbnb_, /websearch_, and /googleweb_; use the Brain home city as the default maps target when no place is specified. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ is for hosted OpenAI/Claude web-search discovery when the user needs current source-backed research, cited URLs, ranking, verification or URLs to feed into /scrapers_; it returns a compact answer/URL/citation manifest, not raw page content. After WEBSEARCH_RESULT, the logical next loop-stream step is for the agent to emit /scrapers_ with the selected URLs whenever the user needs page Markdown, media, artifacts, links or structured extraction; /websearch_ does not bypass the existing CodeAct loop. Use /codedocs_ for Context7 dependency docs when the library is already identified, /github_ for remote GitHub repo/issues/PR/CI/release context, /webact_ for Playwright MCP browser interaction or visual verification, and /securityscan_ for Semgrep checks before risky code changes or PRs. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
+pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is a hard module rule: geographic place detected alone means /maps_; geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. Ordinary city, place, local weather, map, route, country, region, island, coordinates, Google Earth, where-is, or geographic-context requests are geospatial tasks: prefer /maps_ and do not activate /sciencebrain_ unless the user explicitly asks for scientific meteorology, climate modeling, physics, engineering, or compute analysis. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Coding-specific MCP routes for dependency docs, remote repositories, browser automation and static security scanning are owned by Coding Brain; while active=general, activate /codingbrain_ before using them. Module priority: when the user asks about a city, place, country, region, island, local weather for a place, route, map, coordinates, Google Earth, where something is, or any geographic context without travel/vacation/stay intent, prefer /maps_ over /sciencebrain_, /airbnb_, /websearch_, and /googleweb_; use the Brain home city as the default maps target when no place is specified. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ is for hosted OpenAI/Claude web-search discovery when the user needs current source-backed research, cited URLs, ranking, verification, web-grounded image discovery or URLs to feed into /scrapers_; it returns a compact answer/URL/citation/media manifest, not raw page content. The LLM may use media_intent on /websearch_ to enrich an otherwise-known answer with current images, visual references, videos or audio source pages, but it should not force web search when media would not improve the conversation. After WEBSEARCH_RESULT, the logical next loop-stream step is for the agent to emit /scrapers_ with the selected URLs whenever the user needs page Markdown, media, artifacts, links or structured extraction; /websearch_ does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
 pub const BRAIN_WORKSPACE_COMMAND: &str = "/workspace_";
 pub const BRAIN_CAPABILITIES_COMMAND: &str = "/capabilities_";
 pub const BRAIN_CAPABILITIES_RESULT_SCHEMA: &str = "forge.agent.capabilities.result.v1";
@@ -81,7 +81,7 @@ pub const BRAIN_RUST_PORT_ADAPTER_COMMAND: &str = "/rust_port_adapter_";
 pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
 pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one standalone Brain-owned compact line /\"nomduchat\"_renamechat_ after identifying the first user message subject. The app uses the quoted nomduchat field as the sidebar title. The event is internal: never merge it with visible prose, never echo this line in the user-visible answer, and never describe the rename. Use 2-5 natural words, like Codex or Claude; avoid copying the prompt or using only a proper noun.";
-pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ when the user needs current source-backed web research, URL discovery, citation verification, market/tool/library comparisons, recent docs, prices, laws, releases, papers, news, or URLs to feed into /scrapers_. This CodeAct asks the runtime to call hosted OpenAI and/or Claude web-search tools, returning a compact WEBSEARCH_RESULT with the synthesized answer, provider trace, searched queries, ranked URLs, titles, citation spans, snippets/page ages when available, confidence and suggested follow-up scrape URLs. It does not return raw HTML, full page text or media files. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream by emitting /scrapers_ with the selected URLs whenever clean Markdown, images, links, artifacts, durable evidence or structured extraction are needed. Prefer /websearch_ over /googleweb_ for answers that require sources; use /googleweb_ only for visual/manual browser navigation. Respect source attribution, privacy, paywalls, robots/site terms and bounded search budgets.";
+pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ when the user needs current source-backed web research, URL discovery, citation verification, market/tool/library comparisons, recent docs, prices, laws, releases, papers, news, web-grounded image discovery, or URLs to feed into /scrapers_. This CodeAct asks the runtime to call hosted OpenAI and/or Claude web-search tools, returning a compact WEBSEARCH_RESULT with the synthesized answer, provider trace, searched queries, ranked URLs, titles, citation spans, snippets/page ages when available, media candidates when requested, confidence and suggested follow-up scrape URLs. It does not return raw HTML, full page text or downloaded media files. Use media_intent when an otherwise-known answer would be meaningfully improved by images, video/audio source pages or visual references. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream by emitting /scrapers_ with the selected URLs whenever clean Markdown, images, links, artifacts, durable evidence or structured extraction are needed. Prefer /websearch_ over /googleweb_ for answers that require sources; use /googleweb_ only for visual/manual browser navigation. Respect source attribution, privacy, paywalls, robots/site terms and bounded search budgets.";
 pub const BRAIN_CODEDOCS_COMMAND_DESCRIPTION: &str = "Use /codedocs_ to query Context7 MCP for current, version-aware library/API documentation, setup instructions and code examples before coding against external dependencies. Prefer it after /codingbrain_ and before guessing imports, configuration, API signatures, migration steps or framework behavior. It is read-only documentation retrieval, not general web search and not page scraping; use /websearch_ first when the library, package or official docs URL is unknown.";
 pub const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION: &str = "Use /github_ for GitHub MCP workflows on remote repositories: repo context, code search, issues, pull requests, Actions/CI, releases and PR discussion triage. Prefer read-only operations by default; issue/PR comments, labels, branch changes or other writes require explicit user confirmation and a scoped GitHub token. Use local workspace actions for files already on disk.";
 pub const BRAIN_WEBACT_COMMAND_DESCRIPTION: &str = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation.";
@@ -589,10 +589,6 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_searcharchive_codeact_template(),
         brain_rename_session_codeact_template(),
         brain_websearch_codeact_template(),
-        brain_codedocs_codeact_template(),
-        brain_github_mcp_codeact_template(),
-        brain_webact_codeact_template(),
-        brain_securityscan_codeact_template(),
         brain_googleweb_codeact_template(),
         brain_scrapers_codeact_template(),
         brain_scrapling_mcp_codeact_template(),
@@ -607,6 +603,15 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_coding_codeact_template(),
         brain_newbrain_codeact_template(),
         brain_modify_named_brain_codeact_template(),
+    ]
+}
+
+pub fn brain_coding_mcp_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
+    vec![
+        brain_codedocs_codeact_template(),
+        brain_github_mcp_codeact_template(),
+        brain_webact_codeact_template(),
+        brain_securityscan_codeact_template(),
     ]
 }
 
@@ -761,7 +766,7 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_WEBSEARCH_COMMAND.to_string(),
         section: "websearch".to_string(),
-        purpose: "Run hosted OpenAI/Claude web-search discovery for current source-backed research. Use this when the answer needs fresh sources, ranked URLs, citations, verification, recent docs/releases/prices/laws/news/papers, or URL candidates for /scrapers_. The host should return WEBSEARCH_RESULT as a compact answer/URL/citation manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
+        purpose: "Run hosted OpenAI/Claude web-search discovery for current source-backed research. Use this when the answer needs fresh sources, ranked URLs, citations, verification, recent docs/releases/prices/laws/news/papers, web-grounded image discovery, media source pages, or URL candidates for /scrapers_. The host should return WEBSEARCH_RESULT as a compact answer/URL/citation/media manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
         result_schema: BRAIN_WEBSEARCH_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -782,8 +787,9 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                     "citation_verification".to_string(),
                     "comparative_research".to_string(),
                     "latest_status_check".to_string(),
+                    "media_enrichment".to_string(),
                 ],
-                description: "Primary job for the hosted search tool. Use url_discovery_for_scrapers when the next loop-stream step should be /scrapers_ after URLs are found.".to_string(),
+                description: "Primary job for the hosted search tool. Use url_discovery_for_scrapers when the next loop-stream step should be /scrapers_ after URLs are found; use media_enrichment when a mostly-known answer would benefit from current images, video/audio source pages or visual references.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "providers".to_string(),
@@ -857,6 +863,44 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                 description: "OpenAI-style context budget hint. low favors latency/cost; high is for detailed comparisons or source conflict analysis.".to_string(),
             },
             BrainCodeActTemplateSlot {
+                name: "media_intent".to_string(),
+                required: false,
+                default_value: "none".to_string(),
+                allowed_values: vec![
+                    "none".to_string(),
+                    "image_enrichment".to_string(),
+                    "video_enrichment".to_string(),
+                    "audio_enrichment".to_string(),
+                    "image_video_audio_enrichment".to_string(),
+                ],
+                description: "Optional multimodal enrichment intent. Use image_enrichment for product/place/character/reference visuals; use video/audio modes to find source pages and then send selected URLs to /scrapers_ for real media extraction.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "search_content_types".to_string(),
+                required: false,
+                default_value: "text".to_string(),
+                allowed_values: vec![
+                    "text".to_string(),
+                    "text_image".to_string(),
+                    "image".to_string(),
+                ],
+                description: "Hosted search content mix. OpenAI can return raw image_result entries when image is included; Claude contributes page results/citations and should be followed by /scrapers_ for media URLs.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "image_max_results".to_string(),
+                required: false,
+                default_value: "6".to_string(),
+                allowed_values: Vec::new(),
+                description: "Maximum web-grounded image candidates requested from providers that support image search. The host clamps this and keeps only URL/thumbnail/caption/source metadata by default.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "media_safety".to_string(),
+                required: false,
+                default_value: "urls_metadata_only_until_user_approval".to_string(),
+                allowed_values: vec!["urls_metadata_only_until_user_approval".to_string()],
+                description: "Safety guardrail: do not download or embed remote media binaries during /websearch_; return metadata and source URLs, then use /scrapers_ or explicit user approval for artifacts.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
                 name: "user_location".to_string(),
                 required: false,
                 default_value: "none".to_string(),
@@ -894,6 +938,7 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                     "url_manifest_only".to_string(),
                     "comparison_matrix".to_string(),
                     "verification_report".to_string(),
+                    "media_manifest".to_string(),
                 ],
                 description: "Result shape. All modes must include citations/URLs and provider trace when sources are used; never return raw HTML or full page dumps.".to_string(),
             },
@@ -3456,6 +3501,19 @@ mod tests {
                 && slot.allowed_values.contains(&"high".to_string())
         }));
         assert!(template.slots.iter().any(|slot| {
+            slot.name == "media_intent"
+                && slot.allowed_values.contains(&"image_enrichment".to_string())
+                && slot.allowed_values.contains(&"image_video_audio_enrichment".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "search_content_types"
+                && slot.allowed_values.contains(&"text_image".to_string())
+                && slot.description.contains("image_result")
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "image_max_results" && slot.default_value == "6"
+        }));
+        assert!(template.slots.iter().any(|slot| {
             slot.name == "extract_intent"
                 && slot.allowed_values.contains(&"next_loop_scrapers".to_string())
                 && slot.description.contains("following loop-stream step")
@@ -3465,22 +3523,25 @@ mod tests {
                 && slot
                     .allowed_values
                     .contains(&"compact_answer_url_citation_manifest".to_string())
+                && slot.allowed_values.contains(&"media_manifest".to_string())
         }));
         assert!(brain_general_codeact_templates()
             .iter()
             .any(|candidate| candidate.command == BRAIN_WEBSEARCH_COMMAND));
         assert!(BRAIN_CODEACT_ROUTING_RULES.contains("/websearch_"));
+        assert!(BRAIN_CODEACT_ROUTING_RULES.contains("media_intent"));
         assert!(BRAIN_CODEACT_ROUTING_RULES.contains("does not bypass the existing CodeAct loop"));
         assert!(BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION.contains("Prefer /websearch_"));
     }
 
     #[test]
-    fn brain_exposes_priority_mcp_codeact_templates() {
+    fn brain_exposes_priority_mcp_as_coding_codeact_templates() {
         let codedocs = brain_codedocs_codeact_template();
         let github = brain_github_mcp_codeact_template();
         let webact = brain_webact_codeact_template();
         let security = brain_securityscan_codeact_template();
-        let templates = brain_general_codeact_templates();
+        let coding_templates = brain_coding_mcp_codeact_templates();
+        let general_templates = brain_general_codeact_templates();
 
         assert_eq!(codedocs.command, BRAIN_CODEDOCS_COMMAND);
         assert_eq!(codedocs.section, "mcp");
@@ -3537,10 +3598,11 @@ mod tests {
             BRAIN_WEBACT_COMMAND,
             BRAIN_SECURITYSCAN_COMMAND,
         ] {
-            assert!(templates.iter().any(|candidate| candidate.command == command));
-            assert!(BRAIN_CODEACT_ROUTING_RULES.contains(command));
+            assert!(coding_templates.iter().any(|candidate| candidate.command == command));
+            assert!(!general_templates.iter().any(|candidate| candidate.command == command));
             assert!(BRAIN_CODING_VISIBLE_CATALOG.contains(command));
         }
+        assert!(BRAIN_CODEACT_ROUTING_RULES.contains("owned by Coding Brain"));
     }
 
     #[test]

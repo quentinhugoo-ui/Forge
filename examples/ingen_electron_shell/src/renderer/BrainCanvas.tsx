@@ -273,11 +273,7 @@ const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/cod
 const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
 const MCP_COMMANDS: BrainCodeActCommand[] = [
   BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPLING_MCP_COMMAND,
-  BRAIN_CODEDOCS_COMMAND,
-  BRAIN_GITHUB_MCP_COMMAND,
-  BRAIN_WEBACT_COMMAND,
-  BRAIN_SECURITYSCAN_COMMAND
+  BRAIN_SCRAPLING_MCP_COMMAND
 ];
 
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
@@ -289,6 +285,10 @@ const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
 
 const CODING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/workspace_",
+  BRAIN_CODEDOCS_COMMAND,
+  BRAIN_GITHUB_MCP_COMMAND,
+  BRAIN_WEBACT_COMMAND,
+  BRAIN_SECURITYSCAN_COMMAND,
   "/newmodule_",
   "/rust_port_adapter_",
   "/rust_state_store_"
