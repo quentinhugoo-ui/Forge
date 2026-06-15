@@ -142,6 +142,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub virtual_geometry_packet: BangerNativeVirtualGeometryPacket,
     pub virtual_geometry_streaming_plan: BangerNativeVirtualGeometryStreamingPlan,
     pub voxel_clipmap_packet: BangerNativeVoxelClipmapPacket,
+    pub voxel_trace_schedule_packet: BangerNativeVoxelTraceSchedulePacket,
     pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
@@ -1641,6 +1642,84 @@ pub struct BangerNativeVoxelTraceTile {
     pub trace_policy: &'static str,
     pub indirect_dispatch_args: [u32; 3],
     pub trace_tile_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelTraceSchedulePacket {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub voxel_clipmap_hash: String,
+    pub hzb_resource_hash: String,
+    pub radiance_schedule_hash: String,
+    pub lumen_lighting_hash: String,
+    pub trace_tile_count: usize,
+    pub dispatch_count: usize,
+    pub radiance_injection_count: usize,
+    pub high_detail_tile_count: usize,
+    pub coarse_tile_count: usize,
+    pub screen_trace_gate_count: usize,
+    pub software_sdf_trace_count: usize,
+    pub async_compute_job_count: usize,
+    pub total_ray_budget: u64,
+    pub tile_schedule_hash: String,
+    pub dispatch_hash: String,
+    pub hzb_gate_hash: String,
+    pub radiance_injection_hash: String,
+    pub packet_hash: String,
+    pub scheduled_tiles: Vec<BangerNativeVoxelTraceScheduledTile>,
+    pub dispatches: Vec<BangerNativeVoxelTraceDispatch>,
+    pub radiance_injections: Vec<BangerNativeVoxelRadianceInjection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelTraceScheduledTile {
+    pub schedule_tile_id: String,
+    pub source_tile_id: String,
+    pub source_trace_tile_hash: String,
+    pub clipmap_level: u32,
+    pub hzb_mip: u32,
+    pub page_table_range: [u32; 4],
+    pub trace_mode: &'static str,
+    pub ray_budget: u32,
+    pub screen_probe_budget: u32,
+    pub software_sdf_step_budget: u32,
+    pub radiance_probe_page_id: String,
+    pub lumen_surface_page_id: String,
+    pub hzb_gate_hash: String,
+    pub schedule_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelTraceDispatch {
+    pub dispatch_id: String,
+    pub queue_lane: &'static str,
+    pub pass_name: &'static str,
+    pub tile_count: usize,
+    pub threadgroup_count: u32,
+    pub indirect_dispatch_args: [u32; 3],
+    pub first_schedule_hash: Option<String>,
+    pub last_schedule_hash: Option<String>,
+    pub barrier_hash: String,
+    pub dispatch_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelRadianceInjection {
+    pub injection_id: String,
+    pub schedule_tile_id: String,
+    pub target_probe_page_id: String,
+    pub target_lumen_surface_page_id: String,
+    pub source_sdf_atlas_hash: String,
+    pub target_radiance_tile_hash: String,
+    pub injection_weight_q16: u32,
+    pub injection_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3858,6 +3937,13 @@ impl BangerNativeEngine {
             &virtual_geometry_packet,
             &virtual_geometry_streaming_plan,
         );
+        let voxel_trace_schedule_packet = build_voxel_trace_schedule_packet(
+            &prepared,
+            &voxel_clipmap_packet,
+            &meshlet_visibility_packet,
+            &radiance_schedule_manifest,
+            &lumen_lighting_packet,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -3944,6 +4030,7 @@ impl BangerNativeEngine {
             &virtual_geometry_packet,
             &virtual_geometry_streaming_plan,
             &voxel_clipmap_packet,
+            &voxel_trace_schedule_packet,
             &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
@@ -4028,6 +4115,7 @@ impl BangerNativeEngine {
             virtual_geometry_packet,
             virtual_geometry_streaming_plan,
             voxel_clipmap_packet,
+            voxel_trace_schedule_packet,
             nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
@@ -6872,6 +6960,479 @@ fn voxel_clipmap_packet_hash(
     for tile in trace_tiles {
         h.update(tile.trace_tile_hash.as_bytes());
     }
+    hex32(h.finalize().into())
+}
+
+fn build_voxel_trace_schedule_packet(
+    prepared: &MonsterPreparedCompute,
+    voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+) -> BangerNativeVoxelTraceSchedulePacket {
+    let scheduled_tiles = voxel_trace_scheduled_tiles(
+        voxel_clipmap_packet,
+        meshlet_visibility_packet,
+        radiance_schedule_manifest,
+        lumen_lighting_packet,
+    );
+    let dispatches = voxel_trace_dispatches(&scheduled_tiles);
+    let radiance_injections = voxel_radiance_injections(
+        voxel_clipmap_packet,
+        radiance_schedule_manifest,
+        lumen_lighting_packet,
+        &scheduled_tiles,
+    );
+    let tile_schedule_hash = voxel_trace_schedule_tile_hash(&scheduled_tiles);
+    let dispatch_hash = voxel_trace_dispatch_hash(&dispatches);
+    let hzb_gate_hash = voxel_trace_hzb_gate_hash(meshlet_visibility_packet, &scheduled_tiles);
+    let radiance_injection_hash = voxel_radiance_injection_hash(&radiance_injections);
+    let packet_hash = voxel_trace_schedule_packet_hash(
+        prepared,
+        voxel_clipmap_packet,
+        meshlet_visibility_packet,
+        radiance_schedule_manifest,
+        lumen_lighting_packet,
+        &tile_schedule_hash,
+        &dispatch_hash,
+        &hzb_gate_hash,
+        &radiance_injection_hash,
+        &scheduled_tiles,
+        &dispatches,
+        &radiance_injections,
+    );
+    BangerNativeVoxelTraceSchedulePacket {
+        schema: "forge.banger.voxel_trace_schedule_packet.v1",
+        schema_version: 1,
+        authority: "banger_voxel_clipmap_hzb_lumen_trace_scheduler",
+        clean_room_basis:
+            "local_unreal_sparse_hzb_global_distance_field_lumen_radiance_cache_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        voxel_clipmap_hash: voxel_clipmap_packet.packet_hash.clone(),
+        hzb_resource_hash: meshlet_visibility_packet.hzb_resource_hash.clone(),
+        radiance_schedule_hash: radiance_schedule_manifest.schedule_hash.clone(),
+        lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
+        trace_tile_count: scheduled_tiles.len(),
+        dispatch_count: dispatches.len(),
+        radiance_injection_count: radiance_injections.len(),
+        high_detail_tile_count: scheduled_tiles
+            .iter()
+            .filter(|tile| tile.trace_mode == "high_detail_sdf_plus_screen_hzb")
+            .count(),
+        coarse_tile_count: scheduled_tiles
+            .iter()
+            .filter(|tile| tile.trace_mode == "coarse_voxel_mip_world_trace")
+            .count(),
+        screen_trace_gate_count: scheduled_tiles
+            .iter()
+            .filter(|tile| tile.hzb_mip <= 2)
+            .count(),
+        software_sdf_trace_count: scheduled_tiles
+            .iter()
+            .filter(|tile| tile.software_sdf_step_budget > 0)
+            .count(),
+        async_compute_job_count: dispatches
+            .iter()
+            .filter(|dispatch| dispatch.queue_lane == "async_compute")
+            .count(),
+        total_ray_budget: scheduled_tiles
+            .iter()
+            .map(|tile| tile.ray_budget as u64)
+            .sum(),
+        tile_schedule_hash,
+        dispatch_hash,
+        hzb_gate_hash,
+        radiance_injection_hash,
+        packet_hash,
+        scheduled_tiles,
+        dispatches,
+        radiance_injections,
+    }
+}
+
+fn voxel_trace_scheduled_tiles(
+    voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+) -> Vec<BangerNativeVoxelTraceScheduledTile> {
+    voxel_clipmap_packet
+        .trace_tiles
+        .iter()
+        .enumerate()
+        .map(|(index, tile)| {
+            let probe_page = radiance_schedule_manifest
+                .entries
+                .get(index % radiance_schedule_manifest.entries.len().max(1));
+            let lumen_surface = lumen_lighting_packet
+                .entries
+                .get(index % lumen_lighting_packet.entries.len().max(1));
+            let radiance_probe_page_id = probe_page
+                .map(|page| page.probe_page_id.clone())
+                .unwrap_or_else(|| "radiance:none".to_string());
+            let lumen_surface_page_id = lumen_surface
+                .map(|entry| entry.surface_page_id.clone())
+                .unwrap_or_else(|| "surface:none".to_string());
+            let hzb_mip = voxel_trace_hzb_mip(meshlet_visibility_packet, tile);
+            let trace_mode = voxel_trace_mode(tile, hzb_mip);
+            let ray_budget = voxel_trace_ray_budget(tile, probe_page, lumen_surface);
+            let screen_probe_budget = lumen_surface
+                .map(|entry| entry.diffuse_ray_count.saturating_add(entry.reflection_ray_count))
+                .unwrap_or(0)
+                .max(1);
+            let software_sdf_step_budget = voxel_trace_sdf_step_budget(tile, ray_budget);
+            let hzb_gate_hash = voxel_trace_tile_hzb_gate_hash(meshlet_visibility_packet, tile, hzb_mip);
+            let schedule_tile_id = format!("voxel_trace_schedule:{}:{index}", tile.tile_id);
+            let schedule_hash = voxel_trace_scheduled_tile_entry_hash(
+                &schedule_tile_id,
+                tile,
+                hzb_mip,
+                trace_mode,
+                ray_budget,
+                screen_probe_budget,
+                software_sdf_step_budget,
+                &radiance_probe_page_id,
+                &lumen_surface_page_id,
+                &hzb_gate_hash,
+            );
+            BangerNativeVoxelTraceScheduledTile {
+                schedule_tile_id,
+                source_tile_id: tile.tile_id.clone(),
+                source_trace_tile_hash: tile.trace_tile_hash.clone(),
+                clipmap_level: tile.clipmap_level,
+                hzb_mip,
+                page_table_range: tile.brick_range,
+                trace_mode,
+                ray_budget,
+                screen_probe_budget,
+                software_sdf_step_budget,
+                radiance_probe_page_id,
+                lumen_surface_page_id,
+                hzb_gate_hash,
+                schedule_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_trace_hzb_mip(
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    tile: &BangerNativeVoxelTraceTile,
+) -> u32 {
+    let max_mip = meshlet_visibility_packet
+        .hzb_resource
+        .mip_count
+        .saturating_sub(1);
+    tile.clipmap_level.saturating_add(tile.brick_range[1] / 16).min(max_mip)
+}
+
+fn voxel_trace_mode(tile: &BangerNativeVoxelTraceTile, hzb_mip: u32) -> &'static str {
+    if tile.clipmap_level <= 1 && hzb_mip <= 2 {
+        "high_detail_sdf_plus_screen_hzb"
+    } else {
+        "coarse_voxel_mip_world_trace"
+    }
+}
+
+fn voxel_trace_ray_budget(
+    tile: &BangerNativeVoxelTraceTile,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    lumen_surface: Option<&BangerNativeLumenLightingEntry>,
+) -> u32 {
+    let probe_budget = probe_page.map(|page| page.light_budget).unwrap_or(32);
+    let lumen_budget = lumen_surface
+        .map(|entry| entry.diffuse_ray_count.saturating_add(entry.reflection_ray_count))
+        .unwrap_or(16);
+    let brick_factor = tile.brick_range[1].max(1);
+    probe_budget
+        .saturating_add(lumen_budget)
+        .saturating_mul(brick_factor.min(16))
+        .clamp(32, 4096)
+}
+
+fn voxel_trace_sdf_step_budget(tile: &BangerNativeVoxelTraceTile, ray_budget: u32) -> u32 {
+    let detail_multiplier = if tile.clipmap_level <= 1 { 4 } else { 2 };
+    ray_budget
+        .saturating_div(8)
+        .saturating_mul(detail_multiplier)
+        .clamp(8, 512)
+}
+
+fn voxel_trace_dispatches(
+    scheduled_tiles: &[BangerNativeVoxelTraceScheduledTile],
+) -> Vec<BangerNativeVoxelTraceDispatch> {
+    scheduled_tiles
+        .chunks(8)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let tile_count = chunk.len();
+            let threadgroup_count = chunk
+                .iter()
+                .map(|tile| tile.ray_budget.div_ceil(64).max(1))
+                .sum::<u32>()
+                .max(1);
+            let indirect_dispatch_args = [threadgroup_count, 1, 1];
+            let first_schedule_hash = chunk.first().map(|tile| tile.schedule_hash.clone());
+            let last_schedule_hash = chunk.last().map(|tile| tile.schedule_hash.clone());
+            let dispatch_id = format!("voxel_trace_dispatch_async_{index}");
+            let barrier_hash = voxel_trace_dispatch_barrier_hash(
+                &dispatch_id,
+                first_schedule_hash.as_deref(),
+                last_schedule_hash.as_deref(),
+                threadgroup_count,
+            );
+            let dispatch_hash = voxel_trace_dispatch_entry_hash(
+                &dispatch_id,
+                tile_count,
+                threadgroup_count,
+                indirect_dispatch_args,
+                first_schedule_hash.as_deref(),
+                last_schedule_hash.as_deref(),
+                &barrier_hash,
+            );
+            BangerNativeVoxelTraceDispatch {
+                dispatch_id,
+                queue_lane: "async_compute",
+                pass_name: "voxel_sdf_world_trace",
+                tile_count,
+                threadgroup_count,
+                indirect_dispatch_args,
+                first_schedule_hash,
+                last_schedule_hash,
+                barrier_hash,
+                dispatch_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_radiance_injections(
+    voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    scheduled_tiles: &[BangerNativeVoxelTraceScheduledTile],
+) -> Vec<BangerNativeVoxelRadianceInjection> {
+    scheduled_tiles
+        .iter()
+        .enumerate()
+        .map(|(index, tile)| {
+            let radiance_tile = radiance_schedule_manifest
+                .trace_tiles
+                .get(index % radiance_schedule_manifest.trace_tiles.len().max(1));
+            let lumen_surface = lumen_lighting_packet
+                .entries
+                .get(index % lumen_lighting_packet.entries.len().max(1));
+            let target_radiance_tile_hash = radiance_tile
+                .map(|trace_tile| trace_tile.tile_hash.clone())
+                .unwrap_or_else(|| radiance_schedule_manifest.trace_tile_hash.clone());
+            let target_lumen_surface_page_id = lumen_surface
+                .map(|entry| entry.surface_page_id.clone())
+                .unwrap_or_else(|| tile.lumen_surface_page_id.clone());
+            let injection_weight_q16 = voxel_radiance_injection_weight_q16(tile);
+            let injection_id = format!("voxel_radiance_injection:{}:{index}", tile.schedule_tile_id);
+            let injection_hash = voxel_radiance_injection_entry_hash(
+                &injection_id,
+                tile,
+                &target_radiance_tile_hash,
+                &target_lumen_surface_page_id,
+                &voxel_clipmap_packet.sdf_atlas_hash,
+                injection_weight_q16,
+            );
+            BangerNativeVoxelRadianceInjection {
+                injection_id,
+                schedule_tile_id: tile.schedule_tile_id.clone(),
+                target_probe_page_id: tile.radiance_probe_page_id.clone(),
+                target_lumen_surface_page_id,
+                source_sdf_atlas_hash: voxel_clipmap_packet.sdf_atlas_hash.clone(),
+                target_radiance_tile_hash,
+                injection_weight_q16,
+                injection_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_radiance_injection_weight_q16(tile: &BangerNativeVoxelTraceScheduledTile) -> u32 {
+    let detail_weight = if tile.trace_mode == "high_detail_sdf_plus_screen_hzb" {
+        0x0001_0000u32
+    } else {
+        0x0000_8000u32
+    };
+    let hzb_weight = 0x0001_0000u32.saturating_sub(tile.hzb_mip.saturating_mul(4096));
+    detail_weight.min(hzb_weight.max(0x0000_2000))
+}
+
+fn voxel_trace_tile_hzb_gate_hash(
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    tile: &BangerNativeVoxelTraceTile,
+    hzb_mip: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.hzb_gate.v1\0");
+    h.update(meshlet_visibility_packet.hzb_resource_hash.as_bytes());
+    h.update(tile.trace_tile_hash.as_bytes());
+    h.update(hzb_mip.to_le_bytes());
+    h.update(meshlet_visibility_packet.hzb_resource.width.to_le_bytes());
+    h.update(meshlet_visibility_packet.hzb_resource.height.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_scheduled_tile_entry_hash(
+    schedule_tile_id: &str,
+    tile: &BangerNativeVoxelTraceTile,
+    hzb_mip: u32,
+    trace_mode: &str,
+    ray_budget: u32,
+    screen_probe_budget: u32,
+    software_sdf_step_budget: u32,
+    radiance_probe_page_id: &str,
+    lumen_surface_page_id: &str,
+    hzb_gate_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.scheduled_tile.v1\0");
+    h.update(schedule_tile_id.as_bytes());
+    h.update(tile.trace_tile_hash.as_bytes());
+    h.update(hzb_mip.to_le_bytes());
+    h.update(trace_mode.as_bytes());
+    h.update(ray_budget.to_le_bytes());
+    h.update(screen_probe_budget.to_le_bytes());
+    h.update(software_sdf_step_budget.to_le_bytes());
+    h.update(radiance_probe_page_id.as_bytes());
+    h.update(lumen_surface_page_id.as_bytes());
+    h.update(hzb_gate_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_dispatch_barrier_hash(
+    dispatch_id: &str,
+    first_schedule_hash: Option<&str>,
+    last_schedule_hash: Option<&str>,
+    threadgroup_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.dispatch_barrier.v1\0");
+    h.update(dispatch_id.as_bytes());
+    h.update(first_schedule_hash.unwrap_or("none").as_bytes());
+    h.update(last_schedule_hash.unwrap_or("none").as_bytes());
+    h.update(threadgroup_count.to_le_bytes());
+    h.update(b"sdf_atlas_read:trace_result_uav_write:radiance_cache_uav_write");
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_dispatch_entry_hash(
+    dispatch_id: &str,
+    tile_count: usize,
+    threadgroup_count: u32,
+    indirect_dispatch_args: [u32; 3],
+    first_schedule_hash: Option<&str>,
+    last_schedule_hash: Option<&str>,
+    barrier_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.dispatch.v1\0");
+    h.update(dispatch_id.as_bytes());
+    h.update((tile_count as u64).to_le_bytes());
+    h.update(threadgroup_count.to_le_bytes());
+    for value in indirect_dispatch_args {
+        h.update(value.to_le_bytes());
+    }
+    h.update(first_schedule_hash.unwrap_or("none").as_bytes());
+    h.update(last_schedule_hash.unwrap_or("none").as_bytes());
+    h.update(barrier_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_radiance_injection_entry_hash(
+    injection_id: &str,
+    tile: &BangerNativeVoxelTraceScheduledTile,
+    target_radiance_tile_hash: &str,
+    target_lumen_surface_page_id: &str,
+    source_sdf_atlas_hash: &str,
+    injection_weight_q16: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.radiance_injection.v1\0");
+    h.update(injection_id.as_bytes());
+    h.update(tile.schedule_hash.as_bytes());
+    h.update(target_radiance_tile_hash.as_bytes());
+    h.update(target_lumen_surface_page_id.as_bytes());
+    h.update(source_sdf_atlas_hash.as_bytes());
+    h.update(injection_weight_q16.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_schedule_tile_hash(tiles: &[BangerNativeVoxelTraceScheduledTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.schedule_tiles.v1\0");
+    for tile in tiles {
+        h.update(tile.schedule_hash.as_bytes());
+        h.update(tile.hzb_gate_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_dispatch_hash(dispatches: &[BangerNativeVoxelTraceDispatch]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.dispatches.v1\0");
+    for dispatch in dispatches {
+        h.update(dispatch.dispatch_hash.as_bytes());
+        h.update(dispatch.barrier_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_hzb_gate_hash(
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    tiles: &[BangerNativeVoxelTraceScheduledTile],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.hzb_gates.v1\0");
+    h.update(meshlet_visibility_packet.hzb_resource_hash.as_bytes());
+    for tile in tiles {
+        h.update(tile.hzb_gate_hash.as_bytes());
+        h.update(tile.hzb_mip.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_radiance_injection_hash(injections: &[BangerNativeVoxelRadianceInjection]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace.radiance_injections.v1\0");
+    for injection in injections {
+        h.update(injection.injection_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_schedule_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    tile_schedule_hash: &str,
+    dispatch_hash: &str,
+    hzb_gate_hash: &str,
+    radiance_injection_hash: &str,
+    tiles: &[BangerNativeVoxelTraceScheduledTile],
+    dispatches: &[BangerNativeVoxelTraceDispatch],
+    injections: &[BangerNativeVoxelRadianceInjection],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_trace_schedule_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(voxel_clipmap_packet.packet_hash.as_bytes());
+    h.update(meshlet_visibility_packet.hzb_resource_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(tile_schedule_hash.as_bytes());
+    h.update(dispatch_hash.as_bytes());
+    h.update(hzb_gate_hash.as_bytes());
+    h.update(radiance_injection_hash.as_bytes());
+    h.update((tiles.len() as u64).to_le_bytes());
+    h.update((dispatches.len() as u64).to_le_bytes());
+    h.update((injections.len() as u64).to_le_bytes());
     hex32(h.finalize().into())
 }
 
@@ -25970,6 +26531,7 @@ fn render_handoff_hash(
     virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
     virtual_geometry_streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
     voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
+    voxel_trace_schedule_packet: &BangerNativeVoxelTraceSchedulePacket,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
@@ -26034,6 +26596,11 @@ fn render_handoff_hash(
     h.update(voxel_clipmap_packet.mip_chain_hash.as_bytes());
     h.update(voxel_clipmap_packet.surface_extraction_hash.as_bytes());
     h.update(voxel_clipmap_packet.trace_tile_hash.as_bytes());
+    h.update(voxel_trace_schedule_packet.packet_hash.as_bytes());
+    h.update(voxel_trace_schedule_packet.tile_schedule_hash.as_bytes());
+    h.update(voxel_trace_schedule_packet.dispatch_hash.as_bytes());
+    h.update(voxel_trace_schedule_packet.hzb_gate_hash.as_bytes());
+    h.update(voxel_trace_schedule_packet.radiance_injection_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
     h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
@@ -28191,6 +28758,103 @@ mod tests {
                     "lumen_world_trace_high_detail_sdf" | "lumen_world_trace_coarse_voxel_mip"
                 )
                 && tile.trace_tile_hash.len() == 64));
+        assert_eq!(
+            response.voxel_trace_schedule_packet.schema,
+            "forge.banger.voxel_trace_schedule_packet.v1"
+        );
+        assert_eq!(response.voxel_trace_schedule_packet.schema_version, 1);
+        assert_eq!(
+            response.voxel_trace_schedule_packet.voxel_clipmap_hash,
+            response.voxel_clipmap_packet.packet_hash
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.hzb_resource_hash,
+            response.meshlet_visibility_packet.hzb_resource_hash
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.radiance_schedule_hash,
+            response.radiance_schedule_manifest.schedule_hash
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.lumen_lighting_hash,
+            response.lumen_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.trace_tile_count,
+            response.voxel_clipmap_packet.trace_tile_count
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.trace_tile_count,
+            response
+                .voxel_trace_schedule_packet
+                .scheduled_tiles
+                .len()
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.dispatch_count,
+            response.voxel_trace_schedule_packet.dispatches.len()
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.radiance_injection_count,
+            response
+                .voxel_trace_schedule_packet
+                .radiance_injections
+                .len()
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.high_detail_tile_count
+                + response.voxel_trace_schedule_packet.coarse_tile_count,
+            response.voxel_trace_schedule_packet.trace_tile_count
+        );
+        assert_eq!(
+            response.voxel_trace_schedule_packet.async_compute_job_count,
+            response.voxel_trace_schedule_packet.dispatch_count
+        );
+        assert!(response.voxel_trace_schedule_packet.total_ray_budget > 0);
+        assert_eq!(response.voxel_trace_schedule_packet.tile_schedule_hash.len(), 64);
+        assert_eq!(response.voxel_trace_schedule_packet.dispatch_hash.len(), 64);
+        assert_eq!(response.voxel_trace_schedule_packet.hzb_gate_hash.len(), 64);
+        assert_eq!(
+            response
+                .voxel_trace_schedule_packet
+                .radiance_injection_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.voxel_trace_schedule_packet.packet_hash.len(), 64);
+        assert!(response
+            .voxel_trace_schedule_packet
+            .scheduled_tiles
+            .iter()
+            .all(|tile| tile.ray_budget >= 32
+                && tile.screen_probe_budget > 0
+                && tile.software_sdf_step_budget > 0
+                && tile.hzb_mip < response.meshlet_visibility_packet.hzb_resource.mip_count
+                && matches!(
+                    tile.trace_mode,
+                    "high_detail_sdf_plus_screen_hzb" | "coarse_voxel_mip_world_trace"
+                )
+                && tile.hzb_gate_hash.len() == 64
+                && tile.schedule_hash.len() == 64));
+        assert!(response
+            .voxel_trace_schedule_packet
+            .dispatches
+            .iter()
+            .all(|dispatch| dispatch.queue_lane == "async_compute"
+                && dispatch.pass_name == "voxel_sdf_world_trace"
+                && dispatch.tile_count > 0
+                && dispatch.threadgroup_count > 0
+                && dispatch.indirect_dispatch_args[0] == dispatch.threadgroup_count
+                && dispatch.barrier_hash.len() == 64
+                && dispatch.dispatch_hash.len() == 64));
+        assert!(response
+            .voxel_trace_schedule_packet
+            .radiance_injections
+            .iter()
+            .all(|injection| injection.source_sdf_atlas_hash
+                == response.voxel_clipmap_packet.sdf_atlas_hash
+                && injection.injection_weight_q16 > 0
+                && injection.injection_hash.len() == 64));
         assert_eq!(
             response.nanite_second_layer_packet.schema,
             "forge.banger.nanite_second_layer_packet.v1"
