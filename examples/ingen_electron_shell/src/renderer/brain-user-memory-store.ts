@@ -1,3 +1,5 @@
+import { BRAIN_CODEACT_COMMANDS } from "../shared/ipc-contract";
+
 export interface BrainUserMemorySlot {
   schema: "ingen.brain.memory.user_identity.v1";
   scope: "brain.memory.user.identity";
@@ -114,6 +116,7 @@ const MAX_LEARNING_TEXT_LENGTH = 1200;
 const MAX_CODEACT_FIELD_LENGTH = 2200;
 const MAX_SPECIALIZED_BRAIN_FIELD_LENGTH = 1600;
 const MAX_DURABLE_MANIFEST_LENGTH = 9000;
+const EXECUTABLE_CODEACT_COMMANDS = new Set<string>(BRAIN_CODEACT_COMMANDS as readonly string[]);
 const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["lesson", "skill", "task"];
 const DURABLE_MANIFEST_CATEGORY_KEYS: Record<BrainLearningMemoryCategory, string> = {
   lesson: "lessons",
@@ -311,6 +314,18 @@ function splitSpecializedBrainList(value: string | string[] | undefined): string
     .slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
 }
 
+function firstCodeActCommand(value: string): string {
+  return /^\/[a-zA-Z0-9][a-zA-Z0-9_]*_/.exec(value.trim())?.[0] ?? "";
+}
+
+function isExecutableSpecializedBrainCodeAct(value: string): boolean {
+  return EXECUTABLE_CODEACT_COMMANDS.has(firstCodeActCommand(value));
+}
+
+function splitSpecializedBrainExecutableCodeActs(value: string | string[] | undefined): string[] {
+  return splitSpecializedBrainList(value).filter(isExecutableSpecializedBrainCodeAct);
+}
+
 function splitSpecializedBrainTriggers(value: string | string[] | undefined): string[] {
   const rawItems = Array.isArray(value) ? value : (value ?? "").split(/[|,]/);
   return rawItems
@@ -333,6 +348,10 @@ function normalizeSpecializedBrainItemList(items: unknown): string[] {
     .map((item) => trimmedMultiline(item, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH))
     .filter(Boolean)
     .slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+}
+
+function normalizeSpecializedBrainCodeActList(items: unknown): string[] {
+  return normalizeSpecializedBrainItemList(items).filter(isExecutableSpecializedBrainCodeAct);
 }
 
 function mergeSpecializedBrainItems(existing: string[], incoming: string[]): string[] {
@@ -368,7 +387,7 @@ function normalizeBrainSpecializedBrainEntry(value: unknown): BrainSpecializedBr
       lessons: normalizeSpecializedBrainItemList(candidate.lessons),
       skills: normalizeSpecializedBrainItemList(candidate.skills),
       tasks: normalizeSpecializedBrainItemList(candidate.tasks),
-      codeActs: normalizeSpecializedBrainItemList(candidate.codeActs),
+      codeActs: normalizeSpecializedBrainCodeActList(candidate.codeActs),
       source: candidate.source as BrainDurableCandidateSource,
       trust: candidate.trust === "user_confirmed" ? "user_confirmed" : "agent_candidate",
       evidence: candidate.evidence,
@@ -620,7 +639,7 @@ export function upsertBrainSpecializedBrain(input: {
     lessons: mergeSpecializedBrainItems(existing?.lessons ?? [], splitSpecializedBrainList(input.lessons)),
     skills: mergeSpecializedBrainItems(existing?.skills ?? [], splitSpecializedBrainList(input.skills)),
     tasks: mergeSpecializedBrainItems(existing?.tasks ?? [], splitSpecializedBrainList(input.tasks)),
-    codeActs: mergeSpecializedBrainItems(existing?.codeActs ?? [], splitSpecializedBrainList(input.codeActs)),
+    codeActs: mergeSpecializedBrainItems(existing?.codeActs ?? [], splitSpecializedBrainExecutableCodeActs(input.codeActs)),
     source: input.source,
     trust: input.trust ?? existing?.trust ?? (input.source === "manual" ? "user_confirmed" : "agent_candidate"),
     evidence: input.evidence ?? existing?.evidence ?? `brain_specialized_registry:${input.source}`,
@@ -667,6 +686,7 @@ export function appendBrainSpecializedBrainItem(input: {
   if (!brainName || !content) {
     return readBrainSpecializedBrains();
   }
+  const effectiveKind = input.kind === "codeact" && !isExecutableSpecializedBrainCodeAct(content) ? "task" : input.kind;
   const current = readBrainSpecializedBrains();
   const existing = current.find((entry) => entry.brainName === brainName);
   if (!existing) {
@@ -676,10 +696,10 @@ export function appendBrainSpecializedBrainItem(input: {
       tasks?: string;
       codeActs?: string;
     } = {};
-    if (input.kind === "lesson") seed.lessons = content;
-    if (input.kind === "skill") seed.skills = content;
-    if (input.kind === "task") seed.tasks = content;
-    if (input.kind === "codeact") seed.codeActs = content;
+    if (effectiveKind === "lesson") seed.lessons = content;
+    if (effectiveKind === "skill") seed.skills = content;
+    if (effectiveKind === "task") seed.tasks = content;
+    if (effectiveKind === "codeact") seed.codeActs = content;
     return upsertBrainSpecializedBrain({
       brainName,
       title: titleFromSpecializedBrainName(brainName),
@@ -693,10 +713,10 @@ export function appendBrainSpecializedBrainItem(input: {
   const appendUnique = (items: string[]) => [content, ...items.filter((item) => item !== content)].slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
   const nextEntry: BrainSpecializedBrainEntry = {
     ...existing,
-    lessons: input.kind === "lesson" ? appendUnique(existing.lessons) : existing.lessons,
-    skills: input.kind === "skill" ? appendUnique(existing.skills) : existing.skills,
-    tasks: input.kind === "task" ? appendUnique(existing.tasks) : existing.tasks,
-    codeActs: input.kind === "codeact" ? appendUnique(existing.codeActs) : existing.codeActs,
+    lessons: effectiveKind === "lesson" ? appendUnique(existing.lessons) : existing.lessons,
+    skills: effectiveKind === "skill" ? appendUnique(existing.skills) : existing.skills,
+    tasks: effectiveKind === "task" ? appendUnique(existing.tasks) : existing.tasks,
+    codeActs: effectiveKind === "codeact" ? appendUnique(existing.codeActs) : existing.codeActs,
     source: input.source,
     trust: input.trust ?? existing.trust,
     evidence: input.evidence ?? existing.evidence,
@@ -733,7 +753,10 @@ function durableManifestSpecializedBrainCatalogLine(entry: BrainSpecializedBrain
 }
 
 function durableManifestSpecializedBrainItemLine(kind: BrainSpecializedBrainEntryKind, item: string, index: number): string {
-  return `${kind}[${index}]=${JSON.stringify(trimmedSingleLine(item, kind === "codeact" ? 520 : 360))}`;
+  if (kind === "codeact") {
+    return `codeact[${index}]=executable ${JSON.stringify(trimmedSingleLine(item, 520))}`;
+  }
+  return `${kind}[${index}]=${JSON.stringify(trimmedSingleLine(item, 360))}`;
 }
 
 export function brainDurableMemoryManifestFromEntries(
@@ -758,9 +781,12 @@ export function brainDurableMemoryManifestFromEntries(
     "BRAIN_DURABLE_MEMORY_MANIFEST v1",
     "source=brain_page_learning_memory",
     "injection_policy=session_boot_and_after_context_compaction",
-    "specialized_brain_policy=The root catalog is read-only. Use /newbrain_ to create a named specialized Brain, /<name>brain_ to activate it, and /modify\"<name>\"brain_ to append explicit lessons, skills, tasks, or CodeAct drafts to that named Brain only.",
-    "newbrain_template_example=/newbrain_ brain_name=\"marketing\" title=\"Marketing Brain\" purpose=\"Store durable campaign strategy lessons, anti-patterns, reusable workflows and marketing CodeAct drafts.\" activation_triggers=\"campaign strategy, copywriting, funnel iteration\" initial_lessons=\"over-broad audience targeting -> define one concrete ICP before writing copy\" initial_rules=\"identify offer, audience, channel and metric before campaign ideas\" initial_skills=\"turn failed campaign notes into improved brief\" initial_tasks=\"review campaign learnings before next launch\" initial_codeacts=\"/campaign_brief_ offer=\\\"...\\\" audience=\\\"...\\\" channel=\\\"...\\\"\" token_budget=\"1200\"",
+    "specialized_brain_policy=The root catalog is read-only. Use /newbrain_ to create a named specialized Brain, /<name>brain_ to activate it, and /modify\"<name>\"brain_ to append explicit lessons, skills, tasks, or executable CodeAct references to that named Brain only.",
+    "entry_kind_policy=skill is an LLM-only reusable workflow or prompt procedure. task is follow-up work, including requests to implement a future native CodeAct. codeact is only for commands with an existing executable app/front/runtime/MCP handler listed in BRAIN_CODEACT_COMMANDS; never store plain reasoning templates as codeact.",
+    "newbrain_template_example=/newbrain_ brain_name=\"marketing\" title=\"Marketing Brain\" purpose=\"Store durable campaign strategy lessons, anti-patterns, reusable workflows and executable tool routes.\" activation_triggers=\"campaign strategy, copywriting, funnel iteration\" initial_lessons=\"over-broad audience targeting -> define one concrete ICP before writing copy\" initial_rules=\"identify offer, audience, channel and metric before campaign ideas\" initial_skills=\"turn failed campaign notes into improved brief\" initial_tasks=\"review campaign learnings before next launch\" initial_codeacts='/websearch_ query=\"current campaign benchmark sources\" output=\"compact_answer_url_citation_manifest\"' token_budget=\"1200\"",
     "modifybrain_template_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"lesson\" observation=\"campaign ideas were proposed before defining the ICP\" replacement_rule=\"define one concrete ICP before campaign ideas\" trigger=\"campaign brainstorming or copy iteration\" exceptions=\"user already supplied a precise ICP\" content=\"Observed error: proposing campaigns before ICP -> Replacement rule: define one concrete ICP before campaign ideas.\" evidence=\"session pattern or user-confirmed correction\" output=\"append_to_specialized_brain\"",
+    "modifybrain_skill_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"skill\" content=\"Campaign critique workflow: identify offer, audience, channel and metric before writing campaign ideas.\" trigger=\"campaign brainstorming\" output=\"append_to_specialized_brain\"",
+    "modifybrain_codeact_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"codeact\" content='/websearch_ query=\"current campaign benchmark sources\" output=\"compact_answer_url_citation_manifest\"' evidence=\"known executable command from BRAIN_CODEACT_COMMANDS\" output=\"append_to_specialized_brain\"",
     "research_policy=Research branches are live work only; do not persist research unless it is later promoted into lessons, skills, tasks, or CodeAct drafts.",
     `learning_entries=${validLearningEntries.length}`,
     `codeact_drafts=${validCodeActs.length}`,

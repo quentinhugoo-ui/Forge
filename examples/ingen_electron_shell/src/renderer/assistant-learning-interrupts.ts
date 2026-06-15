@@ -1,5 +1,5 @@
 import type { BrainLearningMemoryCategory, BrainSpecializedBrainEntryKind } from "./brain-user-memory-store";
-import { BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
+import { BRAIN_CODEACT_COMMANDS, BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
 
 export type BrainLearningInterruptType =
   | "anti_pattern"
@@ -61,9 +61,10 @@ const DEFAULT_PROMOTIONS: Record<BrainLearningInterruptType, BrainLearningPromot
   user_preference: ["lesson"],
   domain_rule: ["lesson", "skill"],
   skill_candidate: ["skill", "task"],
-  codeact_candidate: ["codeact", "task"],
+  codeact_candidate: ["task"],
   research_candidate: ["research", "lesson"]
 };
+const EXECUTABLE_CODEACT_COMMANDS = new Set<string>(BRAIN_CODEACT_COMMANDS as readonly string[]);
 
 function cleanLearningValue(value: string): string {
   return value.trim().replace(/^["'`]+|["'`,;]+$/g, "");
@@ -252,15 +253,31 @@ function brainNameFromModifyBlock(block: string, fields: Map<string, string>): s
   return specializedBrainSlug(commandMatch?.[1] ?? commandMatch?.[2] ?? fields.get("brain_name") ?? "");
 }
 
-function modificationKind(value: string | undefined): BrainSpecializedBrainEntryKind {
+function firstCodeActCommand(value: string): string {
+  return /^\/[a-zA-Z0-9][a-zA-Z0-9_]*_/.exec(value.trim())?.[0] ?? "";
+}
+
+function isExecutableCodeActContent(value: string): boolean {
+  return EXECUTABLE_CODEACT_COMMANDS.has(firstCodeActCommand(value));
+}
+
+function requestedModificationKind(value: string | undefined): BrainSpecializedBrainEntryKind | "rule" {
   const token = safeLearningToken(value ?? "", "lesson").toLowerCase();
+  if (token === "rule") return "rule";
   if (token === "skill") return "skill";
   if (token === "task") return "task";
   if (token === "codeact" || token === "code_act") return "codeact";
   return "lesson";
 }
 
-function modificationContent(fields: Map<string, string>, kind: BrainSpecializedBrainEntryKind): string {
+function resolvedModificationKind(kind: BrainSpecializedBrainEntryKind | "rule", content: string): BrainSpecializedBrainEntryKind {
+  if (kind === "rule") return "lesson";
+  if (kind !== "codeact") return kind;
+  if (isExecutableCodeActContent(content)) return "codeact";
+  return firstCodeActCommand(content) ? "task" : "skill";
+}
+
+function modificationContent(fields: Map<string, string>, kind: BrainSpecializedBrainEntryKind | "rule"): string {
   const content = cleanNewBrainField(fields.get("content") ?? fields.get("text") ?? fields.get("template"), 1200);
   if (content) {
     return content;
@@ -268,7 +285,7 @@ function modificationContent(fields: Map<string, string>, kind: BrainSpecialized
   const observation = cleanNewBrainField(fields.get("observation") ?? fields.get("evidence"), 520);
   const replacementRule = cleanNewBrainField(fields.get("replacement_rule") ?? fields.get("rule"), 520);
   const trigger = cleanNewBrainField(fields.get("trigger"), 220);
-  if (kind === "lesson" && observation && replacementRule) {
+  if ((kind === "lesson" || kind === "rule") && observation && replacementRule) {
     return `Observed error: ${observation} -> Replacement rule: ${replacementRule}${trigger ? ` Trigger: ${trigger}.` : ""}`;
   }
   return replacementRule || observation || trigger;
@@ -278,11 +295,12 @@ export function brainSpecializedBrainModificationsFromText(text: string): BrainS
   const modifications: BrainSpecializedBrainModification[] = [];
   for (const block of codeActFieldBlocksFromText(text, isModifyBrainInvocationLine)) {
     const fields = parseLearningAttributes(block);
-    const kind = modificationKind(fields.get("entry_kind") ?? fields.get("kind") ?? fields.get("type"));
+    const requestedKind = requestedModificationKind(fields.get("entry_kind") ?? fields.get("kind") ?? fields.get("type"));
+    const content = modificationContent(fields, requestedKind);
     const modification = {
       brainName: brainNameFromModifyBlock(block, fields),
-      kind,
-      content: modificationContent(fields, kind)
+      kind: resolvedModificationKind(requestedKind, content),
+      content
     };
     if (modification.brainName && modification.content) {
       modifications.push(modification);
@@ -312,7 +330,11 @@ function parsePromotionList(value: string | undefined, type: BrainLearningInterr
     .split(/[|,]/)
     .map((item) => safeLearningToken(item, ""))
     .filter((item) => KNOWN_PROMOTIONS.has(item))
-    .map((item): BrainLearningPromotionAction => (item === "remember" || item === "rule" ? "lesson" : item as BrainLearningPromotionAction));
+    .map((item): BrainLearningPromotionAction => {
+      if (item === "remember" || item === "rule") return "lesson";
+      if (item === "codeact") return "task";
+      return item as BrainLearningPromotionAction;
+    });
   const unique = [...new Set(requested)];
   return unique.length > 0 ? unique : DEFAULT_PROMOTIONS[type];
 }
@@ -351,7 +373,7 @@ export function brainLearningPromotionLabel(action: BrainLearningPromotionAction
   if (action === "lesson") return "Lesson";
   if (action === "skill") return "Skill";
   if (action === "task") return "Task";
-  if (action === "codeact") return "CodeAct";
+  if (action === "codeact") return "CodeAct task";
   return "Research";
 }
 
@@ -375,11 +397,15 @@ export function brainLearningMemoryCategoryForPromotion(
 }
 
 export function brainLearningSavedLabel(action: BrainLearningPromotionAction, category: BrainLearningMemoryCategory | null): string {
-  if (action === "codeact") return "Saved CodeAct";
+  if (action === "codeact") return "Saved CodeAct Task";
   if (action === "research") return "Opened Research";
   if (category === "lesson") return "Saved Lesson";
   if (category === "skill") return "Saved Skill";
   return "Saved Task";
+}
+
+export function brainLearningCodeActImplementationTask(interrupt: BrainLearningInterrupt): string {
+  return `Implement executable CodeAct before use: ${interrupt.text}`;
 }
 
 export function brainLearningCodeActCommand(interrupt: BrainLearningInterrupt): string {
@@ -391,7 +417,7 @@ export function brainLearningCodeActTemplate(interrupt: BrainLearningInterrupt):
     `${brainLearningCodeActCommand(interrupt)}`,
     `scope=${JSON.stringify(interrupt.scope)}`,
     `candidate=${JSON.stringify(interrupt.text)}`,
-    "goal=\"Turn this repeated useful procedure into a typed, verifiable CodeAct draft.\""
+    "goal=\"Implement this as a real executable CodeAct with an app/front/runtime/MCP handler before it can be invoked.\""
   ].join("\n");
 }
 

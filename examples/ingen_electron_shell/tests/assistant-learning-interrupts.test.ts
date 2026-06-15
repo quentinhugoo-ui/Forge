@@ -10,7 +10,7 @@ import {
 import {
   brainSpecializedBrainModificationsFromText,
   brainSpecializedCodeActsFromNewBrainText,
-  brainLearningCodeActCommand,
+  brainLearningCodeActImplementationTask,
   brainLearningMemoryCategoryForPromotion,
   brainLearningPromotionPrompt,
   brainLearningResearchPrompt,
@@ -67,9 +67,11 @@ describe("assistant learning interrupts", () => {
     );
     expect(antiPattern).toBeDefined();
     expect(codeAct).toBeDefined();
+    expect(codeAct?.promote).toEqual(["task"]);
     expect(brainLearningMemoryCategoryForPromotion(antiPattern!, "lesson")).toBe("lesson");
     expect(brainLearningMemoryCategoryForPromotion(antiPattern!, "research")).toBeNull();
-    expect(brainLearningCodeActCommand(codeAct!)).toMatch(/^\/agent_campaign_/);
+    expect(brainLearningMemoryCategoryForPromotion(codeAct!, "codeact")).toBeNull();
+    expect(brainLearningCodeActImplementationTask(codeAct!)).toContain("Implement executable CodeAct before use");
     expect(brainLearningResearchPrompt(antiPattern!)).toContain("RESEARCH_PARALLEL_QUERY v1");
   });
 
@@ -79,6 +81,7 @@ describe("assistant learning interrupts", () => {
       'purpose="Store durable composition, arrangement and practice lessons."',
       'activation_triggers="songwriting, harmony, arrangement"',
       'initial_skills="turn motif into arrangement"',
+      'initial_codeacts=\'/websearch_ query="music arrangement references" output="compact_answer_url_citation_manifest"\'',
       'token_budget="900"'
     ].join("\n"));
 
@@ -89,6 +92,7 @@ describe("assistant learning interrupts", () => {
     expect(drafts[0]?.title).toBe("Musician Brain");
     expect(drafts[0]?.activationTriggers).toBe("songwriting, harmony, arrangement");
     expect(drafts[0]?.initialSkills).toBe("turn motif into arrangement");
+    expect(drafts[0]?.initialCodeActs).toContain("/websearch_");
     expect(drafts[0]?.tokenBudget).toBe("900");
     expect(drafts[0]?.description).toContain("Host-generated from explicit /newbrain_ fields");
     expect(drafts[0]?.description).toContain("root catalog stays read-only");
@@ -111,6 +115,22 @@ describe("assistant learning interrupts", () => {
     expect(modifications[0]?.kind).toBe("lesson");
     expect(modifications[0]?.content).toContain("Observed error");
     expect(modifications[0]?.content).toContain("Replacement rule");
+  });
+
+  it("keeps workflows as skills and only executable commands as CodeActs", () => {
+    const modifications = brainSpecializedBrainModificationsFromText([
+      '/modify"marketing"brain_ entry_kind="codeact"',
+      'content="Campaign critique workflow: identify offer, audience, channel and metric before writing ideas."',
+      '/modify"marketing"brain_ entry_kind="codeact"',
+      "content='/campaign_brief_ offer=\"...\" audience=\"...\"'",
+      '/modify"marketing"brain_ entry_kind="codeact"',
+      "content='/websearch_ query=\"current campaign benchmarks\" output=\"compact_answer_url_citation_manifest\"'"
+    ].join("\n"));
+
+    expect(modifications).toHaveLength(3);
+    expect(modifications[0]?.kind).toBe("skill");
+    expect(modifications[1]?.kind).toBe("task");
+    expect(modifications[2]?.kind).toBe("codeact");
   });
 
   it("formats durable Brain learning memory for boot manifest injection", () => {
@@ -166,7 +186,7 @@ describe("assistant learning interrupts", () => {
         lessons: ["Preserve the motif before arranging."],
         skills: ["Turn motif into arrangement."],
         tasks: ["Draft a harmony checklist."],
-        codeActs: ["/motif_arrange_ motif=\"...\" output=\"arrangement_steps\""],
+        codeActs: ["/websearch_ query=\"music arrangement references\" output=\"compact_answer_url_citation_manifest\""],
         source: "host_generated_newbrain",
         trust: "agent_candidate",
         evidence: "test",
@@ -184,6 +204,9 @@ describe("assistant learning interrupts", () => {
     expect(manifest).toContain('token_budget="1200"');
     expect(manifest).toContain('modifybrain_template_example=/modify"marketing"brain_');
     expect(manifest).toContain('entry_kind="lesson"');
+    expect(manifest).toContain("entry_kind_policy=skill is an LLM-only reusable workflow");
+    expect(manifest).toContain('modifybrain_skill_example=/modify"marketing"brain_');
+    expect(manifest).toContain('modifybrain_codeact_example=/modify"marketing"brain_');
     expect(manifest).toContain('output="append_to_specialized_brain"');
     expect(manifest).toContain("specialized_brain[1]");
     expect(manifest).toContain("active_specialized_brain");
@@ -192,6 +215,7 @@ describe("assistant learning interrupts", () => {
     expect(manifest).toContain("lessons[1]");
     expect(manifest).toContain("skills[1]");
     expect(manifest).toContain("codeact[1]");
+    expect(manifest).toContain("codeact[1]=executable");
     expect(manifest).toContain("codeact_draft[1]");
     expect(manifest).toContain("source=host_generated_newbrain");
     expect(manifest).toContain("research_policy=Research branches are live work only");
@@ -220,6 +244,8 @@ describe("assistant learning interrupts", () => {
     expect(storeSource).toContain("BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT");
     expect(memoryStoreSource).toContain("ingen.brain.memory.specialized_brain.v1");
     expect(memoryStoreSource).toContain("active_specialized_brain");
+    expect(memoryStoreSource).toContain("BRAIN_CODEACT_COMMANDS");
+    expect(memoryStoreSource).toContain("entry_kind_policy=skill is an LLM-only reusable workflow");
     expect(storeSource).toContain("BRAIN_LEARNING_MEMORY_UPDATED_EVENT");
     expect(stylesSource).toContain(".assistantText__learningInterrupt");
   });
