@@ -758,6 +758,83 @@ button {
   pointer-events: auto;
 }
 
+.brainWorkspaceChrome {
+  position: absolute;
+  top: 8px;
+  left: 40px;
+  z-index: 3;
+  display: grid;
+  gap: 4px;
+  max-width: min(760px, calc(100vw - var(--workspace-header-left) - 340px));
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.brainWorkspaceChrome__titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 30px;
+}
+
+.brainWorkspaceChrome__close {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  color: var(--forge-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.brainWorkspaceChrome__close span {
+  display: block;
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+  -webkit-mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+}
+
+.brainWorkspaceChrome__close:hover,
+.brainWorkspaceChrome__close:focus-visible {
+  color: #fff;
+  outline: 0;
+}
+
+.brainWorkspaceChrome__close:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--forge-accent), transparent 30%);
+  outline-offset: 2px;
+}
+
+.brainWorkspaceChrome__mark {
+  flex: 0 0 auto;
+}
+
+.brainWorkspaceChrome__titlebar strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forge-text);
+  font-size: 22px;
+  font-weight: 720;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brainWorkspaceChrome__tabs {
+  gap: 30px;
+  margin-top: 0;
+}
+
+.brainWorkspaceChrome__tabs button {
+  height: 40px;
+}
+
 .workspaceRequiredVeil {
   position: fixed;
   inset: 96px 0 0 var(--workspace-left);
@@ -9281,7 +9358,7 @@ ol.assistantText__list li::before {
   position: fixed;
   left: var(--left-panel-offset);
   right: 0;
-  top: 96px;
+  top: 132px;
   bottom: 0;
   min-width: 0;
   padding: 12px var(--brain-canvas-inline-pad) 72px;

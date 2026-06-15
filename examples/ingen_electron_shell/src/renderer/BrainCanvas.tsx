@@ -39,7 +39,7 @@ import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon, ScraplingIcon } from "./mo
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
-type BrainSpace = "codeacts" | "memory" | "hardware" | "godel" | "personality";
+export type BrainSpace = "codeacts" | "memory" | "hardware" | "godel" | "personality";
 
 async function fallbackPhotonCitySuggestionLabels(query: string): Promise<string[]> {
   const url = new URL("https://photon.komoot.io/api/");
@@ -256,7 +256,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   return <Glyph kind={stroke[command] ?? "terminal"} />;
 }
 
-const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
+export const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
   { id: "memory", label: "Memory", glyph: "database" },
   { id: "codeacts", label: "CodeActs", glyph: "codeact" },
   { id: "hardware", label: "Hardware", glyph: "gauge" },
@@ -308,7 +308,7 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   {
     id: "lesson",
     label: "Lessons",
-    title: "Lessons: observed error -> replacement rule",
+    title: "Lessons turn mistakes and experience into reusable rules and skills.",
     glyph: "shield-check",
     placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
@@ -753,6 +753,42 @@ function BrainMemoryLocationField({
 function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["source"] | BrainCustomCodeActEntry["source"] }) {
   const label = source === "manual" ? "manual" : source === "host_generated_newbrain" ? "host" : "agent";
   return <span className="brainLearningRegistry__source">{label}</span>;
+}
+
+export function BrainWorkspaceChrome({
+  space,
+  onSpaceChange,
+  onClose
+}: {
+  space: BrainSpace;
+  onSpaceChange: (space: BrainSpace) => void;
+  onClose?: () => void;
+}) {
+  return (
+    <div className="brainWorkspaceChrome">
+      <div className="brainWorkspaceChrome__titlebar">
+        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+          <span aria-hidden="true" />
+        </button>
+        <span className="brainCanvas__mark brainWorkspaceChrome__mark"><Glyph kind="brain" size={26} /></span>
+        <strong>Brain</strong>
+      </div>
+      <div className="brainCanvas__tabs brainWorkspaceChrome__tabs" role="tablist" aria-label="Brain spaces">
+        {BRAIN_SPACES.map(({ id, label, glyph }) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={space === id}
+            key={id}
+            onClick={() => onSpaceChange(id)}
+          >
+            <Glyph kind={glyph} size={20} />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function getBrainLearningMacroLineText(line: string) {
@@ -1770,34 +1806,10 @@ function PersonalitySpace() {
   );
 }
 
-export function BrainCanvas({ onClose }: { onClose?: () => void }) {
-  const [space, setSpace] = useState<BrainSpace>("memory");
+export function BrainCanvas({ space }: { space: BrainSpace }) {
   return (
     <section className="profileCanvas brainCanvas" aria-label="Brain canvas">
       <BrainBlob />
-      <div className="brainCanvas__stickyChrome">
-        <header className="brainCanvas__head">
-          <button type="button" className="brainCanvas__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
-            <span aria-hidden="true" />
-          </button>
-          <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
-          <h1>Brain</h1>
-        </header>
-        <div className="brainCanvas__tabs" role="tablist" aria-label="Brain spaces">
-          {BRAIN_SPACES.map(({ id, label, glyph }) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={space === id}
-              key={id}
-              onClick={() => setSpace(id)}
-            >
-              <Glyph kind={glyph} size={20} />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
       {space === "codeacts" ? <CodeActsSpace /> : null}
       {space === "memory" ? <MemorySpace /> : null}
       {space === "hardware" ? <HardwareSpace /> : null}
