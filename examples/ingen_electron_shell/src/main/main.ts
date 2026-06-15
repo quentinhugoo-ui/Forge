@@ -12638,24 +12638,53 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   return true;
 }
 
-/* Allow-list for the replicated widget system tray: only Windows settings /
-   network shell URIs may be launched, never arbitrary protocols. */
-const ALLOWED_WIDGET_SHELL_URI_PREFIXES = ["ms-settings:", "ms-availablenetworks:"] as const;
+/* Replicated widget tray clicks open the real Windows shell flyouts by
+   synthesizing the system hotkeys: Win+A for Quick Settings (volume / Wi-Fi /
+   battery) and Win+N for the calendar / notifications. Only these two fixed
+   actions are allowed — no arbitrary key injection. */
+const WIDGET_SHELL_ACTION_KEYS = {
+  "quick-settings": 0x41, // A
+  calendar: 0x4e // N
+} as const;
+type WidgetShellAction = keyof typeof WIDGET_SHELL_ACTION_KEYS;
 
-function openWidgetShellUri(event: Electron.IpcMainInvokeEvent, uri: unknown): boolean {
+function sendWindowsWinHotkey(letterVk: number): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const script = [
+    "Add-Type -Namespace InGenHotkey -Name Native -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, System.UIntPtr dwExtraInfo);';",
+    "$lwin = 0x5B;",
+    `$vk = ${letterVk};`,
+    "[InGenHotkey.Native]::keybd_event($lwin, 0, 0, [System.UIntPtr]::Zero);",
+    "[InGenHotkey.Native]::keybd_event($vk, 0, 0, [System.UIntPtr]::Zero);",
+    "Start-Sleep -Milliseconds 30;",
+    "[InGenHotkey.Native]::keybd_event($vk, 0, 2, [System.UIntPtr]::Zero);",
+    "[InGenHotkey.Native]::keybd_event($lwin, 0, 2, [System.UIntPtr]::Zero);"
+  ].join(" ");
+  try {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+      { windowsHide: true, stdio: "ignore" }
+    );
+    child.on("error", (error) => console.warn("Failed to send Windows hotkey", error));
+    child.unref();
+  } catch (error) {
+    console.warn("Failed to spawn Windows hotkey", error);
+  }
+}
+
+function triggerWidgetShellAction(event: Electron.IpcMainInvokeEvent, action: unknown): boolean {
   if (!validateSender(event)) {
-    console.warn("Blocked widget shell URI from invalid sender", event.senderFrame?.url ?? "");
+    console.warn("Blocked widget shell action from invalid sender", event.senderFrame?.url ?? "");
     return false;
   }
-  if (typeof uri !== "string" || uri.length === 0 || uri.length > 200) {
+  if (typeof action !== "string" || !(action in WIDGET_SHELL_ACTION_KEYS)) {
+    console.warn("Blocked unknown widget shell action", action);
     return false;
   }
-  const normalized = uri.trim().toLowerCase();
-  if (!ALLOWED_WIDGET_SHELL_URI_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
-    console.warn("Blocked non-allow-listed widget shell URI", uri);
-    return false;
-  }
-  void shell.openExternal(uri.trim()).catch((error) => console.warn("Failed to open widget shell URI", error));
+  sendWindowsWinHotkey(WIDGET_SHELL_ACTION_KEYS[action as WidgetShellAction]);
   return true;
 }
 
@@ -12668,7 +12697,7 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-widget-click-through", (event, enabled): boolean => setNativeWindowWidgetClickThrough(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-autohide", (event, enabled): boolean => setNativeWindowWidgetTaskbarAutoHide(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-toggle", (event): boolean => toggleNativeWindowWidgetTaskbar(event));
-  ipcMain.handle("forge:open-shell-uri", (event, uri): boolean => openWidgetShellUri(event, uri));
+  ipcMain.handle("forge:widget-shell-action", (event, action): boolean => triggerWidgetShellAction(event, action));
 }
 
 function terminalProof(value: unknown): string {

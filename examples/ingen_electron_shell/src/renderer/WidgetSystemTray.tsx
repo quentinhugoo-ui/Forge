@@ -7,7 +7,11 @@ import { useEffect, useState } from "react";
    a native snapshot in a later phase. Clicking an indicator opens the matching
    Windows panel through an allow-listed shell URI. */
 
-type ForgeShellTrayApi = { openShellUri?: (uri: string) => Promise<boolean> };
+/* Real Win11 tray behaviour: clicking a system indicator opens the Quick
+   Settings flyout (Win+A) and clicking the clock opens the calendar /
+   notifications flyout (Win+N), rather than the full Settings app. */
+type WidgetShellAction = "quick-settings" | "calendar";
+type ForgeShellTrayApi = { triggerWidgetShellAction?: (action: WidgetShellAction) => Promise<boolean> };
 
 type BatteryLike = {
   level: number;
@@ -19,9 +23,9 @@ type BatteryNavigator = Navigator & { getBattery?: () => Promise<BatteryLike> };
 
 const TRAY_CLOCK_TICK_MS = 1000;
 
-function openShellUri(uri: string): void {
+function triggerWidgetShellAction(action: WidgetShellAction): void {
   const api = (globalThis.window as unknown as { forgeShell?: ForgeShellTrayApi })?.forgeShell;
-  void api?.openShellUri?.(uri);
+  void api?.triggerWidgetShellAction?.(action);
 }
 
 function formatTime(now: Date): string {
@@ -165,7 +169,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         className="widgetSystemTray__icon"
         aria-label="Network"
         title="Network"
-        onClick={() => openShellUri("ms-availablenetworks:")}
+        onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         <WifiGlyph online={online} />
       </button>
@@ -174,7 +178,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         className="widgetSystemTray__icon"
         aria-label="Volume"
         title="Volume"
-        onClick={() => openShellUri("ms-settings:sound")}
+        onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         <VolumeGlyph />
       </button>
@@ -183,7 +187,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         className="widgetSystemTray__battery"
         aria-label={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
         title={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
-        onClick={() => openShellUri("ms-settings:batterysaver")}
+        onClick={() => triggerWidgetShellAction("quick-settings")}
       >
         {battery ? <BatteryGlyph level={battery.level} charging={battery.charging} /> : <BatteryGlyph level={1} charging={false} />}
         {batteryPercent !== null ? <span className="widgetSystemTray__batteryPct">{batteryPercent}%</span> : null}
@@ -193,7 +197,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
         className="widgetSystemTray__clock"
         aria-label={`${formatTime(now)} ${formatDate(now)}`}
         title="Date and time"
-        onClick={() => openShellUri("ms-settings:dateandtime")}
+        onClick={() => triggerWidgetShellAction("calendar")}
       >
         <span className="widgetSystemTray__time">{formatTime(now)}</span>
         <span className="widgetSystemTray__date">{formatDate(now)}</span>

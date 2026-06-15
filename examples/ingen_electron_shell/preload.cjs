@@ -135,8 +135,8 @@ const forgeShell = {
   hideNativeTerminal() {
     return ipcRenderer.invoke("forge:terminal-hide-native");
   },
-  openShellUri(uri) {
-    return ipcRenderer.invoke("forge:open-shell-uri", uri);
+  triggerWidgetShellAction(action) {
+    return ipcRenderer.invoke("forge:widget-shell-action", action);
   }
 };
 
