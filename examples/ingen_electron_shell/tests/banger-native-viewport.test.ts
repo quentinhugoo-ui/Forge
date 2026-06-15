@@ -88,6 +88,12 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain(".bangerSphereNativeFrame");
     expect(stylesSource).toContain("pointer-events: none");
     expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
+    expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .mapsCanvasPane");
+    expect(stylesSource).toContain("width: var(--transcript-media-width)");
+    expect(stylesSource).toContain("height: var(--transcript-media-flow-height)");
+    expect(stylesSource).toContain("right: var(--transcript-media-right-gap)");
+    expect(stylesSource).toContain(".shell--maps-canvas-open .transcriptTextFrame");
+    expect(stylesSource).toContain("var(--transcript-media-avoidance-width)");
     expect(stylesSource).toContain("object-fit: cover");
   });
 

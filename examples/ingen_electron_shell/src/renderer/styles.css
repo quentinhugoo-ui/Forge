@@ -4154,6 +4154,12 @@ button {
   z-index: 30;
 }
 
+.shell--maps-canvas-open .transcriptTextFrame,
+.shell--maps-canvas-open .transcriptPill--assistant,
+.shell--maps-canvas-open .transcriptCodeActEvent {
+  max-width: max(520px, calc(100% - var(--transcript-media-avoidance-width)));
+}
+
 .canvasSurfaces--webExplorerOpen ~ .panelsChatBottom .chatCanvas,
 .canvasSurfaces--codingLivePreviewOpen ~ .panelsChatBottom .chatCanvas {
   left: calc(var(--main-left) + 24px);
@@ -4481,8 +4487,7 @@ button {
   color: #d3b8ff;
 }
 
-.transcriptCodeActEvent--agent,
-.transcriptCodeActEvent--codeact {
+.transcriptCodeActEvent--agent {
   transition:
     color 260ms ease-out,
     opacity 260ms ease-out,
@@ -4504,38 +4509,12 @@ button {
   color: #d8dde0;
 }
 
-.transcriptCodeActEvent--codeact-working {
-  color: #d8dde0;
-  opacity: 1;
-  filter: drop-shadow(0 0 10px color-mix(in oklab, currentColor 18%, transparent));
-}
-
-.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon {
-  animation: transcriptAgentEventPulse 1150ms ease-in-out infinite;
-}
-
-.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__command,
-.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__text {
-  color: #d8dde0;
-}
-
 .transcriptCodeActEvent--agent-complete {
   opacity: 0.72;
   animation: transcriptAgentEventSettle 260ms ease-out both;
 }
 
 .transcriptCodeActEvent--agent-complete .transcriptCodeActEvent__text {
-  color: #8d9396;
-}
-
-.transcriptCodeActEvent--codeact-complete {
-  opacity: 0.72;
-  animation: transcriptAgentEventSettle 260ms ease-out both;
-}
-
-.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__icon,
-.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__command,
-.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__text {
   color: #8d9396;
 }
 
@@ -6749,8 +6728,6 @@ ol.assistantText__list li::before {
   .transcriptCodeActEvent__icon .brainSegmentIcon path,
   .transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__icon,
   .transcriptCodeActEvent--agent-complete,
-  .transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon,
-  .transcriptCodeActEvent--codeact-complete,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
   .transcriptContextCompactionEvent,
@@ -8329,6 +8306,11 @@ ol.assistantText__list li::before {
 .canvasSurfaces--webExplorerOpen,
 .canvasSurfaces--mapsOpen,
 .canvasSurfaces--codingLivePreviewOpen {
+  --transcript-media-width: clamp(430px, 40vw, 760px);
+  --transcript-media-avoidance-width: clamp(320px, 30vw, 560px);
+  --transcript-media-flow-height: clamp(420px, 42vw, 620px);
+  --transcript-media-top-offset: clamp(72px, 5.2vw, 98px);
+  --transcript-media-right-gap: clamp(22px, 3vw, 52px);
   top: 96px;
   right: 0;
   bottom: var(--chat-canvas-bottom);
@@ -8752,13 +8734,16 @@ ol.assistantText__list li::before {
 
 .mapsCanvasGrid--earthActive .mapsCanvasPane {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: calc(-1 * var(--chat-canvas-bottom));
-  left: 0;
+  top: var(--transcript-media-top-offset);
+  right: var(--transcript-media-right-gap);
+  bottom: auto;
+  left: auto;
   z-index: 2;
+  width: var(--transcript-media-width);
+  height: var(--transcript-media-flow-height);
   overflow: hidden;
-  pointer-events: auto;
+  filter: drop-shadow(0 24px 76px rgba(0, 0, 0, 0.42));
+  pointer-events: none;
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
