@@ -95,8 +95,8 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain("right: var(--transcript-media-right-gap)");
     expect(stylesSource).toContain("overflow: visible");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame");
-    expect(stylesSource).toContain("width: min(83.48268918vw, 103.63368312vh, 1094.38692px)");
-    expect(stylesSource).toContain("height: min(83.48268918vw, 103.63368312vh, 1094.38692px)");
+    expect(stylesSource).toContain("width: min(62.612016885vw, 77.72526234vh, 820.79019px)");
+    expect(stylesSource).toContain("height: min(62.612016885vw, 77.72526234vh, 820.79019px)");
     expect(stylesSource).toContain("transform: translate3d(-50%, -50%, 0)");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__preview");
     expect(stylesSource).toContain("object-fit: contain");
@@ -105,7 +105,7 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain("display: none");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .webExplorerClose");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere");
-    expect(stylesSource).toContain("width: min(100%, 1094.38692px)");
+    expect(stylesSource).toContain("width: min(100%, 820.79019px)");
     expect(appSource).toContain("canvasMapsClosing");
     expect(appSource).toContain("canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing");
     expect(appSource).toContain("closeCanvasMaps();");
