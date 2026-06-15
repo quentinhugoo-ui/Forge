@@ -3,6 +3,7 @@ import {
   extractScrapersCodeAct,
   parseScrapersCodeAct,
   renderScrapersCodeActResult,
+  scrapersVisualAttachments,
   SCRAPERS_COMMAND,
   SCRAPERS_RESULT_SCHEMA,
   type ScrapersBridgeResult
@@ -121,5 +122,73 @@ describe("Scrapers MCP CodeAct", () => {
     expect(rendered).toContain("media_manifest=");
     expect(rendered).toContain('"backend":"scrapling"');
     expect(rendered).toContain('"backend":"crawl4ai"');
+  });
+
+  it("normalizes scraped visual media into transcript attachment previews", () => {
+    const result: ScrapersBridgeResult = {
+      schema: SCRAPERS_RESULT_SCHEMA,
+      command: SCRAPERS_COMMAND,
+      status: "ok",
+      requestHash: "c".repeat(64),
+      startedAt: "2026-06-15T00:00:00.000Z",
+      finishedAt: "2026-06-15T00:00:01.000Z",
+      durationMs: 1000,
+      providers: [],
+      merged: {
+        urls: ["https://example.com/"],
+        fields: [],
+        markdown: ["# Text remains in the SCRAPERS_RESULT manifest"],
+        links: [{ url: "https://example.com/page" }],
+        media: [
+          {
+            kind: "image",
+            url: "https://cdn.example.com/hero",
+            mimeType: "image/webp",
+            caption: "Hero image",
+            sourceUrl: "https://example.com/"
+          },
+          {
+            kind: "video",
+            url: "https://cdn.example.com/trailer.mp4",
+            mimeType: "video/mp4",
+            title: "Trailer"
+          },
+          {
+            kind: "audio",
+            url: "https://cdn.example.com/theme.mp3",
+            mimeType: "audio/mpeg"
+          }
+        ],
+        artifacts: [
+          {
+            backend: "crawl4ai",
+            kind: "screenshot",
+            url: "https://cdn.example.com/screen.png",
+            mimeType: "image/png"
+          }
+        ],
+        warnings: [],
+        provenance: []
+      },
+      proofHash: "d".repeat(64)
+    };
+
+    const attachments = scrapersVisualAttachments(result);
+
+    expect(attachments).toHaveLength(3);
+    expect(attachments.map((attachment) => attachment.kind)).toEqual(["image", "video", "image"]);
+    expect(attachments[0]).toMatchObject({
+      name: "Hero image",
+      url: "https://cdn.example.com/hero",
+      textPreview: expect.stringContaining("scraped_media=true")
+    });
+    expect(attachments[1]).toMatchObject({
+      name: "Trailer",
+      url: "https://cdn.example.com/trailer.mp4"
+    });
+    expect(attachments[2]).toMatchObject({
+      name: "screen",
+      url: "https://cdn.example.com/screen.png"
+    });
   });
 });

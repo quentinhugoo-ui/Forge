@@ -198,7 +198,8 @@ import {
 } from "./airbnb-codeact.js";
 import {
   extractScrapersCodeAct,
-  renderScrapersCodeActResult
+  renderScrapersCodeActResult,
+  scrapersVisualAttachments
 } from "./scrapers-codeact.js";
 import { runScrapersMcpBridge } from "./scrapers-mcp-bridge.js";
 
@@ -14655,13 +14656,22 @@ async function executeAssistantScrapersCodeAct(message: TranscriptMessage): Prom
   }
   const result = await runScrapersMcpBridge(request);
   const executionText = renderScrapersCodeActResult(result);
+  const visualAttachments = scrapersVisualAttachments(result);
   return {
     ...message,
+    attachments: visualAttachments.length > 0
+      ? [...(message.attachments ?? []), ...visualAttachments]
+      : message.attachments,
     text: `${message.text.trim()}\n\n${executionText}`,
     proofHash: hashJson({
       previousProofHash: message.proofHash,
       assistantCodeAct: request,
-      scrapersResult: result
+      scrapersResult: result,
+      visualAttachments: visualAttachments.map((attachment) => ({
+        id: attachment.id,
+        kind: attachment.kind,
+        url: attachment.url
+      }))
     })
   };
 }

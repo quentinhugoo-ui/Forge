@@ -4120,49 +4120,56 @@ function TranscriptCanvas({
               key={message.id}
             >
               {role === "assistant" ? (
-                <div className="transcriptTextFrame">
-                  <div
-                    className={
-                      assistantPending
-                        ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
-                        : assistantQueued
-                          ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
-                          : assistantError
-                          ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError"
-                          : "transcriptPill transcriptPill--assistant"
-                    }
-                  >
-                    {assistantAwaitingAnimation ? (
-                      <PendingAssistantText agentName={agentName} />
-                    ) : assistantError ? (
-                      <AssistantErrorText message={renderedMessage} />
-                    ) : assistantShouldAnimate ? (
-                      <AnimatedAssistantText
-                        agentName={agentName}
-                        message={renderedMessage}
-                        onAnimationComplete={completeAssistantAnimation}
-                        onUseMathInCompute={onUseMathInCompute}
-                        parallelSessionIndex={parallelSessionIndex}
-                      />
-                    ) : (
-                      <StaticAssistantText
-                        agentName={agentName}
-                        message={renderedMessage}
-                        onUseMathInCompute={onUseMathInCompute}
-                        parallelSessionIndex={parallelSessionIndex}
-                      />
-                    )}
-                  </div>
-                  {assistantCanShowWorkingStatus ? (
-                    <AssistantWorkingStatus
-                      active={assistantWorking}
-                      activityKey={assistantWorkingActivityKey}
-                      activityText={assistantWorkingActivityText}
-                      agentName={agentName}
-                    />
+                <>
+                  {visualAttachments.length > 0 ? (
+                    <div className="transcriptFloatMedia" aria-label="Attached visual media">
+                      <TranscriptAttachmentStack previews={visualAttachments} />
+                    </div>
                   ) : null}
-                  {assistantAwaitingAnimation ? null : actions}
-                </div>
+                  <div className="transcriptTextFrame">
+                    <div
+                      className={
+                        assistantPending
+                          ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
+                          : assistantQueued
+                            ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
+                            : assistantError
+                            ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError"
+                            : "transcriptPill transcriptPill--assistant"
+                      }
+                    >
+                      {assistantAwaitingAnimation ? (
+                        <PendingAssistantText agentName={agentName} />
+                      ) : assistantError ? (
+                        <AssistantErrorText message={renderedMessage} />
+                      ) : assistantShouldAnimate ? (
+                        <AnimatedAssistantText
+                          agentName={agentName}
+                          message={renderedMessage}
+                          onAnimationComplete={completeAssistantAnimation}
+                          onUseMathInCompute={onUseMathInCompute}
+                          parallelSessionIndex={parallelSessionIndex}
+                        />
+                      ) : (
+                        <StaticAssistantText
+                          agentName={agentName}
+                          message={renderedMessage}
+                          onUseMathInCompute={onUseMathInCompute}
+                          parallelSessionIndex={parallelSessionIndex}
+                        />
+                      )}
+                    </div>
+                    {assistantCanShowWorkingStatus ? (
+                      <AssistantWorkingStatus
+                        active={assistantWorking}
+                        activityKey={assistantWorkingActivityKey}
+                        activityText={assistantWorkingActivityText}
+                        agentName={agentName}
+                      />
+                    ) : null}
+                    {assistantAwaitingAnimation ? null : actions}
+                  </div>
+                </>
               ) : (
                 <>
                   {visualAttachments.length > 0 ? (

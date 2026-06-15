@@ -4458,7 +4458,7 @@ button {
   max-width: calc(100% - 8px);
 }
 
-.transcriptItem--user:has(.transcriptFloatMedia) {
+.transcriptItem:has(.transcriptFloatMedia) {
   min-height: 0;
 }
 
@@ -4480,35 +4480,35 @@ button {
   margin-top: 34px;
 }
 
-.transcriptItem--user:has(.transcriptAttachmentStack) + .transcriptItem--assistant {
+.transcriptItem:has(.transcriptAttachmentStack) + .transcriptItem--assistant {
   margin-top: 12px;
 }
 
-.transcriptItem--user:has(.transcriptFloatMedia) + .transcriptItem--assistant {
+.transcriptItem:has(.transcriptFloatMedia) + .transcriptItem--assistant {
   margin-top: 16px;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-landscape) {
+.transcriptItem:has(.transcriptAttachment--frame-landscape) {
   min-height: 0;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-landscape) + .transcriptItem--assistant {
+.transcriptItem:has(.transcriptAttachment--frame-landscape) + .transcriptItem--assistant {
   margin-top: 16px;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) {
+.transcriptItem:has(.transcriptAttachment--frame-nineSixteen) {
   min-height: 0;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--assistant {
+.transcriptItem:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--assistant {
   margin-top: 16px;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-square) {
+.transcriptItem:has(.transcriptAttachment--frame-square) {
   min-height: 0;
 }
 
-.transcriptItem--user:has(.transcriptAttachment--frame-square) + .transcriptItem--assistant {
+.transcriptItem:has(.transcriptAttachment--frame-square) + .transcriptItem--assistant {
   margin-top: 16px;
 }
 
@@ -5629,19 +5629,19 @@ button {
     margin: 0;
   }
 
-  .transcriptItem--user:has(.transcriptFloatMedia) {
+  .transcriptItem:has(.transcriptFloatMedia) {
     min-height: 0;
   }
 
-  .transcriptItem--user:has(.transcriptFloatMedia) + .transcriptItem--assistant {
+  .transcriptItem:has(.transcriptFloatMedia) + .transcriptItem--assistant {
     margin-top: 16px;
   }
 
-  .transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) {
+  .transcriptItem:has(.transcriptAttachment--frame-nineSixteen) {
     min-height: 0;
   }
 
-  .transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--assistant {
+  .transcriptItem:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--assistant {
     margin-top: 16px;
   }
 
@@ -5656,21 +5656,29 @@ button {
   background: transparent;
 }
 
+.transcriptItem:has(.transcriptFloatMedia) .transcriptTextFrame,
+.transcriptItem:has(.transcriptFloatMedia) .transcriptPill--assistant,
 .transcriptItem--afterVisualMedia .transcriptTextFrame,
 .transcriptItem--afterVisualMedia .transcriptPill--assistant {
   max-width: max(460px, calc(100% - clamp(250px, 24vw, 460px)));
 }
 
+.transcriptItem:has(.transcriptAttachment--frame-landscape) .transcriptTextFrame,
+.transcriptItem:has(.transcriptAttachment--frame-landscape) .transcriptPill--assistant,
 .transcriptItem--user:has(.transcriptAttachment--frame-landscape) + .transcriptItem--afterVisualMedia .transcriptTextFrame,
 .transcriptItem--user:has(.transcriptAttachment--frame-landscape) + .transcriptItem--afterVisualMedia .transcriptPill--assistant {
   max-width: max(520px, calc(100% - clamp(190px, 18vw, 360px)));
 }
 
+.transcriptItem:has(.transcriptAttachment--frame-nineSixteen) .transcriptTextFrame,
+.transcriptItem:has(.transcriptAttachment--frame-nineSixteen) .transcriptPill--assistant,
 .transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--afterVisualMedia .transcriptTextFrame,
 .transcriptItem--user:has(.transcriptAttachment--frame-nineSixteen) + .transcriptItem--afterVisualMedia .transcriptPill--assistant {
   max-width: max(540px, calc(100% - clamp(180px, 17vw, 340px)));
 }
 
+.transcriptItem:has(.transcriptAttachment--frame-square) .transcriptTextFrame,
+.transcriptItem:has(.transcriptAttachment--frame-square) .transcriptPill--assistant,
 .transcriptItem--user:has(.transcriptAttachment--frame-square) + .transcriptItem--afterVisualMedia .transcriptTextFrame,
 .transcriptItem--user:has(.transcriptAttachment--frame-square) + .transcriptItem--afterVisualMedia .transcriptPill--assistant {
   max-width: max(520px, calc(100% - clamp(205px, 19vw, 380px)));

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   BRAIN_SCRAPERS_COMMAND,
-  BRAIN_SCRAPERS_RESULT_SCHEMA
+  BRAIN_SCRAPERS_RESULT_SCHEMA,
+  type ComposerUploadPreview
 } from "../shared/ipc-contract.js";
 
 export const SCRAPERS_COMMAND = BRAIN_SCRAPERS_COMMAND;
@@ -11,6 +12,7 @@ const MAX_GOAL_CHARS = 600;
 const MAX_URLS = 12;
 const MAX_SELECTOR_CHARS = 220;
 const MAX_SELECTORS = 24;
+const MAX_SCRAPED_VISUAL_ATTACHMENTS = 8;
 const DEFAULT_LIMITS: ScrapersLimits = {
   pages: 1,
   links: 50,
@@ -293,8 +295,136 @@ export function renderScrapersCodeActResult(result: ScrapersBridgeResult): strin
   ].join("\n");
 }
 
+export function scrapersVisualAttachments(result: ScrapersBridgeResult): ComposerUploadPreview[] {
+  const candidates = [
+    ...result.merged.media.map((item) => scrapedVisualAttachmentCandidate(item, "media")),
+    ...result.merged.artifacts.map((item) => scrapedVisualAttachmentCandidate(item, "artifact"))
+  ].filter((item): item is ComposerUploadPreview => Boolean(item));
+  const seen = new Set<string>();
+  const attachments: ComposerUploadPreview[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.url)) {
+      continue;
+    }
+    seen.add(candidate.url);
+    attachments.push(candidate);
+    if (attachments.length >= MAX_SCRAPED_VISUAL_ATTACHMENTS) {
+      break;
+    }
+  }
+  return attachments;
+}
+
 export function stableScrapersHash(value: unknown): string {
   return stableHash(value);
+}
+
+function scrapedVisualAttachmentCandidate(value: unknown, source: "media" | "artifact"): ComposerUploadPreview | undefined {
+  const record = readUnknownRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const primaryUrl = normalizedVisualUrl(firstUnknownString(record, [
+    "url",
+    "src",
+    "href",
+    "image_url",
+    "imageUrl",
+    "video_url",
+    "videoUrl"
+  ]));
+  const thumbnailUrl = normalizedVisualUrl(firstUnknownString(record, [
+    "thumbnailUrl",
+    "thumbnail_url",
+    "thumbnail",
+    "posterUrl",
+    "poster_url",
+    "poster"
+  ]));
+  const mimeType = firstUnknownString(record, ["mimeType", "mime_type", "mime"]).toLowerCase();
+  const declaredKind = firstUnknownString(record, ["kind", "type"]).toLowerCase();
+  const visualKind = visualAttachmentKind(declaredKind, mimeType, primaryUrl);
+  const fallbackKind = visualAttachmentKind("image", "image/*", thumbnailUrl);
+  const kind = visualKind ?? fallbackKind;
+  const url = visualKind ? primaryUrl : thumbnailUrl;
+  if (!kind || !url) {
+    return undefined;
+  }
+  const title = firstUnknownString(record, ["title", "name", "caption", "alt", "altText", "alt_text"]);
+  const sourceUrl = firstUnknownString(record, ["sourceUrl", "source_url", "pageUrl", "page_url"]);
+  const name = clampText(title || scrapedMediaFilename(url) || `Scraped ${kind}`, 120);
+  const textPreview = clampText([
+    title,
+    sourceUrl ? `source=${sourceUrl}` : "",
+    `scraped_${source}=true`
+  ].filter(Boolean).join("\n"), 1_000);
+  const id = `scraped-${source}-${stableHash({ kind, url, name }).slice(0, 16)}`;
+  return {
+    id,
+    name,
+    kind,
+    url,
+    textPreview,
+    tablePreview: []
+  };
+}
+
+function readUnknownRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function firstUnknownString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function normalizedVisualUrl(value: string): string {
+  if (!value) {
+    return "";
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "ingen:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function visualAttachmentKind(
+  declaredKind: string,
+  mimeType: string,
+  url: string
+): Extract<ComposerUploadPreview["kind"], "image" | "video"> | undefined {
+  if (!url) {
+    return undefined;
+  }
+  const clean = url.split(/[?#]/u, 1)[0]?.toLowerCase() ?? "";
+  if (declaredKind.includes("video") || mimeType.startsWith("video/") || /\.(?:mp4|webm|mov|m4v)$/u.test(clean)) {
+    return "video";
+  }
+  if (
+    declaredKind.includes("image") ||
+    declaredKind.includes("screenshot") ||
+    mimeType.startsWith("image/") ||
+    /\.(?:png|jpe?g|webp|gif|avif|svg)$/u.test(clean)
+  ) {
+    return "image";
+  }
+  return undefined;
+}
+
+function scrapedMediaFilename(url: string): string {
+  try {
+    const name = new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? "";
+    return decodeURIComponent(name).replace(/\.[a-z0-9]{2,5}$/iu, "").trim();
+  } catch {
+    return "";
+  }
 }
 
 function readScrapersCommand(value: string): typeof SCRAPERS_COMMAND | undefined {
