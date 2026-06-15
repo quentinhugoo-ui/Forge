@@ -166,7 +166,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".widgetTranscriptTab", padding: { left: 8, right: 8, top: 8, bottom: 8 } },
-  { selector: ".permissionModeMenu", padding: 1 }
+  { selector: ".permissionModeMenu", padding: { left: 10, right: 10, top: 14, bottom: 10 } }
 ];
 
 function readWidgetLayoutLock(): WidgetLayoutLock | null {

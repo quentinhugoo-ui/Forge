@@ -4207,7 +4207,8 @@ function WidgetTranscriptPanel({
   stopAnimationSignal,
   onEditImage,
   onUseMathInCompute,
-  onReduce
+  onReduce,
+  collapsing = false
 }: {
   activeSessionId: string;
   messages: TranscriptMessage[];
@@ -4217,12 +4218,17 @@ function WidgetTranscriptPanel({
   onEditImage: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute: AssistantMathUseHandler;
   onReduce: () => void;
+  collapsing?: boolean;
 }) {
   const titleId = useId();
 
   return (
     <section
-      className="composerQuestionnaire widgetTranscriptPanel"
+      className={[
+        "composerQuestionnaire",
+        "widgetTranscriptPanel",
+        collapsing ? "widgetTranscriptPanel--collapsing" : ""
+      ].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
     >
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
@@ -4259,11 +4265,10 @@ function WidgetTranscriptTab({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       className="widgetTranscriptTab"
-      aria-label="Rouvrir le panneau de conversation"
+      aria-label="Agrandir le panneau de conversation"
       onClick={onOpen}
     >
-      <ChevronLeft size={13} aria-hidden="true" />
-      <span>Conversation</span>
+      Agrandir
     </button>
   );
 }
@@ -4480,11 +4485,13 @@ export function PanelsChatBottomSlice({
   const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
   const [widgetTranscriptCollapsed, setWidgetTranscriptCollapsed] = useState(false);
+  const [widgetTranscriptCollapsing, setWidgetTranscriptCollapsing] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
   const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const widgetTranscriptCollapseTimerRef = useRef<number | null>(null);
   const draftRef = useRef(draft);
   const composerResetFenceRef = useRef(false);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
@@ -4848,30 +4855,55 @@ export function PanelsChatBottomSlice({
     : activeQuestionnaire
       ? { questionnaire: activeQuestionnaire, parallelSessionIndex: 0 }
       : null;
+  const clearWidgetTranscriptCollapseTimer = useCallback(() => {
+    if (widgetTranscriptCollapseTimerRef.current !== null) {
+      window.clearTimeout(widgetTranscriptCollapseTimerRef.current);
+      widgetTranscriptCollapseTimerRef.current = null;
+    }
+  }, []);
+  const reduceWidgetTranscript = useCallback(() => {
+    clearWidgetTranscriptCollapseTimer();
+    setWidgetTranscriptCollapsing(true);
+    widgetTranscriptCollapseTimerRef.current = window.setTimeout(() => {
+      widgetTranscriptCollapseTimerRef.current = null;
+      setWidgetTranscriptCollapsed(true);
+      setWidgetTranscriptCollapsing(false);
+    }, 260);
+  }, [clearWidgetTranscriptCollapseTimer]);
+  const expandWidgetTranscript = useCallback(() => {
+    clearWidgetTranscriptCollapseTimer();
+    setWidgetTranscriptCollapsed(false);
+    setWidgetTranscriptCollapsing(false);
+  }, [clearWidgetTranscriptCollapseTimer]);
+  useEffect(() => () => clearWidgetTranscriptCollapseTimer(), [clearWidgetTranscriptCollapseTimer]);
   useEffect(() => {
     if (!widgetMode) {
+      clearWidgetTranscriptCollapseTimer();
       setWidgetTranscriptCollapsed(false);
+      setWidgetTranscriptCollapsing(false);
     }
-  }, [widgetMode]);
+  }, [clearWidgetTranscriptCollapseTimer, widgetMode]);
   useEffect(() => {
     if (widgetMode && widgetTranscriptHasConversation) {
+      clearWidgetTranscriptCollapseTimer();
       setWidgetTranscriptCollapsed(false);
+      setWidgetTranscriptCollapsing(false);
     }
-  }, [snapshot.activeSessionId, widgetMode, widgetTranscriptHasConversation]);
-  const widgetTranscriptPanelOpen =
+  }, [clearWidgetTranscriptCollapseTimer, snapshot.activeSessionId, widgetMode, widgetTranscriptHasConversation]);
+  const widgetTranscriptPanelVisible =
     widgetMode &&
     !widgetModeTransitioning &&
     widgetTranscriptHasConversation &&
-    !widgetTranscriptCollapsed &&
+    (!widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
   const widgetTranscriptTabVisible =
     widgetMode &&
     !widgetModeTransitioning &&
     widgetTranscriptHasConversation &&
-    widgetTranscriptCollapsed &&
+    (widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
   const widgetPanelExpanded =
-    widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen || widgetTranscriptTabVisible || permissionMenuOpen);
+    widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelVisible || widgetTranscriptTabVisible || permissionMenuOpen);
   useEffect(() => {
     const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
     if (!setWidgetPanelExpanded) {
@@ -5077,7 +5109,7 @@ export function PanelsChatBottomSlice({
       className={[
         "panelsChatBottom",
         composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
-        widgetTranscriptPanelOpen ? "panelsChatBottom--widgetTranscriptOpen" : "",
+        widgetTranscriptPanelVisible ? "panelsChatBottom--widgetTranscriptOpen" : "",
         widgetTranscriptTabVisible ? "panelsChatBottom--widgetTranscriptCollapsed" : "",
         permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
       ].filter(Boolean).join(" ")}
@@ -5170,7 +5202,7 @@ export function PanelsChatBottomSlice({
           onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
         />
       ) : null}
-      {widgetTranscriptPanelOpen ? (
+      {widgetTranscriptPanelVisible ? (
         <WidgetTranscriptPanel
           activeSessionId={snapshot.activeSessionId}
           messages={widgetTranscriptMessages}
@@ -5179,11 +5211,12 @@ export function PanelsChatBottomSlice({
           stopAnimationSignal={assistantStopSignal}
           onEditImage={stageImageForEdit}
           onUseMathInCompute={useMathInCompute}
-          onReduce={() => setWidgetTranscriptCollapsed(true)}
+          onReduce={reduceWidgetTranscript}
+          collapsing={widgetTranscriptCollapsing}
         />
       ) : null}
       {widgetTranscriptTabVisible ? (
-        <WidgetTranscriptTab onOpen={() => setWidgetTranscriptCollapsed(false)} />
+        <WidgetTranscriptTab onOpen={expandWidgetTranscript} />
       ) : null}
       <form
         ref={composerRef}
