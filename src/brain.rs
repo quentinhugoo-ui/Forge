@@ -69,7 +69,7 @@ pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
 pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one standalone Brain-owned compact line /\"nomduchat\"_renamechat_ after identifying the first user message subject. The app uses the quoted nomduchat field as the sidebar title. The event is internal: never merge it with visible prose, never echo this line in the user-visible answer, and never describe the rename. Use 2-5 natural words, like Codex or Claude; avoid copying the prompt or using only a proper noun.";
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants current web information and no specific module owns the request. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
-pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ when the user needs robust web collection from one or more URLs and both selector-grade data plus clean RAG-ready Markdown. This Brain route fans out to Scrapling MCP and Crawl4AI MCP in parallel, then returns one compact merged manifest with structured fields, fit Markdown/chunks, citations, fetch metadata and provenance. Prefer this over choosing only /scrapling_mcp_ when the result should feed Brain memory, RAG, agents, research notes, or downstream comparison. Use /scrapling_mcp_ directly for pure selector extraction, screenshots, sessions, or difficult dynamic targets. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, Maps/geography routing, local files, image work, or generic Google search.";
+pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ when the user needs production-grade web collection from one or more URLs: structured fields, clean RAG-ready Markdown, links, image/media URLs, optional screenshots/PDF/MHTML/download artifacts, and compact provenance. This Brain route fans out to Scrapling MCP and Crawl4AI MCP in parallel, then returns one merged manifest. Scrapling should handle selectors, attributes, adaptive/dynamic/stealth/session fetches and screenshots; Crawl4AI should handle clean/fit Markdown, chunks, citations, links, media metadata and archival artifacts. Prefer this over choosing only /scrapling_mcp_ when the result should feed Brain memory, RAG, agents, research notes, comparison, monitoring or downstream structured analysis. Use /scrapling_mcp_ directly for a pure low-level selector/session/screenshot operation. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, Maps/geography routing, local files, image generation/editing, or generic Google search.";
 pub const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION: &str = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_.";
 pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on Google Earth for any detected geographic place. For geography alone, Maps is the only WebExplorer page. For geography plus travel/vacation/stay intent, open Maps first and Airbnb next. Prefer over /sciencebrain_ and /googleweb_ for ordinary geographic context; use Brain home city when no target is specified. Do not read device location silently; current-location use requires explicit user permission.";
 pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail.";
@@ -861,7 +861,7 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_SCRAPERS_COMMAND.to_string(),
         section: "mcp".to_string(),
-        purpose: "Fan out a bounded web collection request to Scrapling MCP and Crawl4AI MCP at the same time. Scrapling owns resilient selector extraction, adaptive/dynamic fetching, screenshots and session-aware evidence; Crawl4AI owns clean Markdown, fit_markdown, RAG chunks, citations and content filters. The host waits for both bounded results, records partial failures, and returns a single compact merged manifest with provenance instead of raw HTML.".to_string(),
+        purpose: "Fan out a bounded web collection request to Scrapling MCP and Crawl4AI MCP at the same time. Scrapling owns resilient selectors, CSS/XPath attributes, adaptive/dynamic/stealth/session fetching and screenshots; Crawl4AI owns clean Markdown, fit_markdown, RAG chunks, citations, links, media metadata, downloaded files, screenshots, PDF and MHTML artifacts. The host waits for both bounded results, records partial failures, deduplicates evidence, and returns a single compact merged manifest with provenance instead of raw HTML.".to_string(),
         result_schema: BRAIN_SCRAPERS_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -880,11 +880,72 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
                 description: "Short collection objective so both MCP calls can filter extraction, Markdown and provenance to what the user needs.".to_string(),
             },
             BrainCodeActTemplateSlot {
+                name: "fields_schema".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional JSON field contract, preferred over loose selectors for production. Shape: [{\"name\":\"price\",\"selector\":\".price\",\"attr\":\"text\",\"multiple\":true},{\"name\":\"image\",\"selector\":\"img\",\"attr\":\"src\"},{\"name\":\"link\",\"selector\":\"a\",\"attr\":\"href\"}]. The host maps this to Scrapling selectors and may mirror it into Crawl4AI CSS extraction when useful.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
                 name: "selectors".to_string(),
                 required: false,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Optional CSS/XPath selectors or named fields for Scrapling. Leave empty when only page-level facts or Markdown chunks are needed.".to_string(),
+                description: "Optional compact selector list for Scrapling, including pseudo-elements like ::text and ::attr(src|href|srcset|alt). Use fields_schema for durable structured extraction.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "extraction_mode".to_string(),
+                required: false,
+                default_value: "structured_markdown_media".to_string(),
+                allowed_values: vec![
+                    "structured_markdown_media".to_string(),
+                    "structured_only".to_string(),
+                    "markdown_only".to_string(),
+                    "media_catalog".to_string(),
+                    "screenshot".to_string(),
+                    "archive_snapshot".to_string(),
+                ],
+                description: "Primary result shape requested from the parallel run. Default combines Scrapling fields, Crawl4AI clean/fit Markdown, links and media metadata.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "fetch_mode".to_string(),
+                required: false,
+                default_value: "auto".to_string(),
+                allowed_values: vec![
+                    "auto".to_string(),
+                    "http".to_string(),
+                    "dynamic".to_string(),
+                    "stealth".to_string(),
+                    "session".to_string(),
+                ],
+                description: "How the host should fetch. auto starts cheap, escalates to dynamic for JavaScript/lazy media, and uses stealth/session only when authorized and needed.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "session".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional existing Scrapling/Crawl4AI browser/session profile id when cookies, authenticated state, navigation state or repeated requests must be reused. Empty means stateless public crawl.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "wait_until".to_string(),
+                required: false,
+                default_value: "dom_ready".to_string(),
+                allowed_values: vec![
+                    "dom_ready".to_string(),
+                    "network_idle".to_string(),
+                    "selector".to_string(),
+                    "images_loaded".to_string(),
+                    "virtual_scroll_complete".to_string(),
+                ],
+                description: "Readiness condition before extraction. Use images_loaded for lazy-loaded image URLs; selector requires wait_selector; network_idle helps dynamic apps.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "wait_selector".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional CSS selector that must appear before Scrapling screenshot/fetch or Crawl4AI extraction begins.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "markdown_query".to_string(),
@@ -892,6 +953,19 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
                 default_value: String::new(),
                 allowed_values: Vec::new(),
                 description: "Optional query for Crawl4AI BM25/pruning filters and fit_markdown. Reuse goal when empty.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "content_filter".to_string(),
+                required: false,
+                default_value: "fit_markdown_bm25_pruning".to_string(),
+                allowed_values: vec![
+                    "none".to_string(),
+                    "fit_markdown".to_string(),
+                    "bm25".to_string(),
+                    "pruning".to_string(),
+                    "fit_markdown_bm25_pruning".to_string(),
+                ],
+                description: "Crawl4AI Markdown filtering strategy. Use bm25/fit_markdown with markdown_query for RAG; use none for faithful archival snapshots.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "crawl_depth".to_string(),
@@ -904,6 +978,90 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
                     "docs_site_bounded".to_string(),
                 ],
                 description: "Bounded crawl shape. Prefer single_page unless the user asks for a small site, docs set, or comparison across linked pages.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "links".to_string(),
+                required: false,
+                default_value: "both_scored".to_string(),
+                allowed_values: vec![
+                    "none".to_string(),
+                    "internal".to_string(),
+                    "external".to_string(),
+                    "both".to_string(),
+                    "both_scored".to_string(),
+                ],
+                description: "Crawl4AI link extraction mode. both_scored asks for internal/external hrefs plus relevance/head metadata when available.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "media".to_string(),
+                required: false,
+                default_value: "image_urls_and_metadata".to_string(),
+                allowed_values: vec![
+                    "none".to_string(),
+                    "image_urls".to_string(),
+                    "image_urls_and_metadata".to_string(),
+                    "all_media_urls".to_string(),
+                    "download_image_artifacts".to_string(),
+                ],
+                description: "Media collection mode. Use image_urls_and_metadata for src/alt/desc/score/width/height; all_media_urls includes video/audio URLs; download_image_artifacts stores approved image files as artifacts instead of only URLs.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "image_policy".to_string(),
+                required: false,
+                default_value: "urls_only".to_string(),
+                allowed_values: vec![
+                    "urls_only".to_string(),
+                    "urls_and_metadata".to_string(),
+                    "download_artifacts".to_string(),
+                    "screenshot_only".to_string(),
+                ],
+                description: "Explicit image handling policy for safety and bandwidth. urls_only never downloads binary image files; download_artifacts requires artifact refs and hashes.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "artifacts".to_string(),
+                required: false,
+                default_value: "none".to_string(),
+                allowed_values: vec![
+                    "none".to_string(),
+                    "screenshot".to_string(),
+                    "full_page_screenshot".to_string(),
+                    "pdf".to_string(),
+                    "mhtml".to_string(),
+                    "downloaded_files".to_string(),
+                ],
+                description: "Optional binary/archive artifacts. Map screenshot/full_page_screenshot to Scrapling screenshot or Crawl4AI screenshot; map pdf/mhtml/downloaded_files to Crawl4AI when configured.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "artifact_format".to_string(),
+                required: false,
+                default_value: "png".to_string(),
+                allowed_values: vec![
+                    "png".to_string(),
+                    "jpeg".to_string(),
+                    "pdf".to_string(),
+                    "mhtml".to_string(),
+                    "original".to_string(),
+                ],
+                description: "Preferred artifact encoding. Use jpeg only when smaller screenshots matter; keep png for proof-friendly visual checks.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "limits".to_string(),
+                required: false,
+                default_value: "pages=1,links=50,images=50,bytes=5242880,timeout_ms=30000,concurrency=4".to_string(),
+                allowed_values: Vec::new(),
+                description: "Hard bounds for production safety: max pages, links, images/media items, downloaded bytes, timeout and concurrency. The host may clamp tighter.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "dedupe_key".to_string(),
+                required: false,
+                default_value: "canonical_url+selector_path+content_hash".to_string(),
+                allowed_values: vec![
+                    "canonical_url".to_string(),
+                    "canonical_url+selector_path".to_string(),
+                    "canonical_url+selector_path+content_hash".to_string(),
+                    "media_src".to_string(),
+                ],
+                description: "Evidence deduplication key used when merging Scrapling fields, Crawl4AI Markdown chunks, links and media entries.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "backends".to_string(),
@@ -924,6 +1082,13 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
                 description: "How to reconcile results: prefer selector facts first, Markdown narrative first, or deduplicate and compare both evidence streams.".to_string(),
             },
             BrainCodeActTemplateSlot {
+                name: "provenance".to_string(),
+                required: false,
+                default_value: "url,final_url,status,timestamp,selector_or_chunk,backend,artifact_hash".to_string(),
+                allowed_values: Vec::new(),
+                description: "Required provenance columns in the merged manifest. Keep enough proof to replay or audit every field, Markdown chunk, link, media URL and artifact.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
                 name: "policy".to_string(),
                 required: false,
                 default_value: "respect_robots_terms_rate_limits_privacy".to_string(),
@@ -938,9 +1103,11 @@ pub fn brain_scrapers_codeact_template() -> BrainGeneralCodeActTemplate {
                     "merged_manifest".to_string(),
                     "structured_items_and_markdown".to_string(),
                     "rag_chunks".to_string(),
+                    "media_manifest".to_string(),
+                    "artifact_manifest".to_string(),
                     "provenance_only".to_string(),
                 ],
-                description: "Return compact extracted fields, clean Markdown or chunks, citations, fetch metadata, proof/provenance and artifact refs; never return full raw HTML by default.".to_string(),
+                description: "Return compact extracted fields, clean Markdown/chunks, links, media URLs, citations, fetch metadata, proof/provenance and artifact refs; never return full raw HTML by default.".to_string(),
             },
         ],
     };
@@ -2642,8 +2809,34 @@ mod tests {
         assert!(template.purpose.contains("Scrapling MCP"));
         assert!(template.purpose.contains("Crawl4AI MCP"));
         assert!(template.purpose.contains("same time"));
+        assert!(template.purpose.contains("media metadata"));
+        assert!(template.purpose.contains("MHTML"));
         assert!(template.slots.iter().any(|slot| slot.name == "urls" && slot.required));
         assert!(template.slots.iter().any(|slot| slot.name == "goal" && slot.required));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "fields_schema" && slot.description.contains("attr")
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "fetch_mode" && slot.allowed_values.contains(&"stealth".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "wait_until" && slot.allowed_values.contains(&"images_loaded".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "links" && slot.default_value == "both_scored"
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "media" && slot.default_value == "image_urls_and_metadata"
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "image_policy" && slot.allowed_values.contains(&"download_artifacts".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "artifacts" && slot.allowed_values.contains(&"mhtml".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "limits" && slot.default_value.contains("images=50")
+        }));
         assert!(template.slots.iter().any(|slot| {
             slot.name == "backends" && slot.default_value == "scrapling,crawl4ai"
         }));
@@ -2652,7 +2845,12 @@ mod tests {
                 && slot.allowed_values.contains(&"structured_fields_then_fit_markdown".to_string())
         }));
         assert!(template.slots.iter().any(|slot| {
-            slot.name == "output" && slot.allowed_values.contains(&"rag_chunks".to_string())
+            slot.name == "provenance" && slot.default_value.contains("artifact_hash")
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "output"
+                && slot.allowed_values.contains(&"rag_chunks".to_string())
+                && slot.allowed_values.contains(&"media_manifest".to_string())
         }));
         assert!(brain_general_codeact_templates()
             .iter()

@@ -328,7 +328,7 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/codingbrain_": "Switch to coding mode for software projects, files, bugs, builds, and developer tasks.",
   "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
   "/googleweb_": "Search the web for current public information.",
-  [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, citations, and provenance.",
+  [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, links, image/media URLs, artifacts, and provenance.",
   [BRAIN_SCRAPLING_MCP_COMMAND]: "Use Scrapling MCP for targeted web extraction, dynamic pages, bulk scraping, screenshots, and compact provenance.",
   "/gmail_": "Use Gmail to find messages, summarize email, or prepare replies.",
   "/airbnb_": "Use Airbnb to search for stays by place, dates, guests, and budget.",
