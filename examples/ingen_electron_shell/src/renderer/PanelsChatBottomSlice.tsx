@@ -17,6 +17,7 @@ import {
   BRAIN_NEWCOMPUTE_COMMAND,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_EDITIMAGE_COMMAND,
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
@@ -1256,6 +1257,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],
   [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
   [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
+  [BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"],
   [BRAIN_WORKSPACE_COMMAND, "workspace folder required"],
   [BRAIN_NEWCOMPUTE_COMMAND, "opens the Monster template selector"],
   [BRAIN_SELECTCOMPUTE_COMMAND, "saved compute reused from the library"],
@@ -2750,6 +2752,9 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   }
   if (isContextCompactionCommand(event.command)) {
     return "is compressing context";
+  }
+  if (event.command === BRAIN_CODING_LIVE_PREVIEW_COMMAND) {
+    return "is opening the live preview";
   }
   if (!isAgentActionCommand(event.command)) {
     return "is continuing the current step";

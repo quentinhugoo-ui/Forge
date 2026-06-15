@@ -9,12 +9,15 @@ const ipcSource = readFileSync(join(process.cwd(), "src", "shared", "ipc-contrac
 const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "utf8");
 const appSource = readFileSync(join(process.cwd(), "src", "renderer", "App.tsx"), "utf8");
 const canvasSource = readFileSync(join(process.cwd(), "src", "renderer", "CanvasSurfacesSlice.tsx"), "utf8");
+const panelsSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(process.cwd(), "src", "renderer", "styles.css"), "utf8");
 
 describe("Coding Brain live preview CodeAct", () => {
   it("registers a Coding-only visual preview command after real file writes", () => {
     expect(brainSource).toContain('pub const BRAIN_CODING_LIVE_PREVIEW_COMMAND: &str = "/coding_live_preview_";');
     expect(brainSource).toContain("only after creating or modifying a real local HTML/CSS/JS/React/Vite visual file");
+    expect(brainSource).toContain("write one short natural paragraph");
+    expect(brainSource).toContain("the live visual is opening in the conversation");
     expect(brainSource).toContain("create or modify a real local file first through AGENT_ACTION_JSON");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION");
@@ -38,5 +41,10 @@ describe("Coding Brain live preview CodeAct", () => {
     expect(canvasSource).toContain("codingLivePreviewOpen");
     expect(stylesSource).toContain(".canvasSurfaces--codingLivePreviewOpen");
     expect(stylesSource).toContain(".codingLivePreview__frame");
+  });
+
+  it("renders the preview CodeAct as a readable loop-stream event", () => {
+    expect(panelsSource).toContain('BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"');
+    expect(panelsSource).toContain('return "is opening the live preview";');
   });
 });
