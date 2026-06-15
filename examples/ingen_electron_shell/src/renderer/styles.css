@@ -4040,20 +4040,21 @@ button {
   display: inline-grid;
   place-items: center;
   width: auto;
-  min-width: 72px;
-  height: 25px;
-  min-height: 25px;
-  padding: 0 12px;
+  min-width: 48px;
+  height: 17px;
+  min-height: 17px;
+  padding: 0 8px;
   overflow: hidden;
   color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
   background: var(--forge-sidebar-bg);
   border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
   border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 18%);
   box-shadow:
-    0 -4px 14px rgba(0, 0, 0, 0.16),
+    0 -3px 10px rgba(0, 0, 0, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  font-size: 10.5px;
-  font-weight: 720;
+  max-width: min(164px, calc(var(--chat-width) - 32px));
+  font-size: 9.5px;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 1;
   cursor: pointer;
@@ -4066,13 +4067,22 @@ button {
     transform 180ms ease;
 }
 
+.widgetTranscriptTab__name {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .widgetTranscriptTab:hover,
 .widgetTranscriptTab:focus-visible {
   color: #ffffff;
   background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
   border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
   box-shadow:
-    0 -5px 16px rgba(0, 0, 0, 0.22),
+    0 -4px 12px rgba(0, 0, 0, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.055);
   transform: translateY(-1px);
 }
