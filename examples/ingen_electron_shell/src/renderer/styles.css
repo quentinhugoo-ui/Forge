@@ -1686,14 +1686,20 @@ button {
   align-items: center;
   width: 253px;
   height: 28px;
+  border: 1px solid transparent;
   border-radius: 5px;
   transform-origin: left center;
-  transition: opacity 180ms ease-out, transform 180ms ease-out, background 120ms ease-out;
+  transition: opacity 180ms ease-out, transform 180ms ease-out, background 120ms ease-out, border-color 140ms ease-out;
 }
 
 .sessionRow--selected,
 .sessionRow:hover {
   background: var(--forge-surface-soft);
+}
+
+.sessionRow:hover,
+.sessionRow:focus-within {
+  border-color: var(--forge-line);
 }
 
 .sessionRow--archiving {
