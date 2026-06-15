@@ -2751,9 +2751,6 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   if (isContextCompactionCommand(event.command)) {
     return "is compressing context";
   }
-  if (isBrainSegmentCommand(event.command)) {
-    return `is switching to ${brainSegmentName(event.command)}`;
-  }
   if (!isAgentActionCommand(event.command)) {
     return "is continuing the current step";
   }
@@ -2776,6 +2773,10 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
     return "is checking local state";
   }
   return "is applying a local action";
+}
+
+function canShowAssistantWorkingStatus(event?: TranscriptCodeActEvent): boolean {
+  return !event || !isBrainSegmentCommand(event.command);
 }
 
 function latestTranscriptEvent(text: string): TranscriptCodeActEvent | undefined {
@@ -3548,7 +3549,7 @@ function TranscriptCanvas({
           if (!assistantPending && !message.text.trim() && attachments.length === 0) {
             return null;
           }
-          const assistantWorking =
+          const assistantWorkingCandidate =
             assistantBusy &&
             role === "assistant" &&
             message.id === latestAssistantMessageId &&
@@ -3559,7 +3560,8 @@ function TranscriptCanvas({
             message.id === latestAssistantMessageId &&
             !assistantPending &&
             !message.id.startsWith("assistant-error-");
-          const assistantWorkingEvent = assistantWorking ? latestTranscriptEvent(message.text) : undefined;
+          const assistantWorkingEvent = assistantWorkingCandidate ? latestTranscriptEvent(message.text) : undefined;
+          const assistantWorking = assistantWorkingCandidate && canShowAssistantWorkingStatus(assistantWorkingEvent);
           const assistantWorkingActivityText = assistantWorking ? agentWorkingStatusText(assistantWorkingEvent) : "is working";
           const assistantWorkingActivityKey = assistantWorking
             ? `${message.id}:${assistantWorkingEvent?.command ?? "prose"}:${message.text.length}`
