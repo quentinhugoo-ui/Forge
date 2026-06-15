@@ -36,10 +36,14 @@ for %%F in (workspace.json llm-provider-runtime.json llm-providers.json llm-runt
 echo Electron userData: %INGEN_ELECTRON_USER_DATA_DIR% >> "%LOG%"
 
 if not "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" if not "%DESKTOP_AUTO_REBUILD%"=="1" (
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = '%~dp0'; $dist = Get-Item -LiteralPath (Join-Path $root 'dist-electron\main\main.js') -ErrorAction SilentlyContinue; $renderer = Get-Item -LiteralPath (Join-Path $root 'dist\renderer\index.html') -ErrorAction SilentlyContinue; $sourceRoots = @((Join-Path $root 'src'), (Join-Path $root 'preload.cjs')); $latest = foreach ($entry in $sourceRoots) { Get-ChildItem -LiteralPath $entry -Recurse -File -Include *.ts,*.tsx,*.css,*.cjs -ErrorAction SilentlyContinue }; $latest = $latest | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $dist -or -not $renderer -or ($latest -and ($latest.LastWriteTimeUtc -gt $dist.LastWriteTimeUtc -or $latest.LastWriteTimeUtc -gt $renderer.LastWriteTimeUtc))) { exit 1 }"
+  if errorlevel 1 set NEED_ELECTRON_REBUILD=1
   if exist "%FORGE_ELECTRON_EXE%" if exist "%~dp0dist-electron\main\main.js" if exist "%~dp0dist\renderer\index.html" if exist "%FORGE_ELECTRON_BACKEND_EXE%" if exist "%FORGE_WINDOWS_TASKBAR_HELPER_EXE%" (
-    echo Desktop fast path: starting existing Electron build. >> "%LOG%"
-    start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" >> "%LOG%" 2>>&1
-    exit /b 0
+    if "%NEED_ELECTRON_REBUILD%"=="0" (
+      echo Desktop fast path: starting existing Electron build. >> "%LOG%"
+      start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" >> "%LOG%" 2>>&1
+      exit /b 0
+    )
   )
 )
 
@@ -47,9 +51,12 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 if not errorlevel 1 set APP_ALREADY_RUNNING=1
 
 if "%APP_ALREADY_RUNNING%"=="1" (
-  echo InGen is already running. Focusing the existing window and exiting. >> "%LOG%"
-  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
-  exit /b 0
+  if "%NEED_ELECTRON_REBUILD%"=="0" (
+    echo InGen is already running. Focusing the existing window and exiting. >> "%LOG%"
+    C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
+    exit /b 0
+  )
+  echo InGen is already running, but Electron sources are newer. Rebuilding renderer assets before launch. >> "%LOG%"
 )
 
 2>nul mkdir "%BUILD_LOCK%"
@@ -102,8 +109,10 @@ if not exist "%~dp0dist-electron\main\main.js" set NEED_ELECTRON_REBUILD=1
 if not exist "%~dp0dist\renderer\index.html" set NEED_ELECTRON_REBUILD=1
 if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_ELECTRON_REBUILD=1
 if "%DESKTOP_AUTO_REBUILD%"=="1" (
-  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = '%~dp0'; $dist = Get-Item -LiteralPath (Join-Path $root 'dist-electron\main\main.js') -ErrorAction SilentlyContinue; $renderer = Get-Item -LiteralPath (Join-Path $root 'dist\renderer\index.html') -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -File -Include *.ts,*.tsx,*.css -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $dist -or -not $renderer -or ($latest -and ($latest.LastWriteTimeUtc -gt $dist.LastWriteTimeUtc -or $latest.LastWriteTimeUtc -gt $renderer.LastWriteTimeUtc))) { exit 1 }"
-  if errorlevel 1 set NEED_ELECTRON_REBUILD=1
+  if "%NEED_ELECTRON_REBUILD%"=="0" (
+    C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = '%~dp0'; $dist = Get-Item -LiteralPath (Join-Path $root 'dist-electron\main\main.js') -ErrorAction SilentlyContinue; $renderer = Get-Item -LiteralPath (Join-Path $root 'dist\renderer\index.html') -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -File -Include *.ts,*.tsx,*.css -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $dist -or -not $renderer -or ($latest -and ($latest.LastWriteTimeUtc -gt $dist.LastWriteTimeUtc -or $latest.LastWriteTimeUtc -gt $renderer.LastWriteTimeUtc))) { exit 1 }"
+    if errorlevel 1 set NEED_ELECTRON_REBUILD=1
+  )
 ) else (
   if "%NEED_ELECTRON_REBUILD%"=="0" echo Desktop stable mode: using existing Electron build. Set FORGE_ELECTRON_DESKTOP_AUTO_REBUILD=1 or FORGE_ELECTRON_FORCE_REBUILD=1 to rebuild. >> "%LOG%"
 )

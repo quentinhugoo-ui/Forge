@@ -7,7 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { BangerPresentLoopBootstrapResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
+import type { BangerPresentLoopBootstrapResult, BangerPreviewFrameResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
@@ -49,6 +49,9 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   const label = searchQuery?.replace(/\s+/g, " ").trim() || "Map";
 
   useLayoutEffect(() => {
+    const getPreview = globalThis.window?.forgeShell?.getBangerPreviewFrame as
+      | (() => Promise<BangerPreviewFrameResult>)
+      | undefined;
     const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
       | ((request?: {
           x?: number;
@@ -59,8 +62,32 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
         }) => Promise<BangerPresentLoopBootstrapResult>)
       | undefined;
     if (!getBootstrap) {
-      setStatus("Banger native bridge unavailable");
-      return undefined;
+      if (!getPreview) {
+        setStatus("Banger native bridge unavailable");
+        return undefined;
+      }
+      let active = true;
+      setStatus("Banger preview frame requested");
+      void getPreview()
+        .then((result) => {
+          if (!active) return;
+          if (result?.accepted && result.frameDataUrl) {
+            setFrameDataUrl(result.frameDataUrl);
+            setStatus("Banger preview frame painted");
+          } else {
+            setFrameDataUrl("");
+            setStatus(result?.error?.message ?? "Banger preview frame unavailable");
+          }
+        })
+        .catch((error: unknown) => {
+          if (active) {
+            setFrameDataUrl("");
+            setStatus(error instanceof Error ? error.message : String(error));
+          }
+        });
+      return () => {
+        active = false;
+      };
     }
 
     let animationFrame = 0;
@@ -139,7 +166,9 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
       {frameDataUrl ? (
         <img className="bangerSphereNativeFrame__preview" src={frameDataUrl} alt="" draggable={false} />
       ) : (
-        <div className="nativeViewportSlot__empty" aria-hidden="true" />
+        <div className="bangerSphereNativeFrame__fallback" aria-hidden="true">
+          <span className="bangerSphereNativeFrame__fallbackSphere" />
+        </div>
       )}
       <span className="webExplorerNativeStatus">{label} - {status}</span>
     </div>

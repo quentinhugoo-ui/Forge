@@ -2674,7 +2674,7 @@ function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCom
 
 function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|`[^`]+?`)/g;
+  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|\*[^*\n]+?\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
@@ -2689,6 +2689,8 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
       nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("*")) {
+      nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
     } else {
       nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
     }

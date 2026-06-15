@@ -6214,6 +6214,10 @@ ol.assistantText__list li::before {
   font-weight: 740;
 }
 
+.assistantText em {
+  font-style: italic;
+}
+
 .assistantText code {
   padding: 1px 5px;
   border: 1px solid var(--assistant-mark-line-soft);
@@ -8579,6 +8583,45 @@ ol.assistantText__list li::before {
   object-fit: cover;
   image-rendering: auto;
   background: #050607;
+}
+
+.bangerSphereNativeFrame__fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(255, 224, 144, 0.86) 0 8%, rgba(255, 149, 71, 0.28) 12%, transparent 24%),
+    linear-gradient(180deg, #050716 0%, #151030 36%, #7f2638 51%, #ff7331 54%, #071b26 55%, #03090d 100%);
+  overflow: hidden;
+}
+
+.bangerSphereNativeFrame__fallback::after {
+  position: absolute;
+  inset: 54% -12% -18%;
+  background:
+    linear-gradient(90deg, rgba(130, 217, 255, 0.16) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(130, 217, 255, 0.13) 1px, transparent 1px);
+  background-size: 42px 42px;
+  content: "";
+  opacity: 0.72;
+  transform: perspective(760px) rotateX(58deg);
+  transform-origin: 50% 0;
+}
+
+.bangerSphereNativeFrame__fallbackSphere {
+  position: relative;
+  z-index: 1;
+  width: min(38vw, 360px);
+  aspect-ratio: 1;
+  border-radius: 999px !important;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.92), transparent 0 12%, rgba(156, 224, 255, 0.72) 13%, transparent 34%),
+    radial-gradient(circle at 58% 58%, #1a9eb6 0 9%, #13607a 10% 17%, #123f60 18% 31%, #0a1a32 32% 100%);
+  box-shadow:
+    inset -32px -42px 74px rgba(0, 0, 0, 0.54),
+    inset 18px 14px 38px rgba(255, 255, 255, 0.2),
+    0 0 80px rgba(70, 190, 255, 0.28);
 }
 
 .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted,

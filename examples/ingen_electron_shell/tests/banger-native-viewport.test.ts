@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const routerSource = readFileSync("src/renderer/HeaderSurfaceRouter.tsx", "utf8");
 const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
+const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
@@ -69,9 +70,19 @@ describe("Banger native viewport contract", () => {
 
   it("paints the Maps sphere from the Banger preview frame returned by IPC", () => {
     expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
+    expect(canvasSurfacesSource).toContain("getBangerPreviewFrame");
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
+    expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
     expect(stylesSource).toContain(".bangerSphereNativeFrame__preview");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
     expect(stylesSource).toContain("object-fit: cover");
+  });
+
+  it("rebuilds stale Electron renderer assets before reusing the desktop fast path", () => {
+    expect(launcherSource).toContain("preload.cjs");
+    expect(launcherSource).toContain("if errorlevel 1 set NEED_ELECTRON_REBUILD=1");
+    expect(launcherSource).toContain('if "%NEED_ELECTRON_REBUILD%"=="0" (');
+    expect(launcherSource).toContain("Electron sources are newer");
   });
 });
