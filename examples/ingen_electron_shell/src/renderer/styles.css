@@ -7292,7 +7292,7 @@ ol.assistantText__list li::before {
 .sendGlyph--stopSquare {
   position: relative;
   z-index: 2;
-  color: color-mix(in oklab, var(--forge-text) 82%, transparent);
+  color: var(--forge-chat-bg);
   fill: currentColor;
   stroke: none;
 }
