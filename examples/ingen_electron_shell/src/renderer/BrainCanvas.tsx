@@ -353,7 +353,7 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/editimage_": "Edit an existing image, such as changing its style, colors, objects, or layout.",
   "/google_agenda_": "Use Google Calendar for events, schedules, reminders, and dates.",
   "/brain_": "Save or update useful memory after the user confirms it is correct.",
-  [BRAIN_NEWBRAIN_COMMAND]: "Create a specialized Brain for a recurring domain without changing the immutable General Brain.",
+  [BRAIN_NEWBRAIN_COMMAND]: "Create a specialized Brain for a recurring domain without changing the root read-only catalog.",
   [BRAIN_MODIFY_NAMED_BRAIN_COMMAND]: "Add a lesson, rule, skill, task, or CodeAct draft to one specialized Brain.",
   "/questionnaire_": "Ask a short set of questions when the task needs clearer choices.",
   "/newcompute_": "Start a new heavy local calculation, such as a simulation or numeric analysis.",

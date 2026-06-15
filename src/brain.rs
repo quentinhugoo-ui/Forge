@@ -86,8 +86,8 @@ pub const BRAIN_EDITIMAGE_COMMAND_DESCRIPTION: &str = "Edit an existing image at
 pub const BRAIN_QUESTIONNAIRE_COMMAND_DESCRIPTION: &str = "Open a paginated questionnaire above the chat composer when the LLM needs multiple clarifying questions. Use after any required Brain segment switch; never use before /sciencebrain_ or /codingbrain_ while the active Brain is general and the request is specialized. Put each page question in q1, q2, q3... and provide exactly three choices with q1_options, q2_options...";
 pub const BRAIN_SCIENCE_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work. Physical product/prototype conception is engineering by default. Activate /sciencebrain_ before questionnaire or specialized answer; after activation, use the injected science brain catalog.";
 pub const BRAIN_CODING_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust/TypeScript/Electron, APIs, build systems, or developer tooling. Activate /codingbrain_ before the specialized answer; do not paste implementation code in the same Brain-switch message. After activation, continue in loop-stream mode with the injected coding brain catalog and local action tools.";
-pub const BRAIN_NEWBRAIN_COMMAND_DESCRIPTION: &str = "Create a new specialized Brain scope for a durable domain such as marketing, trading, immobilier, science-notes or another recurring work area. Use only after the LLM has reasoned that repeated lessons, rules, skills, tasks or CodeAct drafts would pollute the General Brain or unrelated sessions if stored globally. The General Brain is immutable and read-only: the agent must never write a new CodeAct into General Brain. When this command is emitted with an explicit brain_name, the host automatically derives a specialized activator CodeAct such as /musicianbrain_ outside General Brain, then future domain-specific lessons can be stored and injected only when relevant. The LLM chooses the domain, title, purpose, activation triggers, initial lesson/rule/skill/task/CodeAct categories and compact token budget; the host records the explicit fields and must not semantically infer the domain.";
-pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND_DESCRIPTION: &str = "Modify an existing specialized Brain named in the command form /modify\"<brain_name>\"brain_. Use when the LLM has a user-confirmed or strong candidate learning that belongs to that named Brain: observed error converted into replacement rule, conduct rule, reusable skill, follow-up task or CodeAct draft. Do not use to mutate the immutable General Brain. The LLM supplies the brain_name, entry kind, evidence/observation, replacement rule when an error is being fixed, trigger, exceptions and compact content; the host only validates, stores and reinjects the explicit update.";
+pub const BRAIN_NEWBRAIN_COMMAND_DESCRIPTION: &str = "Create a new specialized Brain scope for a durable domain such as marketing, trading, immobilier, science-notes or another recurring work area. Use only after the LLM has reasoned that repeated lessons, rules, skills, tasks or CodeAct drafts would pollute unrelated sessions if stored in a broad scope. This command never targets the root read-only catalog and cannot add commands there. When this command is emitted with an explicit brain_name, the host automatically derives a specialized activator CodeAct such as /musicianbrain_ in the specialized Brain registry, then future domain-specific lessons can be stored and injected only when relevant. The LLM chooses the domain, title, purpose, activation triggers, initial lesson/rule/skill/task/CodeAct categories and compact token budget; the host records the explicit fields and must not semantically infer the domain.";
+pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND_DESCRIPTION: &str = "Modify an existing specialized Brain named in the command form /modify\"<brain_name>\"brain_. Use when the LLM has a user-confirmed or strong candidate learning that belongs to that named Brain: observed error converted into replacement rule, conduct rule, reusable skill, follow-up task or CodeAct draft. This command targets only named specialized Brain scopes and never the root read-only catalog. The LLM supplies the brain_name, entry kind, evidence/observation, replacement rule when an error is being fixed, trigger, exceptions and compact content; the host only validates, stores and reinjects the explicit update.";
 pub const BRAIN_WORKSPACE_COMMAND_DESCRIPTION: &str = "Ask the user to choose a local project/workspace folder only for coding, repository, filesystem, build, script, or project-file work. Never use for web, Gmail, Airbnb, Brain memory, image generation, or image editing.";
 pub const BRAIN_CAPABILITIES_COMMAND_DESCRIPTION: &str = "Discover the local action atlas when a task may involve the computer, files, apps, browser, documents, code, Git, cloud CLIs, virtualization, Windows settings, packages or automation and the exact local tool route is not already obvious. Executable form: emit AGENT_ACTION_JSON {\"action\":\"capabilities\",\"scope\":\"all|workspace|computer|coding|browser|documents|windows|cloud|automation\",\"query\":\"short task/topic\",\"maxResults\":40}. This is read-only and returns available actions, risky/blocked/planned boundaries, fallback routes and proof hashes. Use in General, Science and Coding Brain before guessing or answering verbally.";
 pub const BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION: &str = "Open the live coding preview canvas for a visual coding artifact that already exists on disk. Use only while Coding Brain is active, only after creating or modifying a real local HTML/CSS/JS/React/Vite visual file with AGENT_ACTION_JSON and verifying the absolute file path. Immediately before this CodeAct, write one short natural paragraph explaining that the visual preview is being opened in the conversation so the user can watch the result. Required slot: path=\"absolute-local-file\". Optional slot: kind=\"html|react|vite\". Never use for backend-only scripts, prose-only snippets, or unverified code blocks.";
@@ -98,7 +98,7 @@ pub const BRAIN_NEWOBJECT_COMMAND_DESCRIPTION: &str = "Create or modify a Banger
 pub const BRAIN_WEB_COMMAND_DESCRIPTION: &str = "Run bounded web research through the contained web peripheral for research/navigation workflows not owned by Gmail, Airbnb, or Google-specific search. Never make browser content the global app shell.";
 pub const BRAIN_FRONTDESIGN_COMMAND_DESCRIPTION: &str = "Change the app display colors or color palettes when the user asks. Use only for visual color/theme changes, not general coding or image generation.";
 pub const BRAIN_GOOGLE_AGENDA_COMMAND_DESCRIPTION: &str = "Prepare a Google Calendar action when the user asks to create, inspect, or plan calendar events with dates, times, attendees, reminders, or schedule details. Execution stays user-confirmed.";
-pub const BRAIN_BRAIN_COMMAND_DESCRIPTION: &str = "Operate on Brain itself: save/recall/update memory, adjust CodeAct descriptions, promote procedural knowledge, inspect Brain state, or reason about Brain rules. Not for ordinary user tasks.";
+pub const BRAIN_BRAIN_COMMAND_DESCRIPTION: &str = "Operate on Brain-owned registries: save/recall/update user-confirmed memory, promote procedural knowledge, inspect Brain state, or reason about Brain rules. Never patch the root CodeAct catalog. Not for ordinary user tasks.";
 pub const BRAIN_NEWMODULE_COMMAND_DESCRIPTION: &str = "Create a new narrow module contract when the user wants a new app/module integration or sidebar capability. Define the module before adding broad implementation surface.";
 pub const BRAIN_RUST_PORT_ADAPTER_COMMAND_DESCRIPTION: &str = "Prepare a Rust service adapter for an external service, vertical capability, native bridge, or backend integration behind a narrow typed interface.";
 pub const BRAIN_RUST_STATE_STORE_COMMAND_DESCRIPTION: &str = "Prepare a Rust-owned durable state store for local service state, caches, indexes, credentials metadata, or persistent domain data with explicit schema and ownership.";
@@ -1775,7 +1775,7 @@ pub fn brain_newbrain_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_NEWBRAIN_COMMAND.to_string(),
         section: "domain_brain".to_string(),
-        purpose: "Create a separate specialized Brain for a recurring domain when the LLM concludes that its lessons, rules, skills, tasks or CodeAct drafts should not pollute the immutable General Brain or unrelated sessions. This is a Brain vocabulary command, not a new architecture: the LLM chooses the domain and fields; the host records exactly the explicit proposal and automatically derives the specialized activator CodeAct outside General Brain.".to_string(),
+        purpose: "Create a separate specialized Brain for a recurring domain when the LLM concludes that its lessons, rules, skills, tasks or CodeAct drafts should be isolated from broad/default memory and unrelated sessions. This is a Brain vocabulary command, not a new architecture: the LLM chooses the domain and fields; the host records exactly the explicit proposal and automatically derives the specialized activator CodeAct in the specialized Brain registry.".to_string(),
         result_schema: BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -1798,7 +1798,7 @@ pub fn brain_newbrain_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: true,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Compact LLM-authored explanation of the domain this Brain owns and why it should be isolated from General Brain.".to_string(),
+                description: "Compact LLM-authored explanation of the domain this Brain owns and why it should be isolated from broad/default memory.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "activation_triggers".to_string(),
@@ -1854,7 +1854,7 @@ pub fn brain_newbrain_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: false,
                 default_value: "create_specialized_brain".to_string(),
                 allowed_values: vec!["create_specialized_brain".to_string()],
-                description: "The host stores the explicit specialized Brain fields and derives the specialized activator CodeAct without mutating General Brain.".to_string(),
+                description: "The host stores the explicit specialized Brain fields and derives the specialized activator CodeAct without mutating the root read-only catalog.".to_string(),
             },
         ],
     };
@@ -1866,7 +1866,7 @@ pub fn brain_modify_named_brain_codeact_template() -> BrainGeneralCodeActTemplat
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_MODIFY_NAMED_BRAIN_COMMAND.to_string(),
         section: "domain_brain".to_string(),
-        purpose: "Append or revise one explicit learning entry inside an existing specialized Brain named by the LLM. Use for user-confirmed or strong candidate lessons where an observed error becomes a replacement rule, or where a reusable rule, skill, task or CodeAct draft belongs to that domain. Never use this to mutate the immutable General Brain.".to_string(),
+        purpose: "Append or revise one explicit learning entry inside an existing specialized Brain named by the LLM. Use for user-confirmed or strong candidate lessons where an observed error becomes a replacement rule, or where a reusable rule, skill, task or CodeAct draft belongs to that domain. This command targets only named specialized Brain scopes.".to_string(),
         result_schema: BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -3368,9 +3368,19 @@ mod tests {
     }
 
     #[test]
-    fn brain_exposes_domain_brain_mutation_codeact_templates() {
+    fn brain_exposes_domain_brain_write_codeact_templates() {
         let newbrain = brain_newbrain_codeact_template();
         let modify = brain_modify_named_brain_codeact_template();
+        let write_template_text = |template: &BrainGeneralCodeActTemplate| {
+            let mut text = template.purpose.clone();
+            for slot in &template.slots {
+                text.push(' ');
+                text.push_str(&slot.description);
+            }
+            text
+        };
+        let newbrain_text = write_template_text(&newbrain);
+        let modify_text = write_template_text(&modify);
 
         assert_eq!(newbrain.command, BRAIN_NEWBRAIN_COMMAND);
         assert_eq!(modify.command, BRAIN_MODIFY_NAMED_BRAIN_COMMAND);
@@ -3380,9 +3390,11 @@ mod tests {
         assert_eq!(modify.result_schema, BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA);
         assert_eq!(newbrain.proof_hash.len(), 40);
         assert_eq!(modify.proof_hash.len(), 40);
-        assert!(newbrain.purpose.contains("immutable General Brain"));
+        assert!(!newbrain_text.contains("General Brain"));
+        assert!(!modify_text.contains("General Brain"));
+        assert!(newbrain_text.contains("root read-only catalog"));
+        assert!(modify_text.contains("targets only named specialized Brain scopes"));
         assert!(modify.purpose.contains("observed error becomes a replacement rule"));
-        assert!(modify.purpose.contains("Never use this to mutate"));
         assert!(newbrain.slots.iter().any(|slot| slot.name == "brain_name" && slot.required));
         assert!(newbrain.slots.iter().any(|slot| slot.name == "activation_triggers" && slot.required));
         assert!(modify.slots.iter().any(|slot| slot.name == "entry_kind" && slot.required));

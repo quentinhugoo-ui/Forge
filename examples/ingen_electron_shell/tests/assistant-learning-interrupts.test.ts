@@ -20,7 +20,9 @@ import {
 const root = process.cwd();
 const mainSource = readFileSync(join(root, "src", "main", "main.ts"), "utf8");
 const rendererSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const learningSource = readFileSync(join(root, "src", "renderer", "assistant-learning-interrupts.ts"), "utf8");
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
+const ipcSource = readFileSync(join(root, "src", "shared", "generated", "forge-ipc.generated.ts"), "utf8");
 const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 
 describe("assistant learning interrupts", () => {
@@ -68,7 +70,7 @@ describe("assistant learning interrupts", () => {
     expect(brainLearningResearchPrompt(antiPattern!)).toContain("RESEARCH_PARALLEL_QUERY v1");
   });
 
-  it("derives specialized Brain activator CodeActs from /newbrain_ without General Brain writes", () => {
+  it("derives specialized Brain activator CodeActs from /newbrain_ without root catalog writes", () => {
     const drafts = brainSpecializedCodeActsFromNewBrainText([
       '/newbrain_ brain_name="musician" title="Musician Brain"',
       'purpose="Store durable composition, arrangement and practice lessons."',
@@ -81,7 +83,9 @@ describe("assistant learning interrupts", () => {
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.command).toBe("/musicianbrain_");
     expect(drafts[0]?.description).toContain("Host-generated from explicit /newbrain_ fields");
-    expect(drafts[0]?.description).toContain("General Brain stays read-only");
+    expect(drafts[0]?.description).toContain("root catalog stays read-only");
+    expect(drafts[0]?.description).not.toContain("General Brain");
+    expect(drafts[0]?.template).not.toContain("General Brain");
     expect(drafts[0]?.template).toContain('generated_by="host_from_newbrain"');
     expect(drafts[0]?.template).toContain('initial_skills="turn motif into arrangement"');
   });
@@ -142,6 +146,11 @@ describe("assistant learning interrupts", () => {
     expect(mainSource).toContain("General Brain is immutable and read-only");
     expect(mainSource).toContain("brainDurableMemoryContextManifest()");
     expect(mainSource).toContain("normalizeBrainDurableMemoryManifest(command.value)");
+    expect(ipcSource).toContain("This command never targets the root read-only catalog");
+    expect(ipcSource).not.toContain("pollute the General Brain");
+    expect(ipcSource).not.toContain("mutate the immutable General Brain");
+    expect(learningSource).toContain("root catalog stays read-only");
+    expect(learningSource).not.toContain("General Brain stays read-only");
     expect(rendererSource).toContain("brainSpecializedCodeActsFromNewBrainText(text)");
     expect(rendererSource).toContain("source: \"host_generated_newbrain\"");
     expect(rendererSource).toContain("parseBrainLearningInterruptLine(rawLine)");

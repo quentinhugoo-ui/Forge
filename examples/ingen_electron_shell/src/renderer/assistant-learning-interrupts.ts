@@ -131,7 +131,7 @@ function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedC
     `Activate ${title} as a specialized Brain scope created by ${BRAIN_NEWBRAIN_COMMAND}.`,
     activationTriggers ? `Use when: ${activationTriggers}.` : "",
     purpose ? `Purpose: ${purpose}.` : "",
-    "Host-generated from explicit /newbrain_ fields; General Brain stays read-only."
+    "Host-generated from explicit /newbrain_ fields; root catalog stays read-only."
   ].filter(Boolean).join(" ");
   const optionalFields = [
     "initial_lessons",
