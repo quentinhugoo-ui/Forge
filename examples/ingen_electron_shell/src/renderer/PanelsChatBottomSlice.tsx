@@ -4254,6 +4254,20 @@ function WidgetTranscriptPanel({
   );
 }
 
+function WidgetTranscriptTab({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className="widgetTranscriptTab"
+      aria-label="Rouvrir le panneau de conversation"
+      onClick={onOpen}
+    >
+      <ChevronLeft size={13} aria-hidden="true" />
+      <span>Conversation</span>
+    </button>
+  );
+}
+
 interface PanelsChatBottomSliceProps {
   composerOnly?: boolean;
   parallelPrompts?: string[];
@@ -4850,7 +4864,14 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     !widgetTranscriptCollapsed &&
     !composerQuestionnaire;
-  const widgetPanelExpanded = widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen || permissionMenuOpen);
+  const widgetTranscriptTabVisible =
+    widgetMode &&
+    !widgetModeTransitioning &&
+    widgetTranscriptHasConversation &&
+    widgetTranscriptCollapsed &&
+    !composerQuestionnaire;
+  const widgetPanelExpanded =
+    widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen || widgetTranscriptTabVisible || permissionMenuOpen);
   useEffect(() => {
     const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
     if (!setWidgetPanelExpanded) {
@@ -5057,6 +5078,7 @@ export function PanelsChatBottomSlice({
         "panelsChatBottom",
         composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
         widgetTranscriptPanelOpen ? "panelsChatBottom--widgetTranscriptOpen" : "",
+        widgetTranscriptTabVisible ? "panelsChatBottom--widgetTranscriptCollapsed" : "",
         permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
       ].filter(Boolean).join(" ")}
       aria-label="Panels chat composer and bottom controls"
@@ -5159,6 +5181,9 @@ export function PanelsChatBottomSlice({
           onUseMathInCompute={useMathInCompute}
           onReduce={() => setWidgetTranscriptCollapsed(true)}
         />
+      ) : null}
+      {widgetTranscriptTabVisible ? (
+        <WidgetTranscriptTab onOpen={() => setWidgetTranscriptCollapsed(false)} />
       ) : null}
       <form
         ref={composerRef}

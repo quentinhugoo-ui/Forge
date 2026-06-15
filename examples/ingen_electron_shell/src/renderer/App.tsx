@@ -165,6 +165,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".bottomControls button", padding: { left: 8, right: 8, top: 6, bottom: 6 } },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
+  { selector: ".widgetTranscriptTab", padding: { left: 8, right: 8, top: 8, bottom: 8 } },
   { selector: ".permissionModeMenu", padding: 1 }
 ];
 
