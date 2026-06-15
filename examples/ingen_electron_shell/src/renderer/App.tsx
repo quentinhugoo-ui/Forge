@@ -160,6 +160,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
      entrance never leaves it cropped before the next region sync. */
   { selector: ".widgetWindowsButton", padding: { left: 104, right: 10, top: 14, bottom: 14 } },
   { selector: ".widgetSystemTray", padding: { left: 10, right: 10, top: 10, bottom: 10 } },
+  { selector: ".bottomControls", padding: { left: 12, right: 12, top: 10, bottom: 12 } },
   { selector: ".bottomControls button", padding: 1 },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },

@@ -7713,6 +7713,43 @@ ol.assistantText__list li::before {
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
+.shell--widget-mode .bottomControls::before {
+  content: "";
+  position: absolute;
+  inset: -8px -12px -10px;
+  z-index: -1;
+  border-radius: 8px !important;
+  background:
+    linear-gradient(180deg, rgba(12, 12, 13, 0.88), rgba(7, 7, 8, 0.74)),
+    rgba(0, 0, 0, 0.76);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  opacity: 0;
+  pointer-events: none;
+  transform: scaleX(0.985) translateY(1px);
+  transform-origin: center;
+  transition:
+    opacity 130ms ease-out,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .bottomControls:hover::before,
+.shell--widget-mode .bottomControls:focus-within::before {
+  opacity: 1;
+  transform: scaleX(1) translateY(0);
+}
+
+.shell--widget-mode .bottomControls:hover,
+.shell--widget-mode .bottomControls:focus-within {
+  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.78);
+}
+
+.shell--widget-mode .bottomControls:hover button,
+.shell--widget-mode .bottomControls:focus-within button {
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 10%) !important;
+}
+
 .permissionModeControl {
   --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
   grid-column: 1;
