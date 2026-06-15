@@ -82,7 +82,11 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
+    expect(canvasSurfacesSource).toContain('aria-label={`${label} - ${status}`}');
+    expect(canvasSurfacesSource).not.toContain('<span className="webExplorerNativeStatus">{label} - {status}</span>');
     expect(stylesSource).toContain(".bangerSphereNativeFrame__preview");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame");
+    expect(stylesSource).toContain("pointer-events: none");
     expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
     expect(stylesSource).toContain("object-fit: cover");
   });

@@ -162,7 +162,7 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   }, []);
 
   return (
-    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label="Map 3D sphere viewport">
+    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label={`${label} - ${status}`}>
       {frameDataUrl ? (
         <img className="bangerSphereNativeFrame__preview" src={frameDataUrl} alt="" draggable={false} />
       ) : (
@@ -170,7 +170,6 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
           <span className="bangerSphereNativeFrame__fallbackSphere" />
         </div>
       )}
-      <span className="webExplorerNativeStatus">{label} - {status}</span>
     </div>
   );
 }

@@ -8617,6 +8617,11 @@ ol.assistantText__list li::before {
   pointer-events: auto;
 }
 
+.bangerSphereNativeFrame {
+  background: transparent;
+  pointer-events: none;
+}
+
 .googleEarthDomWebview {
   display: flex;
   width: 100%;
@@ -8631,7 +8636,7 @@ ol.assistantText__list li::before {
   height: 100%;
   object-fit: cover;
   image-rendering: auto;
-  background: #050607;
+  background: transparent;
 }
 
 .bangerSphereNativeFrame__fallback {
