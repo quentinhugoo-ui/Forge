@@ -485,14 +485,18 @@ fn run_banger_native_host(
     unsafe {
         RegisterClassW(&wc);
     }
+    let viewport_x = env::var("FORGE_BANGER_VIEWPORT_X").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    let viewport_y = env::var("FORGE_BANGER_VIEWPORT_Y").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    let fixed_viewport = env::var("FORGE_BANGER_VIEWPORT_FIXED").ok().as_deref() == Some("1");
+    let scene_kind = env::var("FORGE_BANGER_SCENE_KIND").unwrap_or_else(|_| "dense_meshlet_field".to_string());
     let child = unsafe {
         CreateWindowExW(
             0,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-            0,
-            0,
+            viewport_x,
+            viewport_y,
             width.clamp(64, 16384) as i32,
             height.clamp(64, 16384) as i32,
             parent,
@@ -577,7 +581,7 @@ fn run_banger_native_host(
     surface.configure(&device, &config);
 
     let clear_color = [0.015, 0.018, 0.024, 1.0];
-    let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode);
+    let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode, &scene_kind);
     let mut frame_target_allocation_count = 1u32;
     let mut surface_resize_count = 0u32;
     let mut frame_target = create_banger_frame_target(
@@ -602,7 +606,7 @@ fn run_banger_native_host(
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}:{}",
             config.width,
             config.height,
             format,
@@ -619,6 +623,7 @@ fn run_banger_native_host(
             frame_target.depth_target_hash,
             scene_pipeline.shader_source_hash,
             scene_pipeline.render_pipeline_hash,
+            scene_kind,
             frame_uniform_hash
         )
         .as_bytes(),
@@ -660,7 +665,11 @@ fn run_banger_native_host(
         depth_target_hash: frame_target.depth_target_hash.clone(),
         frame_target_allocation_count,
         surface_resize_count,
-        render_loop_policy: "native_wgpu_dense_meshlet_field_depth_camera_loop_v2",
+        render_loop_policy: if scene_kind == "maps_sphere" {
+            "native_wgpu_maps_sphere_depth_camera_loop_v1"
+        } else {
+            "native_wgpu_dense_meshlet_field_depth_camera_loop_v2"
+        },
         clear_color,
         frame_uniform_hash: frame_uniform_hash.clone(),
         camera_uniform_hash: frame_uniform_hash,
@@ -672,8 +681,12 @@ fn run_banger_native_host(
         proof_hash: String::new(),
         host_pid: std::process::id(),
         verifier: BangerNativeHostVerifier {
-            wall: "visible_hd_scene_density",
-            frontier_hypothesis: "Banger can render a dense Nanite-shaped field through one native indexed instanced draw before promoting full meshlet/cluster GPU streaming.",
+            wall: if scene_kind == "maps_sphere" { "maps_webview_to_native_3d" } else { "visible_hd_scene_density" },
+            frontier_hypothesis: if scene_kind == "maps_sphere" {
+                "Maps CodeAct can open Banger native 3D directly and render a globe sphere instead of booting Google Earth WebView."
+            } else {
+                "Banger can render a dense Nanite-shaped field through one native indexed instanced draw before promoting full meshlet/cluster GPU streaming."
+            },
             local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
             rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
         },
@@ -686,7 +699,8 @@ fn run_banger_native_host(
     let mut submitted = 1u32;
     while submitted < requested_frames && unsafe { IsWindow(parent) } != 0 && unsafe { IsWindow(child) } != 0 {
         pump_win32_messages();
-        if let Some((parent_width, parent_height)) = parent_client_size(parent) {
+        if !fixed_viewport {
+            if let Some((parent_width, parent_height)) = parent_client_size(parent) {
             let parent_width = parent_width.clamp(64, 16384);
             let parent_height = parent_height.clamp(64, 16384);
             if parent_width != config.width || parent_height != config.height {
@@ -719,6 +733,7 @@ fn run_banger_native_host(
                 projection.depth_target_hash = frame_target.depth_target_hash.clone();
                 projection.frame_target_allocation_count = frame_target_allocation_count;
                 projection.surface_resize_count = surface_resize_count;
+            }
             }
         }
         let _ = render_child_surface_frame(
@@ -892,6 +907,7 @@ fn create_banger_first_scene_pipeline(
     format: wgpu::TextureFormat,
     present_mode: wgpu::PresentMode,
     alpha_mode: wgpu::CompositeAlphaMode,
+    scene_kind: &str,
 ) -> BangerNativeScenePipeline {
     let shader_source = banger_native_first_scene_wgsl();
     let shader_source_hash = sha256_hex(shader_source.as_bytes());
@@ -905,9 +921,19 @@ fn create_banger_first_scene_pipeline(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
         mapped_at_creation: false,
     });
-    let vertex_bytes = banger_cube_vertex_bytes();
-    let index_bytes = banger_cube_index_bytes();
-    let instance_bytes = banger_scene_instance_bytes();
+    let (vertex_bytes, index_bytes, instance_bytes) = if scene_kind == "maps_sphere" {
+        (
+            banger_sphere_vertex_bytes(24, 48),
+            banger_sphere_index_bytes(24, 48),
+            banger_maps_sphere_instance_bytes(),
+        )
+    } else {
+        (
+            banger_cube_vertex_bytes(),
+            banger_cube_index_bytes(),
+            banger_scene_instance_bytes(),
+        )
+    };
     let instance_buffer_hash = sha256_hex(&instance_bytes);
     let scene_mesh_hash = sha256_hex(
         format!(
@@ -1060,8 +1086,8 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{:?}:{:?}:{:?}:instanced_mesh_depth_camera_v1",
-            shader_source_hash, scene_mesh_hash, scene_graph_hash, format, present_mode, alpha_mode
+            "banger-first-scene-pipeline:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            shader_source_hash, scene_mesh_hash, scene_graph_hash, format, present_mode, alpha_mode, scene_kind
         )
         .as_bytes(),
     );
@@ -1214,6 +1240,69 @@ fn banger_cube_index_bytes() -> Vec<u8> {
     let mut bytes = Vec::with_capacity(indices.len() * 2);
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_sphere_vertex_bytes(lat_segments: u16, lon_segments: u16) -> Vec<u8> {
+    let lat_segments = lat_segments.max(3);
+    let lon_segments = lon_segments.max(6);
+    let mut bytes = Vec::with_capacity(((lat_segments as usize + 1) * (lon_segments as usize + 1)) * 24);
+    for lat in 0..=lat_segments {
+        let v = lat as f32 / lat_segments as f32;
+        let theta = v * std::f32::consts::PI;
+        let y = theta.cos();
+        let radius = theta.sin();
+        for lon in 0..=lon_segments {
+            let u = lon as f32 / lon_segments as f32;
+            let phi = u * std::f32::consts::TAU;
+            let x = radius * phi.cos();
+            let z = radius * phi.sin();
+            let land = ((phi * 2.7).sin() + (theta * 4.1).cos() + (phi * 0.7 + theta * 1.3).sin()) > 0.55;
+            let polar = y.abs() > 0.82;
+            let color = if polar {
+                [0.86, 0.92, 0.94]
+            } else if land {
+                [0.20 + 0.18 * v, 0.52 + 0.12 * (u * 6.0).sin().abs(), 0.24]
+            } else {
+                [0.06, 0.32 + 0.10 * (v * 3.0).sin().abs(), 0.58 + 0.10 * u]
+            };
+            for value in [x, y, z, color[0], color[1], color[2]] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_sphere_index_bytes(lat_segments: u16, lon_segments: u16) -> Vec<u8> {
+    let lat_segments = lat_segments.max(3);
+    let lon_segments = lon_segments.max(6);
+    let row = lon_segments + 1;
+    let mut bytes = Vec::with_capacity(lat_segments as usize * lon_segments as usize * 12);
+    for lat in 0..lat_segments {
+        for lon in 0..lon_segments {
+            let a = lat * row + lon;
+            let b = a + row;
+            let indices = [a, b, a + 1, a + 1, b, b + 1];
+            for index in indices {
+                bytes.extend_from_slice(&index.to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_sphere_instance_bytes() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(80);
+    for value in banger_model_matrix([0.0, -0.15, 0.0], [2.25, 2.25, 2.25]) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [1.0_f32, 1.0, 1.0, 3.0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
 }
@@ -1500,6 +1589,21 @@ mod tests {
         assert_eq!(vertex_bytes.len(), 8 * 24);
         assert_eq!(index_bytes.len(), 36 * 2);
         assert_eq!(u16::from_le_bytes(index_bytes[0..2].try_into().unwrap()), 0);
+        assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
+        assert_eq!(sha256_hex(&index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_banger_maps_sphere_mesh_for_native_draws() {
+        let vertex_bytes = banger_sphere_vertex_bytes(24, 48);
+        let index_bytes = banger_sphere_index_bytes(24, 48);
+        let instance_bytes = banger_maps_sphere_instance_bytes();
+        assert_eq!(vertex_bytes.len(), 25 * 49 * 24);
+        assert_eq!(index_bytes.len(), 24 * 48 * 6 * 2);
+        assert_eq!(instance_bytes.len(), 80);
+        assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 2.25);
+        assert_eq!(f32::from_le_bytes(instance_bytes[76..80].try_into().unwrap()), 3.0);
         assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&index_bytes).len(), 64);
     }

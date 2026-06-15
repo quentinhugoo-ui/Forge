@@ -210,7 +210,7 @@ export async function loadRustBangerPreviewFrame(shellRoot: string): Promise<Rus
 
 export async function loadRustBangerPresentLoopBootstrap(
   shellRoot: string,
-  options: { parentWindowHandle?: string; width?: number; height?: number } = {}
+  options: { parentWindowHandle?: string; x?: number; y?: number; width?: number; height?: number; sceneKind?: string } = {}
 ): Promise<RustBangerPresentLoopBootstrap> {
   const repoRoot = join(shellRoot, "..", "..");
   const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
@@ -229,8 +229,12 @@ export async function loadRustBangerPresentLoopBootstrap(
   const env = {
     ...process.env,
     ...(options.parentWindowHandle ? { FORGE_BANGER_PARENT_HWND: options.parentWindowHandle } : {}),
+    ...(options.x !== undefined ? { FORGE_BANGER_VIEWPORT_X: String(Math.round(options.x)) } : {}),
+    ...(options.y !== undefined ? { FORGE_BANGER_VIEWPORT_Y: String(Math.round(options.y)) } : {}),
     ...(options.width ? { FORGE_BANGER_VIEWPORT_WIDTH: String(Math.round(options.width)) } : {}),
-    ...(options.height ? { FORGE_BANGER_VIEWPORT_HEIGHT: String(Math.round(options.height)) } : {})
+    ...(options.height ? { FORGE_BANGER_VIEWPORT_HEIGHT: String(Math.round(options.height)) } : {}),
+    ...(options.x !== undefined || options.y !== undefined ? { FORGE_BANGER_VIEWPORT_FIXED: "1" } : {}),
+    ...(options.sceneKind ? { FORGE_BANGER_SCENE_KIND: options.sceneKind } : {})
   };
   try {
     const stdout =
@@ -251,7 +255,7 @@ export async function loadRustBangerPresentLoopBootstrap(
 
 async function launchRustBangerNativeHost(
   shellRoot: string,
-  options: { parentWindowHandle?: string; width?: number; height?: number }
+  options: { parentWindowHandle?: string; x?: number; y?: number; width?: number; height?: number; sceneKind?: string }
 ): Promise<RustBangerPresentLoopBootstrap | null> {
   const parentWindowHandle = options.parentWindowHandle?.trim();
   if (!parentWindowHandle) {
@@ -259,7 +263,11 @@ async function launchRustBangerNativeHost(
   }
   const width = Math.max(64, Math.round(options.width ?? 1280));
   const height = Math.max(64, Math.round(options.height ?? 720));
-  const key = `${parentWindowHandle}:${width}:${height}`;
+  const x = Math.max(0, Math.round(options.x ?? 0));
+  const y = Math.max(0, Math.round(options.y ?? 0));
+  const sceneKind = options.sceneKind === "maps_sphere" ? "maps_sphere" : "dense_meshlet_field";
+  const fixedViewport = options.x !== undefined || options.y !== undefined;
+  const key = `${parentWindowHandle}:${x}:${y}:${width}:${height}:${sceneKind}`;
   if (bangerNativeHost && bangerNativeHost.key === key && !bangerNativeHost.child.killed) {
     return bangerNativeHost.ready;
   }
@@ -273,8 +281,12 @@ async function launchRustBangerNativeHost(
   const env = {
     ...process.env,
     FORGE_BANGER_PARENT_HWND: parentWindowHandle,
+    FORGE_BANGER_VIEWPORT_X: String(x),
+    FORGE_BANGER_VIEWPORT_Y: String(y),
     FORGE_BANGER_VIEWPORT_WIDTH: String(width),
-    FORGE_BANGER_VIEWPORT_HEIGHT: String(height)
+    FORGE_BANGER_VIEWPORT_HEIGHT: String(height),
+    FORGE_BANGER_VIEWPORT_FIXED: fixedViewport ? "1" : "0",
+    FORGE_BANGER_SCENE_KIND: sceneKind
   };
   const spawnSpec =
     bridgeExe && existsSync(bridgeExe)

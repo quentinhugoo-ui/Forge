@@ -10441,19 +10441,10 @@ function navigateNativeWebExplorerToGoogle(request: GoogleWebCodeActRequest, par
 }
 
 function navigateNativeWebExplorerToMaps(request: MapsCodeActRequest, parallelSessionIndex = 0): NativeWebExplorerResult {
-  const navigationUrl = request.url || GOOGLE_EARTH_DEFAULT_URL;
-  if (!isAllowedNativeMapsUrl(navigationUrl)) {
-    return nativeMapsResult(false, {
-      code: "bad_payload",
-      message: "Maps WebExplorer navigation rejected: URL is outside the Google Earth perimeter.",
-      proofHash: hashJson({ url: navigationUrl, proofHash: request.proofHash })
-    });
-  }
+  const navigationUrl = "banger://maps-sphere";
   activateWebExplorerSplit();
+  hideNativeMapsView();
   nativeMapsTargetUrl = navigationUrl;
-  if (nativeMapsView && !nativeMapsView.webContents.isDestroyed()) {
-    loadNativeMapsTarget(nativeMapsView, "maps-codeact");
-  }
   emitNativeMapsCodeAct({ ...request, url: navigationUrl, parallelSessionIndex });
   return nativeMapsResult(true);
 }
@@ -10520,6 +10511,25 @@ function normalizeNativeWebExplorerBounds(bounds: NativeWebExplorerBounds): Nati
     return null;
   }
   return { x, y, width, height };
+}
+
+function normalizeBangerViewportRequest(value: unknown): {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  sceneKind?: string;
+} {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const candidate = value as Partial<NativeWebExplorerBounds> & { sceneKind?: unknown };
+  const x = Number.isFinite(candidate.x) ? Math.max(0, Math.round(candidate.x as number)) : undefined;
+  const y = Number.isFinite(candidate.y) ? Math.max(0, Math.round(candidate.y as number)) : undefined;
+  const width = Number.isFinite(candidate.width) ? Math.max(64, Math.round(candidate.width as number)) : undefined;
+  const height = Number.isFinite(candidate.height) ? Math.max(64, Math.round(candidate.height as number)) : undefined;
+  const sceneKind = candidate.sceneKind === "maps_sphere" ? "maps_sphere" : undefined;
+  return { x, y, width, height, sceneKind };
 }
 
 function expandNativeMapsBoundsForEarth(bounds: NativeWebExplorerBounds, owner: BrowserWindow): NativeWebExplorerBounds {
@@ -10796,13 +10806,9 @@ function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExp
       proofHash: hashJson({ bounds })
     });
   }
-  const view = ensureNativeMapsView(owner);
-  const expanded = expandNativeMapsBoundsForEarth(normalized, owner);
-  view.setBounds(expanded);
-  nativeMapsBoundsKey = `${expanded.x}:${expanded.y}:${expanded.width}:${expanded.height}`;
-  view.webContents.focus();
-  console.info("Native Maps shown.", { bounds: expanded, requestedBounds: normalized, url: nativeMapsTargetUrl });
-  loadNativeMapsTarget(view, "show");
+  hideNativeMapsView();
+  nativeMapsBoundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
+  console.info("Native Maps routed to Banger sphere viewport.", { bounds: normalized, url: nativeMapsTargetUrl });
   return nativeMapsResult(true);
 }
 
@@ -10835,9 +10841,6 @@ function updateNativeWebExplorerBounds(event: Electron.IpcMainInvokeEvent, bound
 }
 
 function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): NativeWebExplorerResult {
-  if (!nativeMapsView) {
-    return showNativeMaps(event, bounds);
-  }
   if (!validateSender(event)) {
     return nativeMapsResult(false, {
       code: "bad_sender",
@@ -10861,13 +10864,12 @@ function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: Nati
       proofHash: hashJson({ bounds })
     });
   }
-  const expanded = expandNativeMapsBoundsForEarth(normalized, owner);
-  const boundsKey = `${expanded.x}:${expanded.y}:${expanded.width}:${expanded.height}`;
+  hideNativeMapsView();
+  const boundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
   if (nativeMapsBoundsKey === boundsKey) {
     return nativeMapsResult(true);
   }
   nativeMapsBoundsKey = boundsKey;
-  nativeMapsView.setBounds(expanded);
   return nativeMapsResult(true);
 }
 
@@ -16179,21 +16181,28 @@ function installIpc(): void {
     }
     return loadRustBangerPreviewFrame(shellRoot);
   });
-  ipcMain.handle("forge:get-banger-present-loop-bootstrap", async (event): Promise<RustBangerPresentLoopBootstrap> => {
+  ipcMain.handle("forge:get-banger-present-loop-bootstrap", async (event, request: unknown): Promise<RustBangerPresentLoopBootstrap> => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const bounds = owner?.getBounds();
     const parentWindowHandle = owner ? nativeWindowHandleDecimal(owner) : undefined;
+    const requestedBounds = normalizeBangerViewportRequest(request);
     if (!validateSender(event)) {
       return loadRustBangerPresentLoopBootstrap(shellRoot, {
         parentWindowHandle,
-        width: bounds?.width,
-        height: bounds?.height
+        x: requestedBounds.x,
+        y: requestedBounds.y,
+        width: requestedBounds.width ?? bounds?.width,
+        height: requestedBounds.height ?? bounds?.height,
+        sceneKind: requestedBounds.sceneKind
       });
     }
     return loadRustBangerPresentLoopBootstrap(shellRoot, {
       parentWindowHandle,
-      width: bounds?.width,
-      height: bounds?.height
+      x: requestedBounds.x,
+      y: requestedBounds.y,
+      width: requestedBounds.width ?? bounds?.width,
+      height: requestedBounds.height ?? bounds?.height,
+      sceneKind: requestedBounds.sceneKind
     });
   });
   ipcMain.handle("forge:get-banger-google-tiles-config", async (event): Promise<BangerGoogleTilesConfigResult> => {

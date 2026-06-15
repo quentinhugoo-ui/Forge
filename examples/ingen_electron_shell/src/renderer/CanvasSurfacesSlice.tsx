@@ -1,16 +1,13 @@
 import {
   Fragment,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type DetailedHTMLProps,
-  type HTMLAttributes
 } from "react";
-import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
+import type { BangerPresentLoopBootstrapResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
@@ -43,178 +40,100 @@ export interface CodingLivePreviewTarget {
   kind: "html" | "react" | "vite" | "unknown";
   revision: number;
 }
-type GoogleEarthWebviewElement = HTMLElement & {
-  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
-};
-type GoogleEarthWebviewProps = DetailedHTMLProps<HTMLAttributes<GoogleEarthWebviewElement>, GoogleEarthWebviewElement> & {
-  src?: string;
-  partition?: string;
-  useragent?: string;
-  webpreferences?: string;
-};
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      webview: GoogleEarthWebviewProps;
-    }
-  }
-}
+function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | null }) {
+  const slotRef = useRef<HTMLDivElement | null>(null);
+  const lastBoundsRef = useRef("");
+  const [status, setStatus] = useState("Banger sphere viewport pending");
+  const label = searchQuery?.replace(/\s+/g, " ").trim() || "Maps sphere";
 
-const GOOGLE_EARTH_DOM_DEFAULT_URL =
-  "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
-
-const GOOGLE_EARTH_DOM_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
-
-function googleEarthDomUrl(url?: string | null): string {
-  if (!url) {
-    return GOOGLE_EARTH_DOM_DEFAULT_URL;
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "https:" && parsed.hostname === "earth.google.com" && parsed.pathname.startsWith("/web")) {
-      return parsed.toString();
-    }
-  } catch {
-    // Fall through to the default Google Earth view.
-  }
-  return GOOGLE_EARTH_DOM_DEFAULT_URL;
-}
-
-function googleEarthSearchInjectionScript(searchQuery: string): string {
-  return `
-(() => {
-  const query = ${JSON.stringify(searchQuery)};
-  if (!query) return false;
-  const visit = (root, results = []) => {
-    if (!root || typeof root.querySelectorAll !== "function") return results;
-    for (const element of root.querySelectorAll("input, textarea, [contenteditable='true'], button, [role='button']")) {
-      results.push(element);
-    }
-    for (const element of root.querySelectorAll("*")) {
-      if (element.shadowRoot) visit(element.shadowRoot, results);
-    }
-    return results;
-  };
-  const all = visit(document);
-  const controls = all.filter((element) => {
-    const tag = element.tagName?.toLowerCase();
-    return tag === "input" || tag === "textarea" || element.getAttribute("contenteditable") === "true";
-  });
-  const textOf = (element) => [
-    element.getAttribute("aria-label"),
-    element.getAttribute("placeholder"),
-    element.getAttribute("title"),
-    element.getAttribute("role"),
-    element.id,
-    element.className
-  ].filter(Boolean).join(" ").toLowerCase();
-  const searchControl = controls.find((element) => {
-    const text = textOf(element);
-    return text.includes("google earth") || text.includes("search") || text.includes("rechercher") || text.includes("combobox");
-  }) || controls.find((element) => {
-    const tag = element.tagName?.toLowerCase();
-    const type = element.getAttribute("type")?.toLowerCase();
-    return tag === "textarea" || type === "search" || type === "text" || !type;
-  });
-  if (!searchControl) return false;
-  searchControl.focus();
-  const view = searchControl.ownerDocument.defaultView || window;
-  if ("value" in searchControl) {
-    const proto = searchControl instanceof HTMLTextAreaElement ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-    if (setter) {
-      setter.call(searchControl, query);
-    } else {
-      searchControl.value = query;
-    }
-  } else {
-    searchControl.textContent = query;
-  }
-  searchControl.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: query, inputType: "insertText" }));
-  searchControl.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
-  searchControl.dispatchEvent(new KeyboardEvent("keydown", key));
-  searchControl.dispatchEvent(new KeyboardEvent("keypress", key));
-  searchControl.dispatchEvent(new KeyboardEvent("keyup", key));
-  if (searchControl.form) {
-    searchControl.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  }
-  const searchButton = all.find((element) => {
-    const tag = element.tagName?.toLowerCase();
-    if (tag !== "button" && element.getAttribute("role") !== "button") return false;
-    const text = textOf(element);
-    return text.includes("search") || text.includes("rechercher");
-  });
-  searchButton?.click?.();
-  return true;
-})()
-`;
-}
-
-function GoogleEarthDomWebview({ url, searchQuery }: { url?: string | null; searchQuery?: string | null }) {
-  const webviewRef = useRef<GoogleEarthWebviewElement | null>(null);
-  const lastAcceptedSearchRef = useRef("");
-  const pendingSearchRef = useRef("");
-  const normalizedSearchQuery = searchQuery?.replace(/\s+/g, " ").trim() ?? "";
-  const injectSearchQuery = useCallback(() => {
-    const webview = webviewRef.current;
-    const query = pendingSearchRef.current;
-    if (!webview?.executeJavaScript || !query || query === lastAcceptedSearchRef.current) {
-      return;
-    }
-    void webview.executeJavaScript(googleEarthSearchInjectionScript(query), true)
-      .then((accepted) => {
-        if (accepted === true) {
-          lastAcceptedSearchRef.current = query;
-        }
-      })
-      .catch(() => {
-        // Google Earth may still be booting; the scheduled retries below will try again.
-      });
-  }, []);
-
-  useEffect(() => {
-    pendingSearchRef.current = normalizedSearchQuery;
-    if (!normalizedSearchQuery) {
+  useLayoutEffect(() => {
+    const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
+      | ((request?: {
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+          sceneKind?: "maps_sphere";
+        }) => Promise<BangerPresentLoopBootstrapResult>)
+      | undefined;
+    if (!getBootstrap) {
+      setStatus("Banger native bridge unavailable");
       return undefined;
     }
-    const retryTimers = [0, 450, 1200, 2400, 4200].map((delay) => window.setTimeout(injectSearchQuery, delay));
-    return () => {
-      for (const timer of retryTimers) {
-        window.clearTimeout(timer);
+
+    let animationFrame = 0;
+    let retryTimer = 0;
+    const settleTimers: number[] = [];
+    let active = true;
+    const syncBounds = () => {
+      animationFrame = 0;
+      const slot = slotRef.current;
+      if (!slot) {
+        retryTimer = window.setTimeout(scheduleSync, 80);
+        return;
+      }
+      const rect = slot.getBoundingClientRect();
+      const bounds = {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      };
+      if (bounds.width < 80 || bounds.height < 80) {
+        retryTimer = window.setTimeout(scheduleSync, 100);
+        setStatus(`Banger sphere waiting for bounds ${bounds.width}x${bounds.height}`);
+        return;
+      }
+      const boundsKey = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:maps_sphere`;
+      if (lastBoundsRef.current === boundsKey) {
+        return;
+      }
+      lastBoundsRef.current = boundsKey;
+      setStatus("Banger sphere native host launching");
+      void getBootstrap({ ...bounds, sceneKind: "maps_sphere" })
+        .then((result) => {
+          if (!active) return;
+          if (result?.ok) {
+            setStatus(`Banger sphere live ${result.instanceCount ?? 1} object`);
+          } else {
+            setStatus(result?.error?.message ?? "Banger sphere rejected");
+          }
+        })
+        .catch((error: unknown) => {
+          if (active) {
+            setStatus(error instanceof Error ? error.message : String(error));
+          }
+        });
+    };
+    const scheduleSync = () => {
+      if (animationFrame === 0) {
+        animationFrame = window.requestAnimationFrame(syncBounds);
       }
     };
-  }, [injectSearchQuery, normalizedSearchQuery]);
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    if (!webview) {
-      return undefined;
+    const observer = new ResizeObserver(scheduleSync);
+    if (slotRef.current) {
+      observer.observe(slotRef.current);
     }
-    const onReady = () => {
-      lastAcceptedSearchRef.current = "";
-      injectSearchQuery();
-    };
-    webview.addEventListener("dom-ready", onReady);
-    webview.addEventListener("did-finish-load", onReady);
+    window.addEventListener("resize", scheduleSync);
+    scheduleSync();
+    for (const delay of [80, 180, 360, 720]) {
+      settleTimers.push(window.setTimeout(scheduleSync, delay));
+    }
     return () => {
-      webview.removeEventListener("dom-ready", onReady);
-      webview.removeEventListener("did-finish-load", onReady);
+      active = false;
+      if (animationFrame !== 0) window.cancelAnimationFrame(animationFrame);
+      if (retryTimer !== 0) window.clearTimeout(retryTimer);
+      for (const timer of settleTimers) window.clearTimeout(timer);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleSync);
     };
-  }, [injectSearchQuery]);
+  }, []);
 
   return (
-    <div className="googleEarthDomFrame" aria-label="Google Earth">
-      <webview
-        ref={webviewRef}
-        className="googleEarthDomWebview"
-        src={googleEarthDomUrl(url)}
-        partition="persist:ingen-maps"
-        useragent={GOOGLE_EARTH_DOM_USER_AGENT}
-        webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes,webSecurity=yes"
-      />
+    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label="Banger 3D sphere viewport">
+      <div className="nativeViewportSlot__empty" aria-hidden="true" />
+      <span className="webExplorerNativeStatus">{label} · {status}</span>
     </div>
   );
 }
@@ -986,7 +905,6 @@ export function CanvasSurfacesSlice({
   webExplorerModuleId = null,
   mapsOpen,
   mapsParallelIndex = 0,
-  mapsUrl,
   mapsSearchQuery,
   codingLivePreview,
   leftPanelOpen,
@@ -1313,9 +1231,7 @@ export function CanvasSurfacesSlice({
                         <span aria-hidden="true" />
                       </button>
                       {hostsMaps && nativeBrowserPage === "maps" ? (
-                        <>
-                          <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
-                        </>
+                        <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
                       ) : (
                         <div
                           ref={nativeWebExplorerSlotRef}
@@ -1337,7 +1253,7 @@ export function CanvasSurfacesSlice({
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                         <span aria-hidden="true" />
                       </button>
-                      <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
+                      <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
                     </>
                   ) : null}
                 </section>
@@ -1369,9 +1285,7 @@ export function CanvasSurfacesSlice({
                 <span aria-hidden="true" />
               </button>
               {nativeBrowserPage === "maps" ? (
-                <>
-                  <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
-                </>
+                <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
               ) : (
                 <div
                   ref={nativeWebExplorerSlotRef}
@@ -1416,7 +1330,7 @@ export function CanvasSurfacesSlice({
               <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                 <span aria-hidden="true" />
               </button>
-              <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
+              <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
             </section>
           </div>
         ) : null}

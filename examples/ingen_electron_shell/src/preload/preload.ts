@@ -48,8 +48,8 @@ const forgeShell: ForgeShellApi = {
   getBangerPreviewFrame() {
     return ipcRenderer.invoke("forge:get-banger-preview-frame");
   },
-  getBangerPresentLoopBootstrap() {
-    return ipcRenderer.invoke("forge:get-banger-present-loop-bootstrap");
+  getBangerPresentLoopBootstrap(request?: unknown) {
+    return ipcRenderer.invoke("forge:get-banger-present-loop-bootstrap", request);
   },
   getBangerGoogleTilesConfig() {
     return ipcRenderer.invoke("forge:get-banger-google-tiles-config");
