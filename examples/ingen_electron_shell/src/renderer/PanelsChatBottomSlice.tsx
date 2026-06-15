@@ -4857,7 +4857,11 @@ export function PanelsChatBottomSlice({
       return undefined;
     }
     void setWidgetPanelExpanded(widgetPanelExpanded);
+    const syncTimers = widgetPanelExpanded
+      ? [120, 360, 760].map((delay) => window.setTimeout(() => void setWidgetPanelExpanded(true), delay))
+      : [];
     return () => {
+      syncTimers.forEach((timer) => window.clearTimeout(timer));
       void setWidgetPanelExpanded(false);
     };
   }, [widgetPanelExpanded]);

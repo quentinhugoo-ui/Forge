@@ -12611,14 +12611,20 @@ function setNativeWindowWidgetPanelExpanded(event: Electron.IpcMainInvokeEvent, 
     return false;
   }
   const expanded = enabled === true;
-  if (widgetWindowPanelExpanded === expanded) {
-    return true;
-  }
   widgetWindowPanelExpanded = expanded;
   if (widgetWindowRestoreState === null || !boundsLookLikeWidget(window.getBounds())) {
     return true;
   }
   const bounds = widgetWindowBounds(window);
+  const currentBounds = window.getBounds();
+  if (
+    Math.abs(currentBounds.x - bounds.x) <= 1 &&
+    Math.abs(currentBounds.y - bounds.y) <= 1 &&
+    Math.abs(currentBounds.width - bounds.width) <= 1 &&
+    Math.abs(currentBounds.height - bounds.height) <= 1
+  ) {
+    return true;
+  }
   traceWidgetTaskbarStep("resize-widget-panel", { id: window.id, bounds, expanded });
   clearWidgetWindowBoundsAnimationTimer();
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
