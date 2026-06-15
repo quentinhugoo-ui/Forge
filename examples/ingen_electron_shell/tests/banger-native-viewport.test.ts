@@ -35,7 +35,10 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).not.toContain("getBangerGoogleTilesConfig");
     expect(canvasSurfacesSource).toContain('import("cesium")');
     expect(canvasSurfacesSource).toContain("new Cesium.Viewer");
-    expect(canvasSurfacesSource).toContain("Cesium.Cesium3DTileset.fromUrl");
+    expect(canvasSurfacesSource).toContain("Cesium.GoogleMaps.mapTilesApiEndpoint");
+    expect(canvasSurfacesSource).toContain("Cesium.createGooglePhotorealistic3DTileset");
+    expect(canvasSurfacesSource).toContain("onlyUsingWithGoogleGeocoder");
+    expect(canvasSurfacesSource).toContain("GOOGLE_MAPS_PROXY_KEY_ALIAS");
     expect(canvasSurfacesSource).toContain("showCreditsOnScreen");
     expect(canvasSurfacesSource).toContain("Banger Maps Cesium tileset failed; falling back to native sphere.");
     expect(stylesSource).toContain(".bangerMapsCesiumViewport");
@@ -95,6 +98,7 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("BangerMapsCesiumViewport");
     expect(canvasSurfacesSource).toContain("Cesium photorealistic tiles bootstrap");
     expect(canvasSurfacesSource).toContain("Cesium Google photorealistic 3D Tiles live");
+    expect(canvasSurfacesSource).toContain("googleMapsEndpointFromRootTilesetUrl");
     expect(canvasSurfacesSource).toContain("data-tileset-provider");
     expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
     expect(canvasSurfacesSource).toContain("data-tileset-georeference");

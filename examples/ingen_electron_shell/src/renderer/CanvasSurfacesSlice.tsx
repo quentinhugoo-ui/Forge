@@ -285,22 +285,30 @@ function BangerMapsCesiumViewport({
         }, 5000);
         const Cesium = await import("cesium");
         if (disposed || !hostRef.current) return;
+        const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
+        if (googleMapsEndpoint) {
+          Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
+          Cesium.GoogleMaps.defaultApiKey = GOOGLE_MAPS_PROXY_KEY_ALIAS;
+        }
         viewer = new Cesium.Viewer(hostRef.current, {
           animation: false,
           baseLayerPicker: false,
           fullscreenButton: false,
-          geocoder: false,
+          geocoder: Cesium.IonGeocodeProviderType.GOOGLE,
+          globe: false,
           homeButton: false,
           infoBox: false,
           navigationHelpButton: false,
+          requestRenderMode: true,
           sceneModePicker: false,
           selectionIndicator: false,
           timeline: false,
           vrButton: false,
-          requestRenderMode: false,
           shouldAnimate: true
         });
-        viewer.scene.globe.show = false;
+        if (viewer.scene.globe) {
+          viewer.scene.globe.show = false;
+        }
         if (viewer.scene.skyAtmosphere) {
           viewer.scene.skyAtmosphere.show = false;
         }
@@ -309,7 +317,10 @@ function BangerMapsCesiumViewport({
         }
         viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT;
         onStatus("Cesium loading Google photorealistic 3D Tiles");
-        const tileset = await Cesium.Cesium3DTileset.fromUrl(config.rootTilesetUrl, {
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset({
+          key: GOOGLE_MAPS_PROXY_KEY_ALIAS,
+          onlyUsingWithGoogleGeocoder: true
+        }, {
           maximumScreenSpaceError: config.lod.maxScreenSpaceError,
           skipLevelOfDetail: config.lod.skipLevelOfDetail,
           showCreditsOnScreen: config.showCreditsOnScreen
@@ -364,6 +375,25 @@ function redactedTilesetEndpoint(value?: string): string {
     return url.toString();
   } catch {
     return "configured";
+  }
+}
+
+const GOOGLE_MAPS_PROXY_KEY_ALIAS = "render-proxy";
+
+function googleMapsEndpointFromRootTilesetUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname
+      .replace(/\/v1\/3dtiles\/root\.json$/i, "/")
+      .replace(/\/root\.json$/i, "/");
+    if (!url.pathname.endsWith("/")) {
+      url.pathname = `${url.pathname}/`;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
   }
 }
 
