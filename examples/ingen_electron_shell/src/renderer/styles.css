@@ -7217,7 +7217,7 @@ ol.assistantText__list li::before {
 .composer__send--stop {
   position: relative;
   border-radius: 50% !important;
-  background: rgba(255, 255, 255, 0.08) !important;
+  background: transparent !important;
   overflow: visible;
   isolation: isolate;
 }
@@ -7225,34 +7225,18 @@ ol.assistantText__list li::before {
 .composer__send--stop::before {
   content: "";
   position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    #ffffff,
-    #ffb45f,
-    #f15bb5,
-    #8b5cf6,
-    #22d3ee,
-    #86efac,
-    #ffffff
-  );
-  filter: saturate(1.25);
-  opacity: 0.95;
-  animation: composerStopRingFlow 1.45s linear infinite;
+  width: 22px;
+  height: 22px;
+  left: 50%;
+  top: 50%;
+  border-radius: 50% !important;
+  background: color-mix(in oklab, var(--forge-text) 92%, transparent);
+  transform: translate(-50%, -50%);
   z-index: 0;
 }
 
 .composer__send--stop::after {
-  content: "";
-  position: absolute;
-  inset: 2px;
-  border-radius: 50%;
-  background: var(--forge-panel);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.08),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.42);
-  z-index: 1;
+  content: none;
 }
 
 .sendGlyph {
@@ -7269,11 +7253,7 @@ ol.assistantText__list li::before {
   display: block;
   width: 10px;
   height: 10px;
-  border-radius: 2px;
-  background: color-mix(in oklab, var(--forge-text) 92%, #ffffff 8%);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 1px 5px rgba(0, 0, 0, 0.42);
+  background: var(--forge-bg) !important;
 }
 
 .composer__send--empty .sendGlyph {
@@ -7301,27 +7281,6 @@ ol.assistantText__list li::before {
 
   100% {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes composerStopRingFlow {
-  0% {
-    transform: rotate(0deg) scale(1);
-  }
-
-  50% {
-    transform: rotate(180deg) scale(1.04);
-  }
-
-  100% {
-    transform: rotate(360deg) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .composer__send--stop::before {
-    animation: none;
-    transform: none;
   }
 }
 
