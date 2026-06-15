@@ -133,7 +133,11 @@ Per-ball smooth-min constants are validated by the frame program before upload,
 so the fragment shader does not reclamp the same value inside every SDF sample.
 Mouse deformation uses two content-addressed shader lanes; idle frames run a
 static variant where the deformation branch compiles away, and hover frames swap
-to the interactive variant without changing the visual contract.
+to the interactive variant without changing the visual contract. Static-lane
+frame addresses canonicalize inactive pointer data to zero, so cursor movement
+outside the blob does not invalidate equivalent KASM frames.
+The interactive mouse lane is materialized lazily; idle sessions keep only the
+static pipeline/program resident in GPU and renderer memory.
 Once WebGPU is active, the hidden CSS fallback stops its own morph and gleam
 animations.
 

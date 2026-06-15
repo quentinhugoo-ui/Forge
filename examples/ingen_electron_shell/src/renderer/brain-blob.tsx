@@ -96,6 +96,7 @@ const BLOB_SCISSOR_PADDING_WORLD = 0.42;
 const BLOB_SCISSOR_PADDING_PIXELS = 96;
 const BLOB_VIEW_CENTER_X = 0.62;
 const BLOB_VIEW_CENTER_Y = 0.68;
+const BLOB_POINTER_STRENGTH_EPSILON = 0.001;
 
 /* Live cursor shared between the React component and the render loop. */
 type BlobPointer = { x: number; y: number; over: boolean };
@@ -282,6 +283,7 @@ function createBlobScene(seed: number): BlobScene {
 const BRAIN_BLOB_WGSL = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
 const BOUND_RADIUS: f32 = 1.58;
+const BOUND_RADIUS2: f32 = BOUND_RADIUS * BOUND_RADIUS;
 const VIEW_CENTER: vec2<f32> = vec2<f32>(0.62, 0.68);
 const MOUSE_DEFORM_ENABLED: f32 = 1.0;
 
@@ -400,8 +402,8 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let h2 = dot(ro, ro) - b * b;
   var color = vec3<f32>(0.0);
   var alpha = 0.0;
-  if (h2 < BOUND_RADIUS * BOUND_RADIUS) {
-    let span = sqrt(BOUND_RADIUS * BOUND_RADIUS - h2);
+  if (h2 < BOUND_RADIUS2) {
+    let span = sqrt(BOUND_RADIUS2 - h2);
     let tEnd = b + span;
     var tCur = max(b - span, 0.0);
     var closest = 1e5;
@@ -410,11 +412,11 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     for (var i = 0; i < 72; i = i + 1) {
       p = ro + rd * tCur;
       let d = field(p, t);
-      closest = min(closest, d);
       if (d < 0.0016) {
         hit = true;
         break;
       }
+      closest = min(closest, d);
       tCur += d * 0.85;
       if (tCur > tEnd) {
         break;
@@ -496,6 +498,7 @@ out vec4 outColor;
 
 const float TAU = 6.28318530718;
 const float BOUND_RADIUS = 1.58;
+const float BOUND_RADIUS2 = BOUND_RADIUS * BOUND_RADIUS;
 const vec2 VIEW_CENTER = vec2(0.62, 0.68);
 const float MOUSE_DEFORM_ENABLED = 1.0;
 
@@ -580,8 +583,8 @@ void main() {
   float h2 = dot(ro, ro) - b * b;
   vec3 color = vec3(0.0);
   float alpha = 0.0;
-  if (h2 < BOUND_RADIUS * BOUND_RADIUS) {
-    float span = sqrt(BOUND_RADIUS * BOUND_RADIUS - h2);
+  if (h2 < BOUND_RADIUS2) {
+    float span = sqrt(BOUND_RADIUS2 - h2);
     float tEnd = b + span;
     float tCur = max(b - span, 0.0);
     float closest = 1e5;
@@ -590,11 +593,11 @@ void main() {
     for (int i = 0; i < 72; i++) {
       p = ro + rd * tCur;
       float d = field(p, t);
-      closest = min(closest, d);
       if (d < 0.0016) {
         hit = true;
         break;
       }
+      closest = min(closest, d);
       tCur += d * 0.85;
       if (tCur > tEnd) {
         break;
@@ -778,7 +781,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       };
     };
     const staticDrawLane = createDrawLane("static", BRAIN_BLOB_WGSL_STATIC_MOUSE);
-    const mouseDrawLane = createDrawLane("mouse", BRAIN_BLOB_WGSL);
+    let mouseDrawLane: ReturnType<typeof createDrawLane> | null = null;
 
     let configured = false;
     let deviceLost = false;
@@ -800,7 +803,8 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       if (!configured || deviceLost) return;
       const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
       const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
-      const drawLane = nextPointerStrength > 0.001 || pointer.over ? mouseDrawLane : staticDrawLane;
+      const pointerActive = nextPointerStrength > BLOB_POINTER_STRENGTH_EPSILON || pointer.over;
+      const drawLane = pointerActive ? (mouseDrawLane ??= createDrawLane("mouse", BRAIN_BLOB_WGSL)) : staticDrawLane;
       const frameProbe = frameCache.probe({
         lane: "webgpu",
         shaderHash: drawLane.shaderHash,
@@ -808,20 +812,20 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
         canvasHeight: canvas.height,
         timeSeconds: t,
         seed,
-        pointerX: pointer.x,
-        pointerY: pointer.y,
-        pointerStrength: nextPointerStrength,
-        pointerOver: pointer.over
+        pointerX: pointerActive ? pointer.x : 0,
+        pointerY: pointerActive ? pointer.y : 0,
+        pointerStrength: pointerActive ? nextPointerStrength : 0,
+        pointerOver: pointerActive && pointer.over
       });
       if (frameProbe.reused) return;
-      pointerStrength = nextPointerStrength;
+      pointerStrength = pointerActive ? nextPointerStrength : 0;
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
       uniformData[2] = t;
-      uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
-      uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
+      uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointerActive ? pointer.x : 0;
+      uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointerActive ? pointer.y : 0;
       uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
-      scene.update(t, uniformData, pointer);
+      scene.update(t, uniformData, pointerActive ? pointer : null);
       writeBrainBlobMonsterHueRows(t, uniformData, BLOB_HUE_FLOAT_OFFSET);
       const scissor = cachedBrainBlobScissor(canvas, uniformData);
       device.queue.writeBuffer(uniformBuffer, 0, uniformData);
@@ -914,8 +918,8 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     };
   };
   const staticProgramLane = createProgramLane("static", BRAIN_BLOB_GLSL_FRAGMENT_STATIC_MOUSE);
-  const mouseProgramLane = createProgramLane("mouse", BRAIN_BLOB_GLSL_FRAGMENT);
-  if (!staticProgramLane || !mouseProgramLane) return null;
+  if (!staticProgramLane) return null;
+  let mouseProgramLane: ReturnType<typeof createProgramLane> | null = null;
 
   const seed = Math.random() * 1000;
   const scene = createBlobScene(seed);
@@ -942,7 +946,9 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     if (gl.isContextLost()) return;
     const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
     const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
-    const programLane = nextPointerStrength > 0.001 || pointer.over ? mouseProgramLane : staticProgramLane;
+    const pointerActive = nextPointerStrength > BLOB_POINTER_STRENGTH_EPSILON || pointer.over;
+    const programLane = pointerActive ? (mouseProgramLane ??= createProgramLane("mouse", BRAIN_BLOB_GLSL_FRAGMENT)) : staticProgramLane;
+    if (!programLane) return;
     const frameProbe = frameCache.probe({
       lane: "webgl2",
       shaderHash: programLane.shaderHash,
@@ -950,20 +956,20 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
       canvasHeight: canvas.height,
       timeSeconds: t,
       seed,
-      pointerX: pointer.x,
-      pointerY: pointer.y,
-      pointerStrength: nextPointerStrength,
-      pointerOver: pointer.over
+      pointerX: pointerActive ? pointer.x : 0,
+      pointerY: pointerActive ? pointer.y : 0,
+      pointerStrength: pointerActive ? nextPointerStrength : 0,
+      pointerOver: pointerActive && pointer.over
     });
     if (frameProbe.reused) return;
-    pointerStrength = nextPointerStrength;
+    pointerStrength = pointerActive ? nextPointerStrength : 0;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;
     uniformData[2] = t;
-    uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
-    uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
+    uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointerActive ? pointer.x : 0;
+    uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointerActive ? pointer.y : 0;
     uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
-    scene.update(t, uniformData, pointer);
+    scene.update(t, uniformData, pointerActive ? pointer : null);
     writeBrainBlobMonsterHueRows(t, uniformData, BLOB_HUE_FLOAT_OFFSET);
     const scissor = cachedBrainBlobScissor(canvas, uniformData);
 
@@ -991,7 +997,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     destroy() {
       pump.destroy();
       gl.deleteProgram(staticProgramLane.program);
-      gl.deleteProgram(mouseProgramLane.program);
+      if (mouseProgramLane) gl.deleteProgram(mouseProgramLane.program);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     }
   };
