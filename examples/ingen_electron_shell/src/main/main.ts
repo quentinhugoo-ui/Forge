@@ -6636,6 +6636,20 @@ function agentActionShouldRunFileOrganizationFallback(originalUserText: string, 
   return agentActionStepNeedsMutationFollowUp(originalUserText, request, result) && agentActionFileOrganizationRequests(originalUserText, request, result).length > 0;
 }
 
+function agentLoopNarrationContractManifest(): string {
+  return [
+    "LOOP_STREAM_NARRATION_CONTRACT v1",
+    "visible_language=French; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
+    "visible_step_shape=Each visible paragraph should make the step understandable: what was just learned, why the next move follows, and what action or verification comes next.",
+    "paragraph_size=Use one compact paragraph of 1-3 sentences before an event or action. Avoid long checklists during the loop.",
+    "pedagogy=Name pivots and tradeoffs plainly: if a tool fails, explain the useful signal from the failure and the safer next route.",
+    "evidence=After a tool result, mention the runtime proof that matters: accepted result, path, count, exit code, artifact, verification or blocked reason.",
+    "event_coupling=When you say an action will be taken, immediately follow with the matching CodeAct or AGENT_ACTION_JSON control line. Do not promise work without an event.",
+    "tone=Concrete, calm, direct. Avoid mechanical labels such as 'Step 1', 'OBLIGATION', 'Interdit', or repeating 'Je vais' at every paragraph.",
+    "completion=When no further loop action is needed, stop the loop with a short natural summary of what was actually proven or what remains blocked."
+  ].join("\n");
+}
+
 function agentActionLoopContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
   const mustContinueAfterDiscovery = agentActionStepNeedsMutationFollowUp(originalUserText, request, result);
   const mustCreateVisualArtifact = mustContinueAfterDiscovery && textLooksLikeVisualCodingArtifactGoal(originalUserText);
@@ -6646,20 +6660,19 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
     `result=${compactAgentActionResult(result)}`,
     agentActionSelectedCapabilityContext(request, result),
     "",
-    "Continue la boucle agentique en francais.",
+    agentLoopNarrationContractManifest(),
+    "",
+    "Continue the universal observe-act-verify-retry loop.",
     mustContinueAfterDiscovery
-      ? "OBLIGATION: l'objectif utilisateur implique une modification locale; une action de lecture seule ne suffit pas. Tu dois maintenant choisir la prochaine action concrete et emettre exactement une ligne AGENT_ACTION_JSON."
-      : "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
+      ? "runtime_next=The last result was discovery only, while the user objective still requires a local change. Write a clear visible paragraph explaining that evidence, then emit exactly one concrete AGENT_ACTION_JSON line."
+      : "runtime_next=If another local action is still required, write a clear visible paragraph explaining why, then emit exactly one AGENT_ACTION_JSON line.",
     mustCreateVisualArtifact
-      ? "Pour ce coding visuel, l'action suivante doit etre document_write_text avec un vrai fichier HTML/JS/CSS local complet; apres acceptation, tu ouvriras /coding_live_preview_ avec le chemin verifie."
+      ? "runtime_requirement=The next local action must create or update the real visual artifact file before any preview is opened."
       : "",
-    "Pour ranger/organiser un bureau: apres la liste, cree les dossiers utiles si necessaire, puis deplace ou copie les elements pertinents. Ne t'arrete pas apres un simple inventaire.",
-    "Principe universel d'agent local: apres chaque outil, lis le resultat, verifie que l'action demandee est vraiment faite, puis continue ou essaie une autre action locale si le resultat ne suffit pas.",
-    "Style de progression: varie les ouvertures, evite de commencer chaque paragraphe par 'Je vais', et prefere le present concret: constat bref, decision, action.",
-    "La ligne de controle doit commencer par AGENT_ACTION_JSON en colonne 1, sans prose avant.",
+    "control_line=AGENT_ACTION_JSON must start at column 1 after the visible paragraph.",
     mustContinueAfterDiscovery
-      ? "Interdit dans ce tour: resume final, proposition seulement verbale, ou dire que tu vas faire l'action sans AGENT_ACTION_JSON."
-      : "Si l'objectif est atteint, donne un resume final compact de ce qui a ete fait et n'emets pas AGENT_ACTION_JSON.",
+      ? "stop_policy=Do not stop with only a verbal plan when a concrete local action is still required."
+      : "stop_policy=If the objective is already satisfied, write the natural summary and do not emit AGENT_ACTION_JSON.",
     "",
     `Objectif utilisateur initial:\n${originalUserText}`
   ].join("\n");
@@ -6674,14 +6687,14 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
     `last_result=${compactAgentActionResult(result)}`,
     agentActionSelectedCapabilityContext(request, result),
     "",
-    "Le loop ne doit pas s'arreter ici: la derniere action etait seulement une action de decouverte, pas une modification.",
-    "Ecris un court paragraphe de progression, puis exactement une ligne AGENT_ACTION_JSON qui execute la prochaine action locale concrete.",
+    agentLoopNarrationContractManifest(),
+    "",
+    "runtime_next=The loop must continue because the last action only discovered state and did not complete the required change.",
+    "Write a visible paragraph that explains the evidence and the next concrete move, then exactly one AGENT_ACTION_JSON line.",
     mustCreateVisualArtifact
-      ? "Pour ce coding visuel, l'action suivante doit etre document_write_text avec path=\"nom-pertinent.html\" et content contenant le fichier complet. Ne conclus pas avant AGENT_ACTION_RESULT."
-      : "Pour organiser un bureau, l'action suivante doit etre par exemple create_directory, move_path, copy_path ou rename_path selon les elements listes.",
-    "Principe universel: ne considere jamais une action comme reussie sans resultat d'outil accepte; si un outil echoue, utilise le message d'erreur pour tenter une variante plus adaptee.",
-    "Style: ne commence pas par 'Je vais'. Varie avec une observation ou une decision concrete, puis passe directement a l'action.",
-    "La ligne AGENT_ACTION_JSON doit commencer en colonne 1. Ne donne pas de resume final dans ce tour.",
+      ? "runtime_requirement=Create or update the real local visual artifact file before concluding or opening preview."
+      : "runtime_requirement=Choose the next concrete local action from the observed state; do not add a domain-specific hardcoded workflow.",
+    "control_line=AGENT_ACTION_JSON must start at column 1 after the visible paragraph. Do not write a final summary in this continuation.",
     "",
     `Derniere reponse assistant sans action:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
@@ -6694,10 +6707,12 @@ function agentActionCodingLivePreviewForcedContinuationUserText(originalUserText
   return [
     "CODING_VISUAL_PREVIEW_FORCED_CONTINUATION v1",
     "",
-    "Le fichier local visuel a ete ecrit, mais le preview live n'a pas encore ete ouvert. Le travail n'est donc pas termine cote experience utilisateur.",
-    "Ecris une courte phrase naturelle, puis emets le CodeAct /coding_live_preview_ avec le chemin absolu verifie et kind=\"html\" si c'est un fichier HTML.",
+    agentLoopNarrationContractManifest(),
+    "",
+    "runtime_next=The local visual file exists, but the live preview has not been opened yet. Explain that proof and open the preview as the next event.",
+    `control_line=After the visible paragraph, emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} with the verified absolute path and kind="html" when appropriate.`,
     lastPath ? `path_verifie=${JSON.stringify(lastPath)}` : "",
-    "Interdit dans ce tour: nouveau bloc de code Markdown, resume final, ou dire que l'apercu est ouvert sans /coding_live_preview_.",
+    "stop_policy=Do not claim the preview is open without the preview CodeAct.",
     "",
     `Derniere reponse assistant sans preview:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
@@ -6709,13 +6724,10 @@ function agentActionInitialCodingVisualForcedContinuationUserText(originalUserTe
   return [
     "CODING_VISUAL_ACTION_FORCED_CONTINUATION v1",
     "",
-    "La derniere reponse a traite une demande de coding visuel comme un snippet a copier-coller. Ce n'est pas acceptable dans InGen Desktop.",
-    "Tu es en Coding Brain et tu conserves les outils Windows/local action. Le loop stream doit continuer avec une vraie action runtime.",
-    "Ecris un court paragraphe naturel en francais, puis exactement une ligne AGENT_ACTION_JSON qui cree ou modifie un fichier local reel.",
-    "Action recommandee pour une page HTML/JS autonome: document_write_text avec path=\"nom-pertinent.html\" et content contenant le fichier complet.",
-    "Apres AGENT_ACTION_RESULT accepte, verifie le chemin absolu puis ouvre le canvas avec /coding_live_preview_ path=\"chemin absolu verifie\" kind=\"html\".",
-    "Interdit dans ce tour: bloc de code Markdown, 'copie-colle', 'mets ca dans un fichier', resume final, ou pretendre que le fichier existe sans AGENT_ACTION_RESULT.",
-    "La ligne AGENT_ACTION_JSON doit commencer en colonne 1.",
+    agentLoopNarrationContractManifest(),
+    "",
+    "runtime_next=The previous answer treated a visual coding request as a snippet, but this desktop loop needs a real local artifact. Explain that pivot clearly, then create or update the file.",
+    "control_line=After the visible paragraph, emit exactly one AGENT_ACTION_JSON line that creates or modifies the local file. Do not claim file proof before AGENT_ACTION_RESULT.",
     "",
     `Derniere reponse assistant a corriger:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
@@ -6731,12 +6743,11 @@ function agentActionFailureContinuationUserText(originalUserText: string, reques
     `failed_result=${compactAgentActionResult(result)}`,
     agentActionSelectedCapabilityContext(request, result),
     "",
-    "La derniere action locale a echoue ou a ete refusee. Ne conclus pas trop vite.",
-    "Lis l'erreur, puis tente une autre strategie si elle est raisonnable et autorisee: autre action fichier, commande PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, start ms-settings, ou un outil Windows natif accessible par shell.full.",
-    "Si l'echec vient d'un chemin relatif, d'une destination deja existante, d'un outil indisponible, d'une commande mal formee ou d'une limite d'un backend, choisis une variante plus robuste.",
-    "Si l'echec indique une racine protegee, une action dangereuse non autorisee, un manque de permission utilisateur, ou une operation impossible sans confirmation humaine, explique le blocage clairement et n'emets pas AGENT_ACTION_JSON.",
-    "Si une alternative existe, ecris un court paragraphe naturel puis exactement une ligne AGENT_ACTION_JSON en colonne 1.",
-    "Ne pretends jamais que l'action est faite sans AGENT_ACTION_RESULT accepte.",
+    agentLoopNarrationContractManifest(),
+    "",
+    "runtime_next=The last local action failed or was refused. Explain the useful signal in the error, then choose a safer available route if one exists.",
+    "blocked_policy=If the error proves a protected root, dangerous action, missing user permission or impossible operation, state the block clearly and do not emit AGENT_ACTION_JSON.",
+    "control_line=If a safe alternative exists, emit exactly one AGENT_ACTION_JSON line after the visible paragraph. Never claim success without an accepted AGENT_ACTION_RESULT.",
     "",
     `Objectif utilisateur initial:\n${originalUserText}`
   ].join("\n");
@@ -14772,7 +14783,8 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
     userText || "Continue la demande utilisateur en cours.",
     "",
     `Contexte InGen: ${command} vient d'etre active. Le catalogue ${catalog} est maintenant injecte. Continue la demande utilisateur avec ce Brain actif; ne reactive pas ${command} sauf si une nouvelle demande l'exige.`,
-    `Loop stream mode: answer in short French paragraphs, separated by useful CodeActs when an action is in progress. If you need several framing questions, do not write a long checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, intro, q1/q2/q3/q4/q5 maximum and three contextual expert option cards per question via q1_options/q2_options/q3_options/q4_options/q5_options. The intro frames the project goal in 2-3 short French sentences. Each option must follow "Label (Tag) - 1-2 useful French sentences: benefit, tradeoff, when to choose it"; use concise tags such as Recommended, Fast, Quality, Ambitious, Cheaper, Safer or Riskier when useful, mark "(Recommended)" when it is the best starting point, and include a more ambitious/quality/longer/costlier path when relevant. For color-choice questions, include bounded preview tokens such as color:#38bdf8 or colors:#38bdf8,#a855f7 inside the option label; never include arbitrary CSS or JS. Forbidden: Option 1/2/3, vague meta choices, "je ne sais pas", "comparer plusieurs pistes", or generic one-word answers. The host always adds the fourth Other option with a free-text field.`
+    agentLoopNarrationContractManifest(),
+    `questionnaire_pause=If useful questions are needed before acting, do not write a long checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, intro, q1/q2/q3/q4/q5 maximum and three contextual expert option cards per question via q1_options/q2_options/q3_options/q4_options/q5_options. The intro frames the project goal in 2-3 short French sentences. Each option must follow "Label (Tag) - 1-2 useful French sentences: benefit, tradeoff, when to choose it"; use concise tags such as Recommended, Fast, Quality, Ambitious, Cheaper, Safer or Riskier when useful, mark "(Recommended)" when it is the best starting point, and include a more ambitious/quality/longer/costlier path when relevant. For color-choice questions, include bounded preview tokens such as color:#38bdf8 or colors:#38bdf8,#a855f7 inside the option label; never include arbitrary CSS or JS. Avoid vague meta choices; the host always adds the fourth Other option with a free-text field.`
   ];
   if (segment === "coding") {
     lines.push(
@@ -14796,11 +14808,11 @@ function brainCodeActLoopContinuationUserText(
     "BRAIN_CODEACT_LOOP_CONTINUATION v1",
     `codeact_events=${commandList || "none"}`,
     visiblePrior ? `previous_visible_progress=${visiblePrior}` : "",
-    "rule=Le ou les CodeActs Brain precedents sont des evenements de loop stream, pas une reponse finale si le travail demande n'est pas termine.",
-    "rule=Continue avec un court paragraphe naturel en francais, puis le prochain CodeAct utile ou exactement une ligne AGENT_ACTION_JSON si une action locale reelle est necessaire.",
-    "rule=Si le CodeAct precedent ouvre une UI, attend un choix utilisateur, ou bloque sur une permission/confirmation, dis-le clairement en une phrase compacte et n'invente pas d'action.",
-    "rule=Ne repete pas le meme CodeAct juste pour afficher une activite. Utilise le prochain evenement seulement s'il represente une vraie etape.",
-    "rule=Pour le coding visuel, ne donne pas de gros bloc de code a copier-coller: cree/modifie le fichier local via AGENT_ACTION_JSON, attends AGENT_ACTION_RESULT, puis ouvre le preview avec /coding_live_preview_."
+    agentLoopNarrationContractManifest(),
+    "runtime_next=The previous Brain CodeAct was a loop-stream event, not a final answer if the requested work is not complete.",
+    "control_line=Continue with the next useful CodeAct or exactly one AGENT_ACTION_JSON line when a real local action is needed.",
+    "pause_policy=If the previous CodeAct opened UI, waits for user input, or is blocked on permission/confirmation, explain that pause compactly and do not invent an action.",
+    "repeat_policy=Do not repeat the same CodeAct only to show activity. Use the next event only when it represents a real step."
   ].filter(Boolean).join("\n");
 }
 

@@ -201,6 +201,8 @@ Update 2026-06-15: non-Brain CodeAct events now share the same visual lifecycle 
 
 Update 2026-06-15: the deterministic desktop/file-organization fallback is no longer part of the normal runtime path; it can run only behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1`. `executeUniversalLoopContinuation` is now a controlled loop: after each Brain switch or actionable CodeAct continuation it re-runs the same orchestrator pass, then decides again whether to continue, pause/stop, or exit on a repeated continuation key.
 
+Update 2026-06-15: loop-stream writing now uses a shared `LOOP_STREAM_NARRATION_CONTRACT` across AGENT_ACTION continuations, forced retries, failure recovery, Brain switches and Brain CodeAct continuations. The contract makes every visible paragraph explain the last evidence, the next decision, and the action or verification that follows; it removes domain-specific narration prompts and mechanical step labels from the normal loop-writing path.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.
