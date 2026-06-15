@@ -92,11 +92,14 @@ button {
 .shell .leftPanel,
 .shell .rightPanel,
 .shell .sidebarAction,
-.shell .sessionRow,
 .shell .composer,
 .shell .profileDock__card,
 .shell .permissionModeMenu {
   border-radius: 6px !important;
+}
+
+.shell .sessionRow {
+  border-radius: 8px !important;
 }
 
 .shell .composerQuestionnaire {
@@ -1688,7 +1691,7 @@ button {
   width: 253px;
   height: 28px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   transform-origin: left center;
   transition: opacity 180ms ease-out, transform 180ms ease-out, background 120ms ease-out, border-color 140ms ease-out;
 }
