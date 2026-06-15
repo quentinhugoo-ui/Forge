@@ -239,4 +239,11 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("Modified");
     expect(animationSource).not.toContain("Modification de");
   });
+
+  it("keeps shell payloads out of the readable assistant transcript", () => {
+    expect(animationSource).toContain("function isShellPayloadLine");
+    expect(animationSource).toContain("isShellCodeActCommand(lastEvent?.command)");
+    expect(animationSource).toContain("lastEvent.detail = shellPayloadDisplayText(line)");
+    expect(animationSource).toContain("Copy-Item|ConvertTo-Json|ForEach-Object|Get-ChildItem");
+  });
 });

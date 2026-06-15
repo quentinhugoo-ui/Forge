@@ -1381,6 +1381,29 @@ function codeActMetadataDisplayText(line: string): string {
   return trimmed;
 }
 
+function isShellCodeActCommand(command: TranscriptCodeActCommand | null | undefined): boolean {
+  return command === AGENT_SHELL_COMMAND || command === AGENT_READONLY_SHELL_COMMAND;
+}
+
+function isShellPayloadLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^(?:\$[\w:]+|\$\{|\@\(|&\s|\.\\|powershell(?:\.exe)?\b|cmd(?:\.exe)?\b)/i.test(trimmed)) {
+    return true;
+  }
+  return (
+    /[$|;]/.test(trimmed) &&
+    /\b(?:Copy-Item|ConvertTo-Json|ForEach-Object|Get-ChildItem|Join-Path|Move-Item|New-Item|Remove-Item|Select-Object|Test-Path|Where-Object)\b/i.test(trimmed)
+  );
+}
+
+function shellPayloadDisplayText(line: string): string {
+  const trimmed = line.trim();
+  return trimmed.length > 220 ? `${trimmed.slice(0, 217).trimEnd()}...` : trimmed;
+}
+
 function normalizeAssistantMarkdownText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
@@ -1586,6 +1609,15 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       flushParagraph();
       flushList();
       skippingCodeActMetadata = true;
+      sawCodeActMetadata = true;
+      continue;
+    }
+    if (skippingCodeActMetadata && isShellCodeActCommand(lastEvent?.command) && isShellPayloadLine(line)) {
+      if (lastEvent && !lastEvent.detail) {
+        lastEvent.detail = shellPayloadDisplayText(line);
+      }
+      flushParagraph();
+      flushList();
       sawCodeActMetadata = true;
       continue;
     }

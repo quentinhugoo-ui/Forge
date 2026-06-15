@@ -11093,9 +11093,11 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.show();
   window.focus();
   animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
-  if (!widgetTaskbarHidden) {
-    armNativeWidgetTaskbarAutoHide(window);
-  }
+  traceWidgetTaskbarStep("apply-widget-taskbar-arm", {
+    id: window.id,
+    previousTaskbarHidden: widgetTaskbarHidden
+  });
+  armNativeWidgetTaskbarAutoHide(window);
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
