@@ -3853,15 +3853,41 @@ export function PanelsChatBottomSlice({
     };
   }, []);
 
+  const syncComposerLiveHeight = () => {
+    const composer = composerRef.current;
+    const panels = panelsRef.current;
+    if (!composer || !panels) {
+      return;
+    }
+    panels.style.setProperty("--composer-live-height", `${composer.offsetHeight}px`);
+  };
+
+  const compactComposerInputHeight = () => {
+    const node = inputRef.current;
+    if (!node) {
+      return;
+    }
+    const minHeight = Number.parseFloat(getComputedStyle(node).minHeight);
+    const compactHeight = Number.isFinite(minHeight) ? minHeight : 66;
+    node.style.height = `${compactHeight}px`;
+    composerRef.current?.style.setProperty("--composer-input-height", `${compactHeight}px`);
+    requestAnimationFrame(syncComposerLiveHeight);
+  };
+
   useLayoutEffect(() => {
     const node = inputRef.current;
     if (!node) {
+      return;
+    }
+    if (draft.length === 0) {
+      compactComposerInputHeight();
       return;
     }
     node.style.height = "auto";
     const inputHeight = Math.min(node.scrollHeight, COMPOSER_MAX_INPUT_HEIGHT);
     node.style.height = `${inputHeight}px`;
     composerRef.current?.style.setProperty("--composer-input-height", `${inputHeight}px`);
+    syncComposerLiveHeight();
   }, [draft]);
 
   useLayoutEffect(() => {
@@ -4201,6 +4227,7 @@ export function PanelsChatBottomSlice({
     if (!parallelMode) {
       composerResetFenceRef.current = true;
       setDraft("");
+      compactComposerInputHeight();
     }
     const commit = () => {
       try {
