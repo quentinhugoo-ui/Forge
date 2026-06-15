@@ -99,7 +99,19 @@ button {
   border-radius: 6px !important;
 }
 
+.shell .widgetTranscriptPanel__topTab,
+.shell .widgetTranscriptPanel__header,
 .shell .widgetTranscriptTab {
+  border-radius: 6px 6px 0 0 !important;
+}
+
+.shell .widgetTranscriptPanel__body {
+  border-radius: 0 0 6px 6px !important;
+}
+
+.shell .widgetSessionTabs__list,
+.shell .widgetSessionTabs__tab,
+.shell .widgetSessionTabs__new {
   border-radius: 6px 6px 0 0 !important;
 }
 
@@ -3979,75 +3991,137 @@ button {
 }
 
 .widgetTranscriptPanel {
-  grid-template-rows: auto minmax(0, 1fr);
+  --widget-transcript-tab-height: 22px;
+  --widget-transcript-top-tab-height: 15px;
+  grid-template-rows: 32px minmax(0, 1fr);
+  gap: 0;
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 25px);
+  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 111px));
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  animation: widgetTranscriptPanelEnter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: bottom center;
   will-change: transform, opacity;
   transition:
     left var(--sidebar-motion),
     width var(--sidebar-motion),
     bottom var(--sidebar-motion),
     opacity 180ms ease-out,
-    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .widgetTranscriptPanel--collapsing {
   opacity: 0.96;
   pointer-events: none;
-  transform: translate3d(0, calc(100% - 28px), 0);
+  transform: translate3d(0, calc(100% - var(--widget-transcript-tab-height)), 0);
 }
 
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__header,
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__body {
   opacity: 0;
-  transition: opacity 120ms ease-out;
+  transition: opacity 140ms ease-out;
 }
 
-.widgetTranscriptPanel__header {
-  gap: 8px;
-  min-height: 16px;
-  padding: 0 2px 3px;
-  transition: opacity 120ms ease-out;
+.widgetTranscriptPanel__topTab {
+  position: absolute;
+  right: 18px;
+  top: calc(-1 * var(--widget-transcript-top-tab-height) + 1px);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-width: 42px;
+  height: var(--widget-transcript-top-tab-height);
+  min-height: var(--widget-transcript-top-tab-height);
+  padding: 0;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-bottom: 0;
+  box-shadow:
+    0 -5px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    opacity 140ms ease-out,
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 180ms ease;
 }
 
-.widgetTranscriptPanel__title {
-  flex: 1 1 auto;
+.widgetTranscriptPanel--collapsing .widgetTranscriptPanel__topTab {
+  transform: translateY(2px);
+}
+
+.widgetTranscriptPanel__topTab svg {
+  width: 13px;
+  height: 13px;
+}
+
+.widgetTranscriptPanel .widgetTranscriptPanel__header {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px 0 14px;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 10%);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-bottom: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: opacity 140ms ease-out;
+}
+
+.widgetTranscriptPanel .widgetTranscriptPanel__title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 26%);
+  letter-spacing: 0;
+  line-height: 1;
+  color: currentColor;
 }
 
-.composerQuestionnaire .widgetTranscriptPanel__reduce {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 20px;
-  min-width: 20px;
-  height: 20px;
-  min-height: 20px;
-  padding: 0;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 34%);
-  transition: color 120ms ease-out, background 120ms ease-out;
+.widgetTranscriptPanel__topTab:hover,
+.widgetTranscriptPanel__topTab:focus-visible {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
+  border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
+  box-shadow:
+    0 -5px 14px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
 }
 
-.composerQuestionnaire .widgetTranscriptPanel__reduce:hover,
-.composerQuestionnaire .widgetTranscriptPanel__reduce:focus-visible {
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 8%);
-  background: color-mix(in oklab, var(--forge-chat-text), transparent 90%);
+.widgetTranscriptPanel__topTab:active {
+  transform: translateY(1px);
 }
 
-.widgetTranscriptPanel__reduce svg {
-  width: 14px;
-  height: 14px;
+.widgetTranscriptPanel__topTab:focus-visible {
+  outline: 2px solid rgba(125, 190, 255, 0.58);
+  outline-offset: 2px;
 }
 
 .widgetTranscriptPanel__body {
   min-height: 0;
   overflow: hidden;
-  transition: opacity 120ms ease-out;
+  background: var(--forge-canvas-bg, #0d0d0f);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-top-color: color-mix(in oklab, var(--forge-line), transparent 4%);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transition: opacity 140ms ease-out;
 }
 
 .widgetTranscriptPanel .chatCanvas--widgetPanel {
@@ -4062,6 +4136,7 @@ button {
   min-width: 0;
   min-height: 0;
   gap: 0;
+  background: var(--forge-canvas-bg, #0d0d0f);
   pointer-events: auto;
   transition: none;
 }
@@ -4083,6 +4158,10 @@ button {
   --transcript-media-top-offset: 36px;
   --transcript-media-right-gap: 12px;
   --transcript-media-left-gap: 12px;
+  background: var(--forge-canvas-bg, #0d0d0f);
+  scrollbar-color: color-mix(in oklab, var(--forge-chat-bg), #ffffff 6%) transparent;
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 16px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 16px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
 .widgetTranscriptPanel .transcriptItem {
@@ -4169,18 +4248,181 @@ button {
   font-size: 11.5px;
 }
 
+.widgetSessionTabs {
+  position: fixed;
+  left: calc(var(--chat-left) + 16px);
+  right: calc(100vw - var(--chat-left) - var(--chat-width) + 16px);
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) - 1px);
+  z-index: 31;
+  height: 24px;
+  pointer-events: none;
+  transition:
+    left var(--sidebar-motion),
+    right var(--sidebar-motion),
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.panelsChatBottom--widgetTranscriptCollapsed .widgetSessionTabs {
+  right: calc(100vw - var(--chat-left) - var(--chat-width) + 190px);
+}
+
+.widgetSessionTabs__list {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.widgetSessionTabs__tab,
+.widgetSessionTabs__new {
+  display: inline-grid;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 2%);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 4%);
+  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 18%);
+  box-shadow:
+    0 -3px 10px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 160ms ease;
+}
+
+.widgetSessionTabs__tab {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  flex: 1 1 0;
+  justify-content: start;
+  padding: 0 9px;
+  font-size: 9.5px;
+  font-weight: 610;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.widgetSessionTabs__tab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-115%);
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 30%,
+      rgba(255, 255, 255, 0.13) 46%,
+      rgba(255, 255, 255, 0.23) 52%,
+      rgba(255, 255, 255, 0.09) 59%,
+      transparent 73%,
+      transparent 100%
+    );
+}
+
+.widgetSessionTabs__tab span {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widgetSessionTabs__new {
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  padding: 0;
+}
+
+.widgetSessionTabs__new svg {
+  width: 13px;
+  height: 13px;
+}
+
+.widgetSessionTabs__tab:hover,
+.widgetSessionTabs__tab:focus-visible,
+.widgetSessionTabs__new:hover,
+.widgetSessionTabs__new:focus-visible,
+.widgetSessionTabs__tab--active {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
+  border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
+  box-shadow:
+    0 -4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  transform: translateY(-1px);
+}
+
+.widgetSessionTabs__tab:focus-visible,
+.widgetSessionTabs__new:focus-visible {
+  outline: 2px solid rgba(125, 190, 255, 0.58);
+  outline-offset: 2px;
+}
+
+.widgetSessionTabs__tab--working {
+  color: color-mix(in oklab, #ffffff, var(--forge-chat-text) 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 3%);
+  border-color: color-mix(in oklab, var(--forge-line), #ffffff 14%);
+  box-shadow:
+    0 -4px 13px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.widgetSessionTabs__tab--working::before {
+  opacity: 1;
+  animation: widgetSessionTabSheen 1450ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.widgetSessionTabs__tab--complete {
+  color: color-mix(in oklab, var(--forge-chat-text), #b5fff1 20%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #2b8f82 18%);
+  border-color: color-mix(in oklab, var(--forge-line), #4ac2b1 22%);
+  box-shadow:
+    0 -3px 10px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(159, 255, 239, 0.08);
+}
+
+.widgetSessionTabs__tab--active.widgetSessionTabs__tab--complete,
+.widgetSessionTabs__tab--complete:hover,
+.widgetSessionTabs__tab--complete:focus-visible {
+  color: color-mix(in oklab, #ffffff, #9fffee 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #2f9b8d 24%);
+  border-color: color-mix(in oklab, var(--forge-line), #70dcca 34%);
+  box-shadow:
+    0 -4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(181, 255, 241, 0.12);
+}
+
 .widgetTranscriptTab {
   position: fixed;
   right: calc(100vw - var(--chat-left) - var(--chat-width) + 16px);
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) - 1px);
   z-index: 31;
   display: inline-grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 6px;
   width: auto;
-  min-width: 48px;
-  height: 17px;
-  min-height: 17px;
-  padding: 0 8px;
+  min-width: 58px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 6px 0 9px;
   overflow: hidden;
   color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
   background: var(--forge-sidebar-bg);
@@ -4202,6 +4444,11 @@ button {
     background 160ms ease,
     box-shadow 160ms ease,
     transform 180ms ease;
+}
+
+.widgetTranscriptTab svg {
+  width: 13px;
+  height: 13px;
 }
 
 .widgetTranscriptTab__name {
@@ -7381,6 +7628,27 @@ ol.assistantText__list li::before {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes widgetTranscriptPanelEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scaleY(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+@keyframes widgetSessionTabSheen {
+  0% {
+    transform: translateX(-115%);
+  }
+  54%,
+  100% {
+    transform: translateX(115%);
   }
 }
 
@@ -13754,8 +14022,23 @@ ol.assistantText__list li::before {
   .sidebarPoolCard,
   .sidebarPoolCard__logo,
   .sidebarModule,
-  .sidebarModule__logo {
+  .sidebarModule__logo,
+  .widgetTranscriptPanel,
+  .widgetTranscriptPanel__topTab,
+  .widgetTranscriptPanel__header,
+  .widgetTranscriptPanel__body,
+  .widgetTranscriptTab,
+  .widgetSessionTabs,
+  .widgetSessionTabs__tab,
+  .widgetSessionTabs__tab::before,
+  .widgetSessionTabs__new {
+    animation: none;
     transition: none;
+  }
+
+  .widgetSessionTabs__tab--working::before {
+    opacity: 0.24;
+    transform: translateX(0);
   }
 
 }

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Square, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
-import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
+import type { BrainCodeActCommand, ComposerUploadPreview, NativeSection, PanelsChatBottomCommand, PanelsChatBottomSnapshot, SidebarSessionItem, TranscriptMessage } from "../shared/ipc-contract";
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_AIRBNB_COMMAND,
@@ -3581,12 +3581,14 @@ function AnimatedAssistantText({
   agentName,
   message,
   onAnimationComplete,
+  onWritingChange,
   onUseMathInCompute,
   parallelSessionIndex
 }: {
   agentName: string;
   message: TranscriptMessage;
   onAnimationComplete?: (messageId: string) => void;
+  onWritingChange?: (active: boolean) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   parallelSessionIndex: number;
 }) {
@@ -3605,6 +3607,11 @@ function AnimatedAssistantText({
   const lineGrowthStartHeightRef = useRef<number | null>(null);
   const lineGrowthFrameRef = useRef<number | null>(null);
   const lineGrowthTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onWritingChange?.(true);
+    return () => onWritingChange?.(false);
+  }, [message.id, onWritingChange]);
 
   const clearLineGrowthTransition = useCallback(() => {
     if (lineGrowthFrameRef.current !== null) {
@@ -3875,6 +3882,7 @@ function TranscriptCanvas({
   parallelSessionIndex = 0,
   className = "chatCanvas",
   assistantBusy = false,
+  onAssistantWritingChange,
   onEditImage,
   onUseMathInCompute,
   stopAnimationSignal = 0
@@ -3885,6 +3893,7 @@ function TranscriptCanvas({
   parallelSessionIndex?: number;
   className?: string;
   assistantBusy?: boolean;
+  onAssistantWritingChange?: (active: boolean) => void;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   stopAnimationSignal?: number;
@@ -4194,6 +4203,7 @@ function TranscriptCanvas({
                           agentName={agentName}
                           message={renderedMessage}
                           onAnimationComplete={completeAssistantAnimation}
+                          onWritingChange={onAssistantWritingChange}
                           onUseMathInCompute={onUseMathInCompute}
                           parallelSessionIndex={parallelSessionIndex}
                         />
@@ -4259,6 +4269,7 @@ function WidgetTranscriptPanel({
   stopAnimationSignal,
   onEditImage,
   onUseMathInCompute,
+  onAssistantWritingChange,
   onReduce,
   collapsing = false
 }: {
@@ -4270,6 +4281,7 @@ function WidgetTranscriptPanel({
   stopAnimationSignal: number;
   onEditImage: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute: AssistantMathUseHandler;
+  onAssistantWritingChange?: (active: boolean) => void;
   onReduce: () => void;
   collapsing?: boolean;
 }) {
@@ -4285,21 +4297,22 @@ function WidgetTranscriptPanel({
       ].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
     >
+      <button
+        type="button"
+        className="widgetTranscriptPanel__topTab"
+        aria-label="Reduire le panneau de conversation"
+        aria-expanded="true"
+        title="Reduire"
+        onClick={onReduce}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
         <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
           {sessionLabel}
         </strong>
-        <button
-          type="button"
-          className="widgetTranscriptPanel__reduce"
-          aria-label="Réduire le panneau de conversation"
-          title="Réduire"
-          onClick={onReduce}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-            <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
       </div>
       <div className="widgetTranscriptPanel__body">
         <TranscriptCanvas
@@ -4310,6 +4323,7 @@ function WidgetTranscriptPanel({
           className="chatCanvas chatCanvas--widgetPanel"
           assistantBusy={assistantBusy}
           stopAnimationSignal={stopAnimationSignal}
+          onAssistantWritingChange={onAssistantWritingChange}
           onEditImage={onEditImage}
           onUseMathInCompute={onUseMathInCompute}
         />
@@ -4324,11 +4338,77 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
       type="button"
       className="widgetTranscriptTab"
       aria-label={`Agrandir la conversation : ${label}`}
+      aria-expanded="false"
       title={label}
       onClick={onOpen}
     >
       <span className="widgetTranscriptTab__name">{label}</span>
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M4 9.5 8 6l4 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </button>
+  );
+}
+
+function WidgetSessionTabs({
+  sessions,
+  activeSessionId,
+  activeSessionLive,
+  onOpenSession,
+  onNewSession
+}: {
+  sessions: SidebarSessionItem[];
+  activeSessionId: string;
+  activeSessionLive: boolean;
+  onOpenSession?: (sessionId: string, section: NativeSection) => void;
+  onNewSession?: () => void;
+}) {
+  if (sessions.length === 0 && !onNewSession) {
+    return null;
+  }
+  return (
+    <nav className="widgetSessionTabs" aria-label="Recent widget sessions">
+      <div className="widgetSessionTabs__list" role="tablist" aria-label="Recent sessions">
+        {sessions.map((session) => {
+          const selected = session.sessionId !== "" && session.sessionId === activeSessionId;
+          const label = session.label.trim() || "New session";
+          const working = session.working || (selected && activeSessionLive);
+          const tabStateClass = working ? "widgetSessionTabs__tab--working" : "widgetSessionTabs__tab--complete";
+          return (
+            <button
+              type="button"
+              className={[
+                "widgetSessionTabs__tab",
+                selected ? "widgetSessionTabs__tab--active" : "",
+                tabStateClass
+              ].filter(Boolean).join(" ")}
+              role="tab"
+              aria-selected={selected}
+              aria-busy={working || undefined}
+              aria-label={`Open session: ${label}${working ? ", working" : ", complete"}`}
+              title={label}
+              key={session.sessionId}
+              onClick={() => onOpenSession?.(session.sessionId, session.section)}
+            >
+              <span>{label}</span>
+            </button>
+          );
+        })}
+        {onNewSession ? (
+          <button
+            type="button"
+            className="widgetSessionTabs__new"
+            aria-label="New session"
+            title="New session"
+            onClick={onNewSession}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          </button>
+        ) : null}
+      </div>
+    </nav>
   );
 }
 
@@ -4340,8 +4420,12 @@ interface PanelsChatBottomSliceProps {
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
   sessionName?: string;
+  activeSessionId?: string;
+  widgetRecentSessions?: SidebarSessionItem[];
   widgetMode?: boolean;
   widgetModeTransitioning?: boolean;
+  onWidgetNewSession?: () => void;
+  onWidgetSessionOpen?: (sessionId: string, section: NativeSection) => void;
   onWidgetModeChange?: (enabled: boolean) => void;
 }
 
@@ -4531,8 +4615,12 @@ export function PanelsChatBottomSlice({
   composerModule = null,
   onComposerModuleChange,
   sessionName = "",
+  activeSessionId = "",
+  widgetRecentSessions = [],
   widgetMode = false,
   widgetModeTransitioning = false,
+  onWidgetNewSession,
+  onWidgetSessionOpen,
   onWidgetModeChange
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
@@ -4547,6 +4635,7 @@ export function PanelsChatBottomSlice({
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
   const [widgetTranscriptCollapsed, setWidgetTranscriptCollapsed] = useState(false);
   const [widgetTranscriptCollapsing, setWidgetTranscriptCollapsing] = useState(false);
+  const [widgetAssistantWriting, setWidgetAssistantWriting] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -4754,6 +4843,14 @@ export function PanelsChatBottomSlice({
     [canvasMessages]
   );
   const widgetTranscriptHasConversation = widgetTranscriptMessages.length > 0;
+  const widgetTranscriptHasPendingAssistant = canvasMessages.some(
+    (message) => message.role === "assistant" && message.id.startsWith("assistant-pending-")
+  );
+  const widgetActiveSessionLive = Boolean(
+    snapshot.composer.assistantBusy ||
+    widgetAssistantWriting ||
+    widgetTranscriptHasPendingAssistant
+  );
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
@@ -4929,7 +5026,7 @@ export function PanelsChatBottomSlice({
       widgetTranscriptCollapseTimerRef.current = null;
       setWidgetTranscriptCollapsed(true);
       setWidgetTranscriptCollapsing(false);
-    }, 260);
+    }, 320);
   }, [clearWidgetTranscriptCollapseTimer]);
   const expandWidgetTranscript = useCallback(() => {
     clearWidgetTranscriptCollapseTimer();
@@ -4942,8 +5039,12 @@ export function PanelsChatBottomSlice({
       clearWidgetTranscriptCollapseTimer();
       setWidgetTranscriptCollapsed(false);
       setWidgetTranscriptCollapsing(false);
+      setWidgetAssistantWriting(false);
     }
   }, [clearWidgetTranscriptCollapseTimer, widgetMode]);
+  useEffect(() => {
+    setWidgetAssistantWriting(false);
+  }, [snapshot.activeSessionId]);
   useEffect(() => {
     if (widgetMode && widgetTranscriptHasConversation) {
       clearWidgetTranscriptCollapseTimer();
@@ -4963,8 +5064,18 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     (widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
+  const widgetSessionTabsVisible =
+    widgetMode &&
+    !widgetModeTransitioning &&
+    (widgetRecentSessions.length > 0 || Boolean(onWidgetNewSession));
   const widgetPanelExpanded =
-    widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelVisible || widgetTranscriptTabVisible || permissionMenuOpen);
+    widgetMode && (
+      Boolean(composerQuestionnaire) ||
+      widgetTranscriptPanelVisible ||
+      widgetTranscriptTabVisible ||
+      widgetSessionTabsVisible ||
+      permissionMenuOpen
+    );
   useEffect(() => {
     const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
     if (!setWidgetPanelExpanded) {
@@ -5263,6 +5374,15 @@ export function PanelsChatBottomSlice({
           onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
         />
       ) : null}
+      {widgetSessionTabsVisible ? (
+        <WidgetSessionTabs
+          sessions={widgetRecentSessions}
+          activeSessionId={activeSessionId || snapshot.activeSessionId}
+          activeSessionLive={widgetActiveSessionLive}
+          onOpenSession={onWidgetSessionOpen}
+          onNewSession={onWidgetNewSession}
+        />
+      ) : null}
       {widgetTranscriptPanelVisible ? (
         <WidgetTranscriptPanel
           activeSessionId={snapshot.activeSessionId}
@@ -5273,6 +5393,7 @@ export function PanelsChatBottomSlice({
           stopAnimationSignal={assistantStopSignal}
           onEditImage={stageImageForEdit}
           onUseMathInCompute={useMathInCompute}
+          onAssistantWritingChange={setWidgetAssistantWriting}
           onReduce={reduceWidgetTranscript}
           collapsing={widgetTranscriptCollapsing}
         />
