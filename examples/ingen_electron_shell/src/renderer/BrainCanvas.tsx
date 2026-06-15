@@ -1775,26 +1775,28 @@ export function BrainCanvas({ onClose }: { onClose?: () => void }) {
   return (
     <section className="profileCanvas brainCanvas" aria-label="Brain canvas">
       <BrainBlob />
-      <header className="brainCanvas__head">
-        <button type="button" className="brainCanvas__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
-          <span aria-hidden="true" />
-        </button>
-        <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
-        <h1>Brain</h1>
-      </header>
-      <div className="brainCanvas__tabs" role="tablist" aria-label="Brain spaces">
-        {BRAIN_SPACES.map(({ id, label, glyph }) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={space === id}
-            key={id}
-            onClick={() => setSpace(id)}
-          >
-            <Glyph kind={glyph} size={20} />
-            {label}
+      <div className="brainCanvas__stickyChrome">
+        <header className="brainCanvas__head">
+          <button type="button" className="brainCanvas__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+            <span aria-hidden="true" />
           </button>
-        ))}
+          <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
+          <h1>Brain</h1>
+        </header>
+        <div className="brainCanvas__tabs" role="tablist" aria-label="Brain spaces">
+          {BRAIN_SPACES.map(({ id, label, glyph }) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={space === id}
+              key={id}
+              onClick={() => setSpace(id)}
+            >
+              <Glyph kind={glyph} size={20} />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       {space === "codeacts" ? <CodeActsSpace /> : null}
       {space === "memory" ? <MemorySpace /> : null}

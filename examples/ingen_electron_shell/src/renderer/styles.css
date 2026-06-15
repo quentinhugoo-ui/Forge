@@ -9234,13 +9234,14 @@ ol.assistantText__list li::before {
 
 .brainCanvas {
   /* Same horizontal footprint as the LLM Provider page. */
+  --brain-canvas-inline-pad: max(34px, calc((100% - 1280px) / 2));
   position: fixed;
   left: var(--left-panel-offset);
   right: 0;
   top: 96px;
   bottom: 0;
   min-width: 0;
-  padding: 12px max(34px, calc((100% - 1280px) / 2)) 72px;
+  padding: 12px var(--brain-canvas-inline-pad) 72px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -9283,6 +9284,17 @@ ol.assistantText__list li::before {
 
 .brainCanvas::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 18%);
+}
+
+.brainCanvas__stickyChrome {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: -12px calc(-1 * var(--brain-canvas-inline-pad)) 0;
+  padding: 12px var(--brain-canvas-inline-pad) 0;
+  background:
+    linear-gradient(to bottom, var(--forge-bg) 0%, var(--forge-bg) calc(100% - 12px), color-mix(in oklab, var(--forge-bg), transparent 100%) 100%);
+  isolation: isolate;
 }
 
 .brainCanvas__head {
