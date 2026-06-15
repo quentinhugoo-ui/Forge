@@ -18,6 +18,20 @@ const MAX_GHOSTS = 6;
 const GHOST_LIFETIME = 12;
 const WAVE_ACTIVE_FRAME_INTERVAL_MS = 1000 / 60;
 const WAVE_REDUCED_FRAME_INTERVAL_MS = 1000 / 12;
+const WAVE_POINTER_BLOCKER_SELECTOR = [
+  ".leftPanel",
+  ".panelsChatBottom",
+  ".composer",
+  ".composerQuestionnaire",
+  ".rightPanel",
+  ".canvasFilesPane",
+  ".canvasTerminalPane",
+  ".permissionModeMenu"
+].join(",");
+
+function isWavePointerBlocked(event: PointerEvent): boolean {
+  return Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest(WAVE_POINTER_BLOCKER_SELECTOR));
+}
 
 const WEBGPU_BUFFER_USAGE = {
   COPY_DST: 0x8,
@@ -689,6 +703,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   const onMove = (event: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
     if (
+      isWavePointerBlocked(event) ||
       event.clientX < rect.left ||
       event.clientX > rect.right ||
       event.clientY < rect.top ||
@@ -1041,6 +1056,7 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
   const onMove = (event: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
     if (
+      isWavePointerBlocked(event) ||
       event.clientX < rect.left ||
       event.clientX > rect.right ||
       event.clientY < rect.top ||
