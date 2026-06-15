@@ -2636,30 +2636,8 @@ function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute
   );
 }
 
-const ASSISTANT_GEO_ENTITY_STYLE: CSSProperties = {
-  appearance: "none",
-  display: "inline",
-  maxWidth: "100%",
-  padding: "0 1px",
-  border: 0,
-  background: "transparent",
-  color: "color-mix(in oklab, var(--assistant-mark-accent), var(--forge-text) 36%)",
-  font: "inherit",
-  fontWeight: 540,
-  lineHeight: "inherit",
-  cursor: "pointer",
-  overflowWrap: "anywhere",
-  transition: "color 160ms ease"
-};
-
-const ASSISTANT_COUNTRY_ENTITY_STYLE: CSSProperties = {
-  ...ASSISTANT_GEO_ENTITY_STYLE,
-  color: "color-mix(in oklab, #d8a657, var(--forge-text) 32%)"
-};
-
 function assistantGeoEntityNode(token: string, key: string): ReactNode {
   const label = assistantGeoEntityLabel(token);
-  const style = token.startsWith("#{") ? ASSISTANT_COUNTRY_ENTITY_STYLE : ASSISTANT_GEO_ENTITY_STYLE;
   if (label.length < 2) {
     return <Fragment key={key}>{token}</Fragment>;
   }
@@ -2667,7 +2645,7 @@ function assistantGeoEntityNode(token: string, key: string): ReactNode {
     <button
       type="button"
       key={key}
-      style={style}
+      className={token.startsWith("#{") ? "assistantText__geoEntity assistantText__geoEntity--country" : "assistantText__geoEntity"}
       aria-label={`Open ${label}`}
       title={`Open ${label}`}
       onClick={() => {
