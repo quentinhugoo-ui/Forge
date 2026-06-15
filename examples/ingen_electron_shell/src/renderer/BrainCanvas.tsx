@@ -308,8 +308,10 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
   { id: "coding", label: "coding brain", glyph: "code", commands: CODING_BRAIN_COMMANDS }
 ];
 
+type BrainLearningRegistryCategory = Extract<BrainLearningMemoryCategory, "lesson" | "skill">;
+
 const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
-  id: BrainLearningMemoryCategory;
+  id: BrainLearningRegistryCategory;
   label: string;
   title: string;
   glyph: string;
@@ -325,16 +327,9 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   {
     id: "skill",
     label: "Skills",
-    title: "Skills",
+    title: "Reusable agent skills extracted from repeated useful actions, patterns, and workflows.",
     glyph: "zap",
     placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
-  },
-  {
-    id: "task",
-    label: "Tasks",
-    title: "Tasks",
-    glyph: "terminal",
-    placeholder: "Ex: Review the last 5 variants and extract recurring errors."
   }
 ];
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
@@ -831,11 +826,15 @@ function normalizeBrainLearningMacroEntry(value: string) {
 
 function BrainLearningRegistry() {
   const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
-  const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("lesson");
+  const [activeCategory, setActiveCategory] = useState<BrainLearningRegistryCategory>("lesson");
   const [draft, setDraft] = useState("");
   const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const learningRegistryId = useId();
   const category = BRAIN_LEARNING_MEMORY_CATEGORIES.find((item) => item.id === activeCategory) ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY;
   const categoryEntries = entries.filter((entry) => entry.category === activeCategory);
+  const activeCategoryIndex = BRAIN_LEARNING_MEMORY_CATEGORIES.findIndex((item) => item.id === activeCategory);
+  const panelId = `${learningRegistryId}-panel`;
+  const tabIdFor = (categoryId: BrainLearningRegistryCategory) => `${learningRegistryId}-tab-${categoryId}`;
 
   const syncDraftTextareaHeight = () => {
     const textarea = draftTextareaRef.current;
@@ -891,74 +890,112 @@ function BrainLearningRegistry() {
     setEntries(removeBrainLearningMemoryEntry(entryId));
   };
 
+  const selectCategory = (categoryId: BrainLearningRegistryCategory) => {
+    setActiveCategory(categoryId);
+  };
+
+  const focusCategoryTab = (categoryId: BrainLearningRegistryCategory) => {
+    window.requestAnimationFrame(() => {
+      document.getElementById(tabIdFor(categoryId))?.focus();
+    });
+  };
+
+  const onCategoryTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const lastIndex = BRAIN_LEARNING_MEMORY_CATEGORIES.length - 1;
+    let nextIndex = activeCategoryIndex;
+    if (event.key === "ArrowRight") {
+      nextIndex = activeCategoryIndex >= lastIndex ? 0 : activeCategoryIndex + 1;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = activeCategoryIndex <= 0 ? lastIndex : activeCategoryIndex - 1;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = lastIndex;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const nextCategory = BRAIN_LEARNING_MEMORY_CATEGORIES[nextIndex]?.id ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY.id;
+    selectCategory(nextCategory);
+    focusCategoryTab(nextCategory);
+  };
+
   return (
     <section className="brainLearningRegistry" aria-label="Durable lessons" role="listitem">
       <div className="brainLearningRegistry__head">
         <span className="brainRow__icon">
           <Glyph kind="lesson-book" size={17} />
         </span>
-        <span>
-          <strong>Lessons</strong>
-          <span>The agent turns errors, fixes and repeated wins into reusable rules and skills for future sessions.</span>
-        </span>
-      </div>
-      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Lesson categories">
-        {BRAIN_LEARNING_MEMORY_CATEGORIES.map((item) => (
-          <button
-            type="button"
-            className={item.id === activeCategory ? "brainLearningRegistry__tab brainLearningRegistry__tab--active" : "brainLearningRegistry__tab"}
-            key={item.id}
-            role="tab"
-            aria-selected={item.id === activeCategory}
-            onClick={() => setActiveCategory(item.id as BrainLearningMemoryCategory)}
-          >
-            <Glyph kind={item.glyph} size={13} />
-            {item.label}
-          </button>
-        ))}
-      </div>
-      <div className="brainLearningRegistry__composer">
-        <span className="brainLearningRegistry__composerLabel">{category.title}</span>
-        <textarea
-          ref={draftTextareaRef}
-          value={draft}
-          aria-label={category.title}
-          placeholder={`${BRAIN_LEARNING_MACRO_PREFIX}${category.placeholder}`}
-          rows={3}
-          spellCheck={false}
-          onChange={(event) => {
-            const textarea = event.currentTarget;
-            const nextDraft = normalizeBrainLearningMacroDraft(textarea.value);
-            setDraft(nextDraft);
-            window.requestAnimationFrame(syncDraftTextareaHeight);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") {
-              return;
-            }
-            event.preventDefault();
-            insertMacroPunctuation(event.currentTarget);
-          }}
-        />
-        <div className="brainLearningRegistry__actions">
-          <button type="button" disabled={!hasBrainLearningMacroContent(draft)} onClick={addEntry}>
-            Save
-          </button>
+        <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Learning memory categories">
+          {BRAIN_LEARNING_MEMORY_CATEGORIES.map((item) => (
+            <button
+              type="button"
+              className={item.id === activeCategory ? "brainLearningRegistry__tab brainLearningRegistry__tab--active" : "brainLearningRegistry__tab"}
+              id={tabIdFor(item.id)}
+              key={item.id}
+              role="tab"
+              aria-selected={item.id === activeCategory}
+              aria-controls={panelId}
+              tabIndex={item.id === activeCategory ? 0 : -1}
+              onClick={() => selectCategory(item.id)}
+              onKeyDown={onCategoryTabKeyDown}
+            >
+              <Glyph kind={item.glyph} size={13} />
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
-      <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.title} macros`}>
-        {categoryEntries.map((entry) => (
-          <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
-            <p>{entry.text}</p>
-            <footer>
-              <BrainEntrySourceBadge source={entry.source} />
-              <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
-              <button type="button" aria-label="Remove lesson entry" onClick={() => deleteEntry(entry.id)}>
-                <Glyph kind="minus" size={12} />
-              </button>
-            </footer>
-          </article>
-        ))}
+      <div
+        className="brainLearningRegistry__panel"
+        id={panelId}
+        role="tabpanel"
+        aria-labelledby={tabIdFor(activeCategory)}
+        tabIndex={0}
+      >
+        <div className="brainLearningRegistry__composer">
+          <span className="brainLearningRegistry__composerLabel">{category.title}</span>
+          <textarea
+            ref={draftTextareaRef}
+            value={draft}
+            aria-label={category.title}
+            placeholder={`${BRAIN_LEARNING_MACRO_PREFIX}${category.placeholder}`}
+            rows={3}
+            spellCheck={false}
+            onChange={(event) => {
+              const textarea = event.currentTarget;
+              const nextDraft = normalizeBrainLearningMacroDraft(textarea.value);
+              setDraft(nextDraft);
+              window.requestAnimationFrame(syncDraftTextareaHeight);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+              event.preventDefault();
+              insertMacroPunctuation(event.currentTarget);
+            }}
+          />
+          <div className="brainLearningRegistry__actions">
+            <button type="button" disabled={!hasBrainLearningMacroContent(draft)} onClick={addEntry}>
+              Save
+            </button>
+          </div>
+        </div>
+        <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.label} macros`}>
+          {categoryEntries.map((entry) => (
+            <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
+              <p>{entry.text}</p>
+              <footer>
+                <BrainEntrySourceBadge source={entry.source} />
+                <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
+                <button type="button" aria-label={`Remove ${category.label.toLowerCase()} entry`} onClick={() => deleteEntry(entry.id)}>
+                  <Glyph kind="minus" size={12} />
+                </button>
+              </footer>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
