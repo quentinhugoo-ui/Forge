@@ -8,10 +8,12 @@ const brainCanvasSource = readFileSync(join(process.cwd(), "src", "renderer", "B
 const canvasSource = readFileSync(join(process.cwd(), "src", "renderer", "CanvasSurfacesSlice.tsx"), "utf8");
 const composerBurstSource = readFileSync(join(process.cwd(), "src", "renderer", "ComposerSendBurst.tsx"), "utf8");
 const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const rightPanelSource = readFileSync(join(process.cwd(), "src", "renderer", "RightPanelSlice.tsx"), "utf8");
 const moduleLogosSource = readFileSync(join(process.cwd(), "src", "renderer", "module-logos.tsx"), "utf8");
 const storeSource = readFileSync(join(process.cwd(), "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const sidebarSource = readFileSync(join(process.cwd(), "src", "renderer", "SidebarSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(process.cwd(), "src", "renderer", "styles.css"), "utf8");
+const generatedIpcSource = readFileSync(join(process.cwd(), "src", "shared", "generated", "forge-ipc.generated.ts"), "utf8");
 const preloadCjsSource = readFileSync(join(process.cwd(), "preload.cjs"), "utf8");
 const brainSource = readFileSync(join(process.cwd(), "..", "..", "src", "brain.rs"), "utf8");
 const contractSource = readFileSync(join(process.cwd(), "contract", "src", "main.rs"), "utf8");
@@ -402,6 +404,27 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".permissionModeTrigger--selfDirected > svg:first-child");
     expect(stylesSource).toContain("animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite");
     expect(stylesSource).toContain("animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite");
+  });
+
+  it("registers /plan_ as a visible action-plan CodeAct", () => {
+    expect(brainSource).toContain('pub const BRAIN_PLAN_COMMAND: &str = "/plan_";');
+    expect(brainSource).toContain("brain_plan_codeact_template()");
+    expect(brainSource).toContain("Use /plan_ when a non-trivial task needs a visible multi-step action plan");
+    expect(brainSource).toContain("Use /plan_ when the coding task needs a visible multi-step action plan");
+    expect(contractSource).toContain('"BRAIN_PLAN_COMMAND"');
+    expect(contractSource).toContain('("BRAIN_PLAN_COMMAND", "BRAIN_PLAN_COMMAND_DESCRIPTION")');
+    expect(generatedIpcSource).toContain("BRAIN_PLAN_COMMAND,");
+    expect(appSource).toContain("BRAIN_PLAN_COMMAND");
+    expect(appSource).toContain('dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" })');
+    expect(appSource).toContain("planSourceText={latestAssistantText}");
+    expect(rendererSource).toContain('[BRAIN_PLAN_COMMAND, "Plan panel opened"]');
+    expect(rendererSource).toContain("is shaping the action plan");
+    expect(brainCanvasSource).toContain("[BRAIN_PLAN_COMMAND]");
+    expect(rightPanelSource).toContain("latestPlanCodeActLine");
+    expect(rightPanelSource).toContain("is shaping the action plan");
+    expect(rightPanelSource).toContain("No active plan yet.");
+    expect(stylesSource).toContain(".rightPanelWorkingEvent");
+    expect(stylesSource).toContain(".rightPanelPlanSteps");
   });
 
   it("lets Self-Directed visibly author bounded follow-up prompts in the composer", () => {

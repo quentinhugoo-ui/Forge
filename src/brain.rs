@@ -55,13 +55,15 @@ pub const BRAIN_EDITIMAGE_COMMAND: &str = "/editimage_";
 pub const BRAIN_IMAGE_RESULT_SCHEMA: &str = "forge.image.result.v1";
 pub const BRAIN_QUESTIONNAIRE_COMMAND: &str = "/questionnaire_";
 pub const BRAIN_QUESTIONNAIRE_RESULT_SCHEMA: &str = "forge.questionnaire.result.v1";
+pub const BRAIN_PLAN_COMMAND: &str = "/plan_";
+pub const BRAIN_PLAN_RESULT_SCHEMA: &str = "forge.plan.result.v1";
 pub const BRAIN_SCIENCE_COMMAND: &str = "/sciencebrain_";
 pub const BRAIN_CODING_COMMAND: &str = "/codingbrain_";
 pub const BRAIN_SEGMENT_RESULT_SCHEMA: &str = "forge.brain.segment.result.v1";
 pub const BRAIN_NEWBRAIN_COMMAND: &str = "/newbrain_";
 pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND: &str = "/modify\"<brain_name>\"brain_";
 pub const BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA: &str = "forge.brain.domain_brain.result.v1";
-pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is an explicit-intent module rule: use /maps_ only for map, localization, route, coordinates, where-is, local weather, Google Earth, or operational geographic-context intent. A country, city, region, island or historical place mentioned inside a cultural, historical, literary, vocabulary, table, classification or explanation request is not a Maps request; prefer /websearch_ and then /scrapers_ when source-backed or visual/media enrichment is useful. Geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Coding-specific MCP routes for dependency docs, remote repositories, browser automation and static security scanning are owned by Coding Brain; while active=general, activate /codingbrain_ before using them. Module priority: use /maps_ over /websearch_ only when the user explicitly asks for a map, route, localization, where-is, coordinates, local weather, Google Earth or operational geographic context; bare /maps_ opens a neutral Earth view and must never use the saved home city. For culture, history, literature, vocabulary, tables, classifications, general explanations or visual enrichment involving a place, use /websearch_ first and /scrapers_ next when URLs/media are needed. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ discovers current sources, ranked URLs, citations and optional media candidates. Use media_intent only when visuals would improve the answer. After WEBSEARCH_RESULT, emit /scrapers_ with selected URLs when Markdown, media URLs/artifacts or structured extraction is needed; /websearch_ returns manifests, not raw page content, and does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
+pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is an explicit-intent module rule: use /maps_ only for map, localization, route, coordinates, where-is, local weather, Google Earth, or operational geographic-context intent. A country, city, region, island or historical place mentioned inside a cultural, historical, literary, vocabulary, table, classification or explanation request is not a Maps request; prefer /websearch_ and then /scrapers_ when source-backed or visual/media enrichment is useful. Geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Coding-specific MCP routes for dependency docs, remote repositories, browser automation and static security scanning are owned by Coding Brain; while active=general, activate /codingbrain_ before using them. Module priority: use /maps_ over /websearch_ only when the user explicitly asks for a map, route, localization, where-is, coordinates, local weather, Google Earth or operational geographic context; bare /maps_ opens a neutral Earth view and must never use the saved home city. For culture, history, literature, vocabulary, tables, classifications, general explanations or visual enrichment involving a place, use /websearch_ first and /scrapers_ next when URLs/media are needed. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ discovers current sources, ranked URLs, citations and optional media candidates. Use media_intent only when visuals would improve the answer. After WEBSEARCH_RESULT, emit /scrapers_ with selected URLs when Markdown, media URLs/artifacts or structured extraction is needed; /websearch_ returns manifests, not raw page content, and does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Use /plan_ when a non-trivial task needs a visible multi-step action plan, milestones, ordering, or progress structure before or during execution. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
 pub const BRAIN_WORKSPACE_COMMAND: &str = "/workspace_";
 pub const BRAIN_CAPABILITIES_COMMAND: &str = "/capabilities_";
 pub const BRAIN_CAPABILITIES_RESULT_SCHEMA: &str = "forge.agent.capabilities.result.v1";
@@ -93,6 +95,7 @@ pub const BRAIN_AIRBNB_COMMAND_DESCRIPTION: &str = "Use Airbnb after /maps_ when
 pub const BRAIN_NEWIMAGE_COMMAND_DESCRIPTION: &str = "Generate a brand-new image from a text prompt: draw, create, render, imagine, make a logo/poster/scene/asset. Do not use /workspace_; no local project folder is required.";
 pub const BRAIN_EDITIMAGE_COMMAND_DESCRIPTION: &str = "Edit an existing image attached, selected, or visible in the conversation: retouch, remove/add/replace elements, change colors/background/style, crop, upscale, or transform. Prefer over /workspace_; do not answer with an external-tool prompt.";
 pub const BRAIN_QUESTIONNAIRE_COMMAND_DESCRIPTION: &str = "Open a paginated questionnaire above the chat composer when the LLM needs multiple clarifying questions. Use after any required Brain segment switch; never use before /sciencebrain_ or /codingbrain_ while the active Brain is general and the request is specialized. Put each page question in q1, q2, q3... and provide exactly three choices with q1_options, q2_options...";
+pub const BRAIN_PLAN_COMMAND_DESCRIPTION: &str = "Open the Plan panel when a non-trivial task needs a visible multi-step action plan before or during execution. Use for ordered steps, milestones, dependencies, verification gates, or progress structure. Keep it concise and actionable: title, optional context, 2-8 concrete steps, current focus, and stop condition. Do not use for one-step answers, tiny edits, or vague brainstorming.";
 pub const BRAIN_SCIENCE_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work. Physical product/prototype conception is engineering by default. Activate /sciencebrain_ before questionnaire or specialized answer; after activation, use the injected science brain catalog.";
 pub const BRAIN_CODING_COMMAND_DESCRIPTION: &str = "Mandatory first action while the active Brain is general and the LLM understands that the user's task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust/TypeScript/Electron, APIs, build systems, or developer tooling. Activate /codingbrain_ before the specialized answer; do not paste implementation code in the same Brain-switch message. After activation, continue through the normal action cycle with the injected coding brain catalog and local action tools.";
 pub const BRAIN_NEWBRAIN_COMMAND_DESCRIPTION: &str = "Create a new specialized Brain scope for a durable domain such as marketing, trading, immobilier, science-notes or another recurring work area. Use only after the LLM has reasoned that repeated lessons, rules, skills, tasks or CodeAct drafts would pollute unrelated sessions if stored in a broad scope. This command never targets the root read-only catalog and cannot add commands there. When this command is emitted with an explicit brain_name, the host automatically derives a specialized activator CodeAct such as /musicianbrain_ in the specialized Brain registry, then future domain-specific lessons can be stored and injected only when relevant. The LLM chooses the domain, title, purpose, activation triggers, initial lesson/rule/skill/task/CodeAct categories and compact token budget; the host records the explicit fields and must not semantically infer the domain.";
@@ -111,8 +114,8 @@ pub const BRAIN_BRAIN_COMMAND_DESCRIPTION: &str = "Operate on Brain-owned regist
 pub const BRAIN_NEWMODULE_COMMAND_DESCRIPTION: &str = "Create a new narrow module contract when the user wants a new app/module integration or sidebar capability. Define the module before adding broad implementation surface.";
 pub const BRAIN_RUST_PORT_ADAPTER_COMMAND_DESCRIPTION: &str = "Prepare a Rust service adapter for an external service, vertical capability, native bridge, or backend integration behind a narrow typed interface.";
 pub const BRAIN_RUST_STATE_STORE_COMMAND_DESCRIPTION: &str = "Prepare a Rust-owned durable state store for local service state, caches, indexes, credentials metadata, or persistent domain data with explicit schema and ownership.";
-pub const BRAIN_SCIENCE_VISIBLE_CATALOG: &str = "SCIENCE_ENGINEERING_3D_BRAIN v1\nPurpose: active session catalog for scientific reasoning, mathematics, statistics, biology, chemistry, physics, cryptography, optimization, formal analysis, engineering, robotics, physical prototypes, CAD/3D conception, Banger objects, future Banger 3D work, Monster compute, simulation and verified design.\nUse /capabilities_ when scientific/engineering work may require local files, apps, instruments, browser, documents, shell, Banger/Forge workspace, installed CLIs or Windows automation and the exact executable route is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Science/Engineering/3D Brain is active; keep Canvas prose short and fill expert option presets.\nUse /newcompute_ for any heavy/verifiable compute: math, physics, biology models, chemistry calculations, cryptography analysis, optimization, simulation, numerical analysis, sizing, performance envelopes, statistical analysis or proof artifacts.\nUse /newobject_ for 3D/Banger object, geometry, SDF, CAD-like part, scene, material, assembly or computational design requests.\nUse /websearch_ when current external research is needed for papers, standards, datasheets, components, protocols, biological references or scientific sources; use /googleweb_ only for visual browsing.\nUse /workspace_ only if actual local project/code/files are needed; scientific discussion, calculations, cryptography reasoning, biology reasoning, image work and 3D conception do not need a workspace.\nPrefer explicit assumptions, constraints, units, safety margins, verification plans, reproducible calculations and artifact/proof summaries.";
-pub const BRAIN_CODING_VISIBLE_CATALOG: &str = "CODING_BRAIN v1\nPurpose: active session catalog for software engineering, repositories, debugging, implementation, tests, refactors, architecture, scripts, build systems, APIs, Rust, TypeScript, Electron and developer tooling.\nUse /capabilities_ when coding work may need local files, project commands, browser, Git/GitHub, packages, CI, virtualization, shell, Windows tools or a visual preview route and the exact executable action is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Coding Brain is active; keep Canvas prose short and fill expert option presets.\nUse /workspace_ when local repository or filesystem access is required before coding, running tests or inspecting files.\nWindows/local action tools remain available in Coding Brain for repo inspection, file edits, searches, build/test commands, browser checks and shell work: use AGENT_ACTION_JSON only for real execution, then wait for AGENT_ACTION_RESULT before claiming success.\nFor requests to code, build or create a visual page/component/site/app, create or modify a real local file first through AGENT_ACTION_JSON, verify it exists, write one short natural paragraph saying that the live visual is opening in the conversation, then emit /coding_live_preview_ path=\"...\" kind=\"html|react|vite\" so the Canvas can show the live visual. Do not answer with only a code block, copy-paste instructions, or \"put this in a file\" unless the user explicitly asks for a snippet only.\nUse /websearch_ for current docs, releases, APIs, dependency behavior, GitHub project discovery, package comparisons and source-backed technical research before implementing; use /scrapers_ after URLs are known and content extraction is needed.\nUse /codedocs_ for Context7 current library/API docs once the dependency is identified; use /github_ for remote GitHub repo/issues/PR/CI/release work; use /webact_ for Playwright browser interaction and visual verification; use /securityscan_ for Semgrep checks before risky code commits or PRs.\nUse /searcharchive_ to recall prior project decisions, previous bugs, existing architecture notes or earlier implementation context.\nUse /newmodule_ when the user wants a new app/module integration or new product capability before broad implementation.\nUse /rust_port_adapter_ for external services, native bridges or backend adapters behind narrow Rust interfaces.\nUse /rust_state_store_ for durable state, caches, indexes, credentials metadata or persistent domain data.\nUse /newcompute_ only for heavy/verifiable computation inside coding workflows, not for ordinary code edits.\nDo not use /workspace_ for image generation/editing, Gmail, Airbnb or pure web research.";
+pub const BRAIN_SCIENCE_VISIBLE_CATALOG: &str = "SCIENCE_ENGINEERING_3D_BRAIN v1\nPurpose: active session catalog for scientific reasoning, mathematics, statistics, biology, chemistry, physics, cryptography, optimization, formal analysis, engineering, robotics, physical prototypes, CAD/3D conception, Banger objects, future Banger 3D work, Monster compute, simulation and verified design.\nUse /capabilities_ when scientific/engineering work may require local files, apps, instruments, browser, documents, shell, Banger/Forge workspace, installed CLIs or Windows automation and the exact executable route is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Science/Engineering/3D Brain is active; keep Canvas prose short and fill expert option presets.\nUse /plan_ when the work needs a visible multi-step action plan, milestones, ordering or progress structure.\nUse /newcompute_ for any heavy/verifiable compute: math, physics, biology models, chemistry calculations, cryptography analysis, optimization, simulation, numerical analysis, sizing, performance envelopes, statistical analysis or proof artifacts.\nUse /newobject_ for 3D/Banger object, geometry, SDF, CAD-like part, scene, material, assembly or computational design requests.\nUse /websearch_ when current external research is needed for papers, standards, datasheets, components, protocols, biological references or scientific sources; use /googleweb_ only for visual browsing.\nUse /workspace_ only if actual local project/code/files are needed; scientific discussion, calculations, cryptography reasoning, biology reasoning, image work and 3D conception do not need a workspace.\nPrefer explicit assumptions, constraints, units, safety margins, verification plans, reproducible calculations and artifact/proof summaries.";
+pub const BRAIN_CODING_VISIBLE_CATALOG: &str = "CODING_BRAIN v1\nPurpose: active session catalog for software engineering, repositories, debugging, implementation, tests, refactors, architecture, scripts, build systems, APIs, Rust, TypeScript, Electron and developer tooling.\nUse /capabilities_ when coding work may need local files, project commands, browser, Git/GitHub, packages, CI, virtualization, shell, Windows tools or a visual preview route and the exact executable action is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Coding Brain is active; keep Canvas prose short and fill expert option presets.\nUse /plan_ when the coding task needs a visible multi-step action plan, milestones, ordering, verification gates or progress structure.\nUse /workspace_ when local repository or filesystem access is required before coding, running tests or inspecting files.\nWindows/local action tools remain available in Coding Brain for repo inspection, file edits, searches, build/test commands, browser checks and shell work: use AGENT_ACTION_JSON only for real execution, then wait for AGENT_ACTION_RESULT before claiming success.\nFor requests to code, build or create a visual page/component/site/app, create or modify a real local file first through AGENT_ACTION_JSON, verify it exists, write one short natural paragraph saying that the live visual is opening in the conversation, then emit /coding_live_preview_ path=\"...\" kind=\"html|react|vite\" so the Canvas can show the live visual. Do not answer with only a code block, copy-paste instructions, or \"put this in a file\" unless the user explicitly asks for a snippet only.\nUse /websearch_ for current docs, releases, APIs, dependency behavior, GitHub project discovery, package comparisons and source-backed technical research before implementing; use /scrapers_ after URLs are known and content extraction is needed.\nUse /codedocs_ for Context7 current library/API docs once the dependency is identified; use /github_ for remote GitHub repo/issues/PR/CI/release work; use /webact_ for Playwright browser interaction and visual verification; use /securityscan_ for Semgrep checks before risky code commits or PRs.\nUse /searcharchive_ to recall prior project decisions, previous bugs, existing architecture notes or earlier implementation context.\nUse /newmodule_ when the user wants a new app/module integration or new product capability before broad implementation.\nUse /rust_port_adapter_ for external services, native bridges or backend adapters behind narrow Rust interfaces.\nUse /rust_state_store_ for durable state, caches, indexes, credentials metadata or persistent domain data.\nUse /newcompute_ only for heavy/verifiable computation inside coding workflows, not for ordinary code edits.\nDo not use /workspace_ for image generation/editing, Gmail, Airbnb or pure web research.";
 pub const BRAIN_MIN_EQUIV_SAMPLES: usize = 64;
 pub const BRAIN_MAX_EQUIV_SAMPLES: usize = 256;
 
@@ -594,6 +597,7 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_airbnb_codeact_template(),
         brain_newimage_codeact_template(),
         brain_editimage_codeact_template(),
+        brain_plan_codeact_template(),
         brain_capabilities_codeact_template(),
         brain_science_codeact_template(),
         brain_coding_codeact_template(),
@@ -1974,6 +1978,111 @@ pub fn brain_questionnaire_codeact_template() -> BrainGeneralCodeActTemplate {
                 default_value: "composer_questionnaire".to_string(),
                 allowed_values: vec!["composer_questionnaire".to_string()],
                 description: "The host renders a discreet questionnaire above the composer and hides CodeAct metadata from the Canvas.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_plan_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_PLAN_COMMAND.to_string(),
+        section: "conversation".to_string(),
+        purpose: "Open the Plan panel when a non-trivial task needs a visible multi-step action plan before or during execution. Use it for ordered steps, milestones, dependencies, verification gates or progress structure. Keep the plan concise, concrete and updateable; skip it for one-step answers or tiny edits.".to_string(),
+        result_schema: BRAIN_PLAN_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "title".to_string(),
+                required: true,
+                default_value: "Action plan".to_string(),
+                allowed_values: Vec::new(),
+                description: "Short plan title shown in the Plan panel.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "context".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "One compact sentence explaining why this plan structure is useful.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step1".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "First concrete action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step2".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Second concrete action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step3".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional next action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step4".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional next action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step5".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional next action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step6".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional next action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step7".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional next action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "step8".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional final action or milestone.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "current_focus".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "What the agent is working on first or next.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "stop_condition".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Concrete condition that tells the user the plan is complete.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "plan_panel".to_string(),
+                allowed_values: vec!["plan_panel".to_string()],
+                description: "Open and update the right Plan panel while keeping the chat readable.".to_string(),
             },
         ],
     };
@@ -3683,6 +3792,31 @@ mod tests {
             .any(|candidate| candidate.command == BRAIN_QUESTIONNAIRE_COMMAND));
         assert!(BRAIN_SCIENCE_VISIBLE_CATALOG.contains(BRAIN_QUESTIONNAIRE_COMMAND));
         assert!(BRAIN_CODING_VISIBLE_CATALOG.contains(BRAIN_QUESTIONNAIRE_COMMAND));
+    }
+
+    #[test]
+    fn brain_exposes_plan_as_general_codeact_template() {
+        let template = brain_plan_codeact_template();
+
+        assert_eq!(template.command, BRAIN_PLAN_COMMAND);
+        assert_eq!(template.section, "conversation");
+        assert_eq!(template.result_schema, BRAIN_PLAN_RESULT_SCHEMA);
+        assert_eq!(template.proof_hash.len(), 40);
+        assert!(template.purpose.contains("multi-step action plan"));
+        assert!(template.purpose.contains("skip it for one-step"));
+        assert!(template.slots.iter().any(|slot| slot.name == "title" && slot.required));
+        assert!(template.slots.iter().any(|slot| slot.name == "step1" && slot.required));
+        assert!(template.slots.iter().any(|slot| slot.name == "step2" && slot.required));
+        assert!(template.slots.iter().any(|slot| slot.name == "current_focus"));
+        assert!(template.slots.iter().any(|slot| slot.name == "stop_condition"));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "output" && slot.allowed_values.contains(&"plan_panel".to_string())
+        }));
+        assert!(brain_general_codeact_templates()
+            .iter()
+            .any(|candidate| candidate.command == BRAIN_PLAN_COMMAND));
+        assert!(BRAIN_SCIENCE_VISIBLE_CATALOG.contains(BRAIN_PLAN_COMMAND));
+        assert!(BRAIN_CODING_VISIBLE_CATALOG.contains(BRAIN_PLAN_COMMAND));
     }
 
     #[test]

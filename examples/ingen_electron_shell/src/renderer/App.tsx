@@ -5,6 +5,7 @@ import {
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_MAPS_COMMAND,
+  BRAIN_PLAN_COMMAND,
   BRAIN_WORKSPACE_COMMAND,
   type NativeWebExplorerCodeAct,
   type ComposerUploadPreview,
@@ -1007,6 +1008,9 @@ export function App() {
   useEffect(() => {
     const latestAssistant = latestAssistantText ? { text: latestAssistantText } : undefined;
     const codingPreviewTarget = latestAssistant ? latestCodingLivePreviewTarget(latestAssistant.text) : null;
+    if (latestAssistant?.text.includes(BRAIN_PLAN_COMMAND) && !snapshot.rightPanelOpen) {
+      void headerShadowStore.dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" });
+    }
     if (codingPreviewTarget) {
       openCodingLivePreview(codingPreviewTarget);
       return;
@@ -1033,7 +1037,7 @@ export function App() {
     if (latestAssistant && assistantTextHasMapsSignal(latestAssistant.text)) {
       openCanvasMaps(0);
     }
-  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview]);
+  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview, snapshot.rightPanelOpen]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -1501,7 +1505,11 @@ export function App() {
         onModuleDrop={dropComposerModule}
         brainSpace={brainSpace}
       />
-      <RightPanelSlice open={snapshot.rightPanelOpen} />
+      <RightPanelSlice
+        open={snapshot.rightPanelOpen}
+        agentName={brainAgentMemory.preferredFirstName}
+        planSourceText={latestAssistantText}
+      />
 
       {!isFullPageCanvas && !isBangerPage ? (
         <CanvasSurfacesSlice

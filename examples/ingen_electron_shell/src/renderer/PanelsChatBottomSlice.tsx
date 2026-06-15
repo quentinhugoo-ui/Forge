@@ -25,6 +25,7 @@ import {
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
   BRAIN_NEWOBJECT_COMMAND,
+  BRAIN_PLAN_COMMAND,
   BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_RUST_PORT_ADAPTER_COMMAND,
   BRAIN_RUST_STATE_STORE_COMMAND,
@@ -1298,6 +1299,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
   [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],
+  [BRAIN_PLAN_COMMAND, "Plan panel opened"],
   [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
   [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
   [BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"],
@@ -2882,6 +2884,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (isSpecializedBrainActivationCommand(command)) return <BrainSegmentCodeActIcon phase="changed" />;
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
+  if (command === BRAIN_PLAN_COMMAND) return <ListChecks />;
   if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <SearchArchiveCodeActIcon />;
   if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
@@ -2926,6 +2929,9 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   }
   if (event.command === BRAIN_CODING_LIVE_PREVIEW_COMMAND) {
     return "is opening the live preview";
+  }
+  if (event.command === BRAIN_PLAN_COMMAND) {
+    return "is shaping the action plan";
   }
   if (isBrainSegmentCommand(event.command)) {
     return `is continuing in ${brainSegmentName(event.command)}`;
