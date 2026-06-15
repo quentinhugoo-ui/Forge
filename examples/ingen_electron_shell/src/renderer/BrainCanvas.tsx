@@ -855,6 +855,18 @@ function BrainLearningRegistry() {
         </div>
       </div>
       <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.title} macros`}>
+        {categoryEntries.length === 0 ? (
+          <article
+            className="brainLearningRegistry__entry brainLearningRegistry__macro brainLearningRegistry__macro--ghost"
+            role="listitem"
+            aria-disabled="true"
+          >
+            <p>{category.placeholder}</p>
+            <footer>
+              <span className="brainLearningRegistry__source">empty macro</span>
+            </footer>
+          </article>
+        ) : null}
         {categoryEntries.map((entry) => (
           <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
             <p>{entry.text}</p>

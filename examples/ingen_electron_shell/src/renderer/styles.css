@@ -10198,6 +10198,22 @@ ol.assistantText__list li::before {
   overflow-wrap: anywhere;
 }
 
+.brainLearningRegistry__macro--ghost {
+  border-color: color-mix(in oklab, var(--forge-line), transparent 58%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 36%);
+  opacity: 0.72;
+}
+
+.brainLearningRegistry__macro--ghost p,
+.brainLearningRegistry__macro--ghost footer span {
+  color: color-mix(in oklab, var(--forge-muted), transparent 12%);
+}
+
+.brainLearningRegistry__macro--ghost .brainLearningRegistry__source {
+  border-color: color-mix(in oklab, var(--forge-line), transparent 46%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 18%);
+}
+
 .brainLearningRegistry__entry footer,
 .brainCustomCodeActs__entry header {
   display: flex;
