@@ -120,10 +120,7 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("ASSISTANT_WORKING_STATUS_EXIT_MS");
     expect(animationSource).toContain("function AssistantWorkingStatus");
     expect(animationSource).toContain("function agentWorkingStatusText");
-    expect(animationSource).toContain("function useAssistantActivityElapsed");
-    expect(animationSource).toContain("formatAssistantActivityElapsed");
     expect(animationSource).toContain("sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox");
-    expect(animationSource).toContain("assistantThinkingEvent__elapsed");
     expect(animationSource).toContain("latestTranscriptEvent(message.text)");
     expect(animationSource).toContain("is running a confirmed shell command");
     expect(animationSource).toContain("is inspecting files");
@@ -133,6 +130,9 @@ describe("assistant progressive response feed", () => {
     expect(stylesSource).toContain("assistantWorkingEvent--leaving");
     expect(stylesSource).toContain("assistantWorkingStatusIn");
     expect(stylesSource).toContain("assistantWorkingStatusOut");
+    expect(animationSource).not.toContain("formatAssistantActivityElapsed");
+    expect(animationSource).not.toContain("assistantThinkingEvent__elapsed");
+    expect(stylesSource).not.toContain("assistantThinkingEvent__elapsed");
     expect(animationSource).not.toContain("tokens");
     expect(animationSource).toContain("assistantWorking");
     expect(animationSource).toContain("assistantWorkingEvent");

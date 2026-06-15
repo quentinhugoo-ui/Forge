@@ -5578,16 +5578,6 @@ button {
   line-height: 1.35;
 }
 
-.assistantThinkingEvent__elapsed {
-  min-width: 2.2ch;
-  color: color-mix(in oklab, #ff9b71, var(--forge-muted) 28%);
-  font-variant-numeric: tabular-nums;
-}
-
-.assistantThinkingEvent__separator {
-  color: color-mix(in oklab, var(--forge-muted), transparent 18%);
-}
-
 .assistantThinkingEvent__label strong {
   color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 18%);
   font-weight: 620;
