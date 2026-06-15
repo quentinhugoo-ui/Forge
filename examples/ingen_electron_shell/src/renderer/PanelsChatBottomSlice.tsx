@@ -3271,15 +3271,46 @@ function AnimatedAssistantText({
   );
 }
 
+function formatAssistantActivityElapsed(elapsedSeconds: number): string {
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function useAssistantActivityElapsed(active = true): string {
+  const startedAtRef = useRef(Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+    startedAtRef.current = Date.now();
+    setElapsedSeconds(0);
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAtRef.current) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [active]);
+
+  return formatAssistantActivityElapsed(elapsedSeconds);
+}
+
 function PendingAssistantText({ agentName, activityText = "is thinking" }: { agentName: string; activityText?: string }) {
   const label = agentName.trim() || "Agent";
+  const elapsed = useAssistantActivityElapsed();
   return (
     <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} ${activityText}`} role="status">
       <span className="sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox" aria-hidden="true">
         <span className="loader" />
       </span>
       <span className="assistantThinkingEvent__label">
-        <strong>{label}</strong> {activityText}
+        <span className="assistantThinkingEvent__elapsed">{elapsed}</span>
+        <span className="assistantThinkingEvent__separator" aria-hidden="true">-</span>
+        <strong>{label}</strong> {activityText}...
       </span>
     </div>
   );

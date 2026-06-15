@@ -5518,7 +5518,7 @@ button {
 .assistantText--pending {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: auto;
   min-height: 22px;
   color: #85898c;
@@ -5566,10 +5566,23 @@ button {
 }
 
 .assistantThinkingEvent__label {
-  color: #85898c;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 14%);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
+}
+
+.assistantThinkingEvent__elapsed {
+  min-width: 2.2ch;
+  color: color-mix(in oklab, #ff9b71, var(--forge-muted) 28%);
+  font-variant-numeric: tabular-nums;
+}
+
+.assistantThinkingEvent__separator {
+  color: color-mix(in oklab, var(--forge-muted), transparent 18%);
 }
 
 .assistantThinkingEvent__label strong {
