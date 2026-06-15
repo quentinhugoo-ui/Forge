@@ -1,11 +1,15 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
+  BRAIN_CODEDOCS_COMMAND,
+  BRAIN_GITHUB_MCP_COMMAND,
   BRAIN_MODIFY_NAMED_BRAIN_COMMAND,
   BRAIN_NEWBRAIN_COMMAND,
   BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
   BRAIN_SCRAPLING_MCP_COMMAND,
+  BRAIN_SECURITYSCAN_COMMAND,
+  BRAIN_WEBACT_COMMAND,
   type BrainCodeActCommand,
   type HardwareMetric,
   type HardwareTelemetrySnapshot,
@@ -224,6 +228,10 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
   if (command === BRAIN_SCRAPLING_MCP_COMMAND) return <ScraplingIcon />;
+  if (command === BRAIN_CODEDOCS_COMMAND) return <Glyph kind="database" />;
+  if (command === BRAIN_GITHUB_MCP_COMMAND) return <Glyph kind="code" />;
+  if (command === BRAIN_WEBACT_COMMAND) return <Glyph kind="globe" />;
+  if (command === BRAIN_SECURITYSCAN_COMMAND) return <Glyph kind="shield-check" />;
   if (command === "/newobject_") return <CubeIcon />;
   if (command === "/questionnaire_") return <Glyph kind="questionnaire" />;
   const stroke: Partial<Record<BrainCodeActCommand, string>> = {
@@ -263,7 +271,14 @@ const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
    commands live in the general brain since they are the switches. */
 const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
 const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
-const MCP_COMMANDS: BrainCodeActCommand[] = [BRAIN_SCRAPLING_MCP_COMMAND];
+const MCP_COMMANDS: BrainCodeActCommand[] = [
+  BRAIN_SCRAPERS_COMMAND,
+  BRAIN_SCRAPLING_MCP_COMMAND,
+  BRAIN_CODEDOCS_COMMAND,
+  BRAIN_GITHUB_MCP_COMMAND,
+  BRAIN_WEBACT_COMMAND,
+  BRAIN_SECURITYSCAN_COMMAND
+];
 
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/newcompute_",
@@ -347,6 +362,10 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/googleweb_": "Search the web for current public information.",
   [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, links, image/media URLs, artifacts, and provenance.",
   [BRAIN_SCRAPLING_MCP_COMMAND]: "Use Scrapling MCP for targeted web extraction, dynamic pages, bulk scraping, screenshots, and compact provenance.",
+  [BRAIN_CODEDOCS_COMMAND]: "Use Context7 MCP for current library docs, API signatures, setup steps, and code examples before coding against dependencies.",
+  [BRAIN_GITHUB_MCP_COMMAND]: "Use GitHub MCP for remote repositories, code search, issues, PRs, Actions/CI, releases, and review triage.",
+  [BRAIN_WEBACT_COMMAND]: "Use Playwright MCP to navigate, snapshot, click, type, screenshot, and verify browser flows.",
+  [BRAIN_SECURITYSCAN_COMMAND]: "Use Semgrep MCP to scan code paths or snippets for security findings, custom rules, and AST evidence.",
   "/gmail_": "Use Gmail to find messages, summarize email, or prepare replies.",
   "/airbnb_": "Use Airbnb to search for stays by place, dates, guests, and budget.",
   "/newimage_": "Create a new image from a text description.",

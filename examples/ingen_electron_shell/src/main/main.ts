@@ -29,6 +29,10 @@ import {
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_WEBSEARCH_COMMAND,
+  BRAIN_CODEDOCS_COMMAND,
+  BRAIN_GITHUB_MCP_COMMAND,
+  BRAIN_WEBACT_COMMAND,
+  BRAIN_SECURITYSCAN_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
@@ -166,6 +170,11 @@ import {
   renderWebSearchCodeActResult
 } from "./websearch-codeact.js";
 import { runWebSearchBridge } from "./websearch-bridge.js";
+import {
+  extractPriorityMcpCodeAct,
+  renderPriorityMcpCodeActResult
+} from "./priority-mcp-codeacts.js";
+import { runPriorityMcpBridge } from "./priority-mcp-bridge.js";
 import {
   createMapsCodeActRequest,
   extractMapsCodeAct,
@@ -4758,6 +4767,7 @@ function brainBootManifest(): string {
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
     `scrapers_mcp_policy=${BRAIN_SCRAPERS_COMMAND} is the preferred Brain route when web collection should combine robust selector extraction with clean RAG-ready Markdown, links, image/media URLs, optional downloads, screenshots, PDF or MHTML artifacts. Activate it for one or more target URLs when the result should feed Brain memory, RAG, agents, research notes, comparisons, monitoring, media catalogs or downstream structured analysis. The host/agent must fan out to Scrapling MCP and Crawl4AI MCP at the same time, wait for bounded results or record partial failures, then return one compact merged manifest with structured fields, fit Markdown or chunks, citations, link/media manifests, artifact refs, fetch metadata and provenance. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection.`,
     `scrapling_mcp_policy=${BRAIN_SCRAPLING_MCP_COMMAND} is the preferred Brain route for targeted web extraction, bulk URL scraping, dynamic/JavaScript pages, screenshots, persistent sessions, adaptive selectors, or compact provenance when Gmail, Airbnb, Maps and generic Google search do not own the task. Return selector-driven manifests and proof/provenance, not full raw HTML. Respect robots.txt, site terms, rate limits and privacy; use stealth/anti-bot modes only for authorized targets or user-approved public-data collection.`,
+    `priority_mcp_policy=Use ${BRAIN_CODEDOCS_COMMAND} for Context7 current dependency docs once the package is known, ${BRAIN_GITHUB_MCP_COMMAND} for remote GitHub repo/issues/PR/CI/release context, ${BRAIN_WEBACT_COMMAND} for Playwright browser interaction or visual verification, and ${BRAIN_SECURITYSCAN_COMMAND} for Semgrep security/static-analysis checks before risky commits or PRs. These remain normal CodeAct loop-stream events: emit the command, wait for the *_RESULT manifest, then continue with the next concrete action.`,
     `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=General Brain is immutable and read-only. The agent must never write, patch or synthesize new CodeActs inside General Brain. When /newbrain_ is emitted, the host derives the specialized activator CodeAct such as /musicianbrain_ from explicit fields and stores it outside General Brain.",
@@ -4924,6 +4934,10 @@ function shouldContinueAfterBrainCodeAct(params: {
         command === BRAIN_FRONTDESIGN_COMMAND ||
         command === BRAIN_GOOGLE_AGENDA_COMMAND ||
         command === BRAIN_WEBSEARCH_COMMAND ||
+        command === BRAIN_CODEDOCS_COMMAND ||
+        command === BRAIN_GITHUB_MCP_COMMAND ||
+        command === BRAIN_WEBACT_COMMAND ||
+        command === BRAIN_SECURITYSCAN_COMMAND ||
         command === BRAIN_SCRAPERS_COMMAND ||
         command === BRAIN_BRAIN_COMMAND ||
         command === BRAIN_NEWMODULE_COMMAND ||
@@ -14533,6 +14547,33 @@ async function executeAssistantWebSearchCodeAct(message: TranscriptMessage): Pro
   };
 }
 
+async function executeAssistantPriorityMcpCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (
+    message.role !== "assistant" ||
+    message.text.includes("CODEDOCS_RESULT") ||
+    message.text.includes("GITHUB_MCP_RESULT") ||
+    message.text.includes("WEBACT_RESULT") ||
+    message.text.includes("SECURITYSCAN_RESULT")
+  ) {
+    return message;
+  }
+  const request = extractPriorityMcpCodeAct(message.text);
+  if (!request) {
+    return message;
+  }
+  const result = await runPriorityMcpBridge(request);
+  const executionText = renderPriorityMcpCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: request,
+      priorityMcpResult: result
+    })
+  };
+}
+
 async function executeAssistantScrapersCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
   if (message.role !== "assistant" || message.text.includes("SCRAPERS_RESULT")) {
     return message;
@@ -14773,6 +14814,7 @@ async function executeAssistantModuleCodeActs(
   }
   let next = executeAssistantGoogleWebCodeAct(message, parallelSessionIndex);
   next = await executeAssistantWebSearchCodeAct(next);
+  next = await executeAssistantPriorityMcpCodeAct(next);
   next = await executeAssistantScrapersCodeAct(next);
   const shouldOpenAirbnbAfterMaps =
     next.text.includes(BRAIN_MAPS_COMMAND) &&

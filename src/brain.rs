@@ -31,6 +31,14 @@ pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_";
 pub const BRAIN_RENAME_SESSION_RESULT_SCHEMA: &str = "forge.brain.rename_session.result.v1";
 pub const BRAIN_WEBSEARCH_COMMAND: &str = "/websearch_";
 pub const BRAIN_WEBSEARCH_RESULT_SCHEMA: &str = "forge.websearch.result.v1";
+pub const BRAIN_CODEDOCS_COMMAND: &str = "/codedocs_";
+pub const BRAIN_CODEDOCS_RESULT_SCHEMA: &str = "forge.mcp.context7.result.v1";
+pub const BRAIN_GITHUB_MCP_COMMAND: &str = "/github_";
+pub const BRAIN_GITHUB_MCP_RESULT_SCHEMA: &str = "forge.mcp.github.result.v1";
+pub const BRAIN_WEBACT_COMMAND: &str = "/webact_";
+pub const BRAIN_WEBACT_RESULT_SCHEMA: &str = "forge.mcp.playwright.result.v1";
+pub const BRAIN_SECURITYSCAN_COMMAND: &str = "/securityscan_";
+pub const BRAIN_SECURITYSCAN_RESULT_SCHEMA: &str = "forge.mcp.semgrep.result.v1";
 pub const BRAIN_GOOGLEWEB_COMMAND: &str = "/googleweb_";
 pub const BRAIN_GOOGLEWEB_RESULT_SCHEMA: &str = "forge.webexplorer.googleweb.result.v1";
 pub const BRAIN_SCRAPERS_COMMAND: &str = "/scrapers_";
@@ -55,7 +63,7 @@ pub const BRAIN_SEGMENT_RESULT_SCHEMA: &str = "forge.brain.segment.result.v1";
 pub const BRAIN_NEWBRAIN_COMMAND: &str = "/newbrain_";
 pub const BRAIN_MODIFY_NAMED_BRAIN_COMMAND: &str = "/modify\"<brain_name>\"brain_";
 pub const BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA: &str = "forge.brain.domain_brain.result.v1";
-pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is a hard module rule: geographic place detected alone means /maps_; geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. Ordinary city, place, local weather, map, route, country, region, island, coordinates, Google Earth, where-is, or geographic-context requests are geospatial tasks: prefer /maps_ and do not activate /sciencebrain_ unless the user explicitly asks for scientific meteorology, climate modeling, physics, engineering, or compute analysis. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Module priority: when the user asks about a city, place, country, region, island, local weather for a place, route, map, coordinates, Google Earth, where something is, or any geographic context without travel/vacation/stay intent, prefer /maps_ over /sciencebrain_, /airbnb_, /websearch_, and /googleweb_; use the Brain home city as the default maps target when no place is specified. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ is for hosted OpenAI/Claude web-search discovery when the user needs current source-backed research, cited URLs, ranking, verification or URLs to feed into /scrapers_; it returns a compact answer/URL/citation manifest, not raw page content. After WEBSEARCH_RESULT, the logical next loop-stream step is for the agent to emit /scrapers_ with the selected URLs whenever the user needs page Markdown, media, artifacts, links or structured extraction; /websearch_ does not bypass the existing CodeAct loop. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
+pub const BRAIN_CODEACT_ROUTING_RULES: &str = "Brain segment priority: while the active segment is general, the LLM must classify the user's task by domain before answering. On the first user message of a session, identify the chat subject, choose a short specific title, and emit exactly one standalone internal line /\"nomduchat\"_renamechat_ before any visible prose, where nomduchat is the chosen title. Never merge it with the visible answer, never echo this line in the user-visible answer, and never describe the rename. The title must be 2-5 natural words, nominal and specific, not a copy of the prompt, not only a proper noun, and the rename must not be described in visible prose. Local action tools exist for user requests about inspecting, searching, creating, copying, moving, renaming, deleting files/folders, or running local commands; use AGENT_ACTION_JSON only for real execution and wait for AGENT_ACTION_RESULT, never fake tool events. If the task belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, optimization, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, Monster, /newcompute_ or future Banger 3D work, first activate /sciencebrain_ before giving the specialized answer. Physical product or prototype conception is engineering by default, even when the object is ordinary or newly mentioned. Geography routing is a hard module rule: geographic place detected alone means /maps_; geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_ as the next WebExplorer page. Ordinary city, place, local weather, map, route, country, region, island, coordinates, Google Earth, where-is, or geographic-context requests are geospatial tasks: prefer /maps_ and do not activate /sciencebrain_ unless the user explicitly asks for scientific meteorology, climate modeling, physics, engineering, or compute analysis. In visible prose, wrap cities, local places and countries as #{Name}, and other named geographic or space entities as @{Name}: regions, continents, seas, oceans, rivers, lakes, mountains, islands, addresses, landmarks, GPS coordinates, planets, moons, stars and constellations; do not wrap generic category words. This is semantic domain routing, not keyword routing: the LLM must infer the implied domain from the user's natural-language request, even when the object, field or project name has never appeared in this Brain. If the task belongs to software engineering, coding, websites, applications, repositories, debugging, refactoring, tests, architecture, scripts, Rust, TypeScript, Electron, APIs, build systems or developer tooling, first activate /codingbrain_ before giving the specialized answer. Module priority: when the user asks about a city, place, country, region, island, local weather for a place, route, map, coordinates, Google Earth, where something is, or any geographic context without travel/vacation/stay intent, prefer /maps_ over /sciencebrain_, /airbnb_, /websearch_, and /googleweb_; use the Brain home city as the default maps target when no place is specified. When a geographic place appears with travel/vacation/stay language such as voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, vacation rental, house/apartment/home rental, booking, budget for stays, or short-term stay intent, emit /maps_ first for Google Earth context and then /airbnb_ for the next WebExplorer page. /websearch_ is for hosted OpenAI/Claude web-search discovery when the user needs current source-backed research, cited URLs, ranking, verification or URLs to feed into /scrapers_; it returns a compact answer/URL/citation manifest, not raw page content. After WEBSEARCH_RESULT, the logical next loop-stream step is for the agent to emit /scrapers_ with the selected URLs whenever the user needs page Markdown, media, artifacts, links or structured extraction; /websearch_ does not bypass the existing CodeAct loop. Use /codedocs_ for Context7 dependency docs when the library is already identified, /github_ for remote GitHub repo/issues/PR/CI/release context, /webact_ for Playwright MCP browser interaction or visual verification, and /securityscan_ for Semgrep checks before risky code changes or PRs. /googleweb_ is only for visual Google navigation in contained WebExplorer when the user wants to see or drive a browser page. Clarifying questionnaire tools belong to specialized Brain catalogs; while the active segment is general, switch to the correct Brain segment before opening a questionnaire for specialized work.";
 pub const BRAIN_WORKSPACE_COMMAND: &str = "/workspace_";
 pub const BRAIN_CAPABILITIES_COMMAND: &str = "/capabilities_";
 pub const BRAIN_CAPABILITIES_RESULT_SCHEMA: &str = "forge.agent.capabilities.result.v1";
@@ -74,6 +82,10 @@ pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
 pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one standalone Brain-owned compact line /\"nomduchat\"_renamechat_ after identifying the first user message subject. The app uses the quoted nomduchat field as the sidebar title. The event is internal: never merge it with visible prose, never echo this line in the user-visible answer, and never describe the rename. Use 2-5 natural words, like Codex or Claude; avoid copying the prompt or using only a proper noun.";
 pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ when the user needs current source-backed web research, URL discovery, citation verification, market/tool/library comparisons, recent docs, prices, laws, releases, papers, news, or URLs to feed into /scrapers_. This CodeAct asks the runtime to call hosted OpenAI and/or Claude web-search tools, returning a compact WEBSEARCH_RESULT with the synthesized answer, provider trace, searched queries, ranked URLs, titles, citation spans, snippets/page ages when available, confidence and suggested follow-up scrape URLs. It does not return raw HTML, full page text or media files. After WEBSEARCH_RESULT, the agent should continue the existing loop-stream by emitting /scrapers_ with the selected URLs whenever clean Markdown, images, links, artifacts, durable evidence or structured extraction are needed. Prefer /websearch_ over /googleweb_ for answers that require sources; use /googleweb_ only for visual/manual browser navigation. Respect source attribution, privacy, paywalls, robots/site terms and bounded search budgets.";
+pub const BRAIN_CODEDOCS_COMMAND_DESCRIPTION: &str = "Use /codedocs_ to query Context7 MCP for current, version-aware library/API documentation, setup instructions and code examples before coding against external dependencies. Prefer it after /codingbrain_ and before guessing imports, configuration, API signatures, migration steps or framework behavior. It is read-only documentation retrieval, not general web search and not page scraping; use /websearch_ first when the library, package or official docs URL is unknown.";
+pub const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION: &str = "Use /github_ for GitHub MCP workflows on remote repositories: repo context, code search, issues, pull requests, Actions/CI, releases and PR discussion triage. Prefer read-only operations by default; issue/PR comments, labels, branch changes or other writes require explicit user confirmation and a scoped GitHub token. Use local workspace actions for files already on disk.";
+pub const BRAIN_WEBACT_COMMAND_DESCRIPTION: &str = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation.";
+pub const BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION: &str = "Use /securityscan_ for Semgrep MCP security and static-analysis checks on code paths or snippets, especially before commits, PRs, generated code, dependency-facing adapters, auth, filesystem, shell, network or deserialization changes. It returns a compact SECURITYSCAN_RESULT with findings and evidence; do not treat a clean scan as a full proof of security.";
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants to visually browse or manually inspect web results. Prefer /websearch_ when the assistant must answer with cited sources, discover URLs, rank sources, verify current information or feed /scrapers_. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
 pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ when the user needs production-grade web collection from one or more URLs: structured fields, clean RAG-ready Markdown, links, image/media URLs, optional screenshots/PDF/MHTML/download artifacts, and compact provenance. This Brain route fans out to Scrapling MCP and Crawl4AI MCP in parallel, then returns one merged manifest. Scrapling should handle selectors, attributes, adaptive/dynamic/stealth/session fetches and screenshots; Crawl4AI should handle clean/fit Markdown, chunks, citations, links, media metadata and archival artifacts. Prefer this over choosing only /scrapling_mcp_ when the result should feed Brain memory, RAG, agents, research notes, comparison, monitoring or downstream structured analysis. Use /scrapling_mcp_ directly for a pure low-level selector/session/screenshot operation. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, Maps/geography routing, local files, image generation/editing, or generic Google search.";
 pub const BRAIN_SCRAPLING_MCP_COMMAND_DESCRIPTION: &str = "Use Scrapling MCP for targeted web extraction when the user needs structured page data, bulk URL scraping, dynamic/JavaScript content, screenshots, persistent sessions, adaptive selectors, or compact provenance instead of full raw HTML. Prefer CSS/XPath selectors and manifest-sized results. Respect robots.txt, site terms, rate limits and privacy; use stealth or anti-bot modes only for authorized targets or user-approved public-data collection. Do not use for Gmail, Airbnb travel search, image work, local filesystem work, or generic search that belongs to /googleweb_.";
@@ -103,7 +115,7 @@ pub const BRAIN_NEWMODULE_COMMAND_DESCRIPTION: &str = "Create a new narrow modul
 pub const BRAIN_RUST_PORT_ADAPTER_COMMAND_DESCRIPTION: &str = "Prepare a Rust service adapter for an external service, vertical capability, native bridge, or backend integration behind a narrow typed interface.";
 pub const BRAIN_RUST_STATE_STORE_COMMAND_DESCRIPTION: &str = "Prepare a Rust-owned durable state store for local service state, caches, indexes, credentials metadata, or persistent domain data with explicit schema and ownership.";
 pub const BRAIN_SCIENCE_VISIBLE_CATALOG: &str = "SCIENCE_ENGINEERING_3D_BRAIN v1\nPurpose: active session catalog for scientific reasoning, mathematics, statistics, biology, chemistry, physics, cryptography, optimization, formal analysis, engineering, robotics, physical prototypes, CAD/3D conception, Banger objects, future Banger 3D work, Monster compute, simulation and verified design.\nUse /capabilities_ when scientific/engineering work may require local files, apps, instruments, browser, documents, shell, Banger/Forge workspace, installed CLIs or Windows automation and the exact executable route is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Science/Engineering/3D Brain is active; keep Canvas prose short and fill expert option presets.\nUse /newcompute_ for any heavy/verifiable compute: math, physics, biology models, chemistry calculations, cryptography analysis, optimization, simulation, numerical analysis, sizing, performance envelopes, statistical analysis or proof artifacts.\nUse /newobject_ for 3D/Banger object, geometry, SDF, CAD-like part, scene, material, assembly or computational design requests.\nUse /websearch_ when current external research is needed for papers, standards, datasheets, components, protocols, biological references or scientific sources; use /googleweb_ only for visual browsing.\nUse /workspace_ only if actual local project/code/files are needed; scientific discussion, calculations, cryptography reasoning, biology reasoning, image work and 3D conception do not need a workspace.\nPrefer explicit assumptions, constraints, units, safety margins, verification plans, reproducible calculations and artifact/proof summaries.";
-pub const BRAIN_CODING_VISIBLE_CATALOG: &str = "CODING_BRAIN v1\nPurpose: active session catalog for software engineering, repositories, debugging, implementation, tests, refactors, architecture, scripts, build systems, APIs, Rust, TypeScript, Electron and developer tooling.\nUse /capabilities_ when coding work may need local files, project commands, browser, Git/GitHub, packages, CI, virtualization, shell, Windows tools or a visual preview route and the exact executable action is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Coding Brain is active; keep Canvas prose short and fill expert option presets.\nUse /workspace_ when local repository or filesystem access is required before coding, running tests or inspecting files.\nWindows/local action tools remain available in Coding Brain for repo inspection, file edits, searches, build/test commands, browser checks and shell work: use AGENT_ACTION_JSON only for real execution, then wait for AGENT_ACTION_RESULT before claiming success.\nFor requests to code, build or create a visual page/component/site/app, create or modify a real local file first through AGENT_ACTION_JSON, verify it exists, write one short natural paragraph saying that the live visual is opening in the conversation, then emit /coding_live_preview_ path=\"...\" kind=\"html|react|vite\" so the Canvas can show the live visual. Do not answer with only a code block, copy-paste instructions, or \"put this in a file\" unless the user explicitly asks for a snippet only.\nUse /websearch_ for current docs, releases, APIs, dependency behavior, GitHub project discovery, package comparisons and source-backed technical research before implementing; use /scrapers_ after URLs are known and content extraction is needed.\nUse /searcharchive_ to recall prior project decisions, previous bugs, existing architecture notes or earlier implementation context.\nUse /newmodule_ when the user wants a new app/module integration or new product capability before broad implementation.\nUse /rust_port_adapter_ for external services, native bridges or backend adapters behind narrow Rust interfaces.\nUse /rust_state_store_ for durable state, caches, indexes, credentials metadata or persistent domain data.\nUse /newcompute_ only for heavy/verifiable computation inside coding workflows, not for ordinary code edits.\nDo not use /workspace_ for image generation/editing, Gmail, Airbnb or pure web research.";
+pub const BRAIN_CODING_VISIBLE_CATALOG: &str = "CODING_BRAIN v1\nPurpose: active session catalog for software engineering, repositories, debugging, implementation, tests, refactors, architecture, scripts, build systems, APIs, Rust, TypeScript, Electron and developer tooling.\nUse /capabilities_ when coding work may need local files, project commands, browser, Git/GitHub, packages, CI, virtualization, shell, Windows tools or a visual preview route and the exact executable action is not obvious.\nUse /questionnaire_ when several clarifying questions are needed after this Coding Brain is active; keep Canvas prose short and fill expert option presets.\nUse /workspace_ when local repository or filesystem access is required before coding, running tests or inspecting files.\nWindows/local action tools remain available in Coding Brain for repo inspection, file edits, searches, build/test commands, browser checks and shell work: use AGENT_ACTION_JSON only for real execution, then wait for AGENT_ACTION_RESULT before claiming success.\nFor requests to code, build or create a visual page/component/site/app, create or modify a real local file first through AGENT_ACTION_JSON, verify it exists, write one short natural paragraph saying that the live visual is opening in the conversation, then emit /coding_live_preview_ path=\"...\" kind=\"html|react|vite\" so the Canvas can show the live visual. Do not answer with only a code block, copy-paste instructions, or \"put this in a file\" unless the user explicitly asks for a snippet only.\nUse /websearch_ for current docs, releases, APIs, dependency behavior, GitHub project discovery, package comparisons and source-backed technical research before implementing; use /scrapers_ after URLs are known and content extraction is needed.\nUse /codedocs_ for Context7 current library/API docs once the dependency is identified; use /github_ for remote GitHub repo/issues/PR/CI/release work; use /webact_ for Playwright browser interaction and visual verification; use /securityscan_ for Semgrep checks before risky code commits or PRs.\nUse /searcharchive_ to recall prior project decisions, previous bugs, existing architecture notes or earlier implementation context.\nUse /newmodule_ when the user wants a new app/module integration or new product capability before broad implementation.\nUse /rust_port_adapter_ for external services, native bridges or backend adapters behind narrow Rust interfaces.\nUse /rust_state_store_ for durable state, caches, indexes, credentials metadata or persistent domain data.\nUse /newcompute_ only for heavy/verifiable computation inside coding workflows, not for ordinary code edits.\nDo not use /workspace_ for image generation/editing, Gmail, Airbnb or pure web research.";
 pub const BRAIN_MIN_EQUIV_SAMPLES: usize = 64;
 pub const BRAIN_MAX_EQUIV_SAMPLES: usize = 256;
 
@@ -577,6 +589,10 @@ pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
         brain_searcharchive_codeact_template(),
         brain_rename_session_codeact_template(),
         brain_websearch_codeact_template(),
+        brain_codedocs_codeact_template(),
+        brain_github_mcp_codeact_template(),
+        brain_webact_codeact_template(),
+        brain_securityscan_codeact_template(),
         brain_googleweb_codeact_template(),
         brain_scrapers_codeact_template(),
         brain_scrapling_mcp_codeact_template(),
@@ -880,6 +896,307 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
                     "verification_report".to_string(),
                 ],
                 description: "Result shape. All modes must include citations/URLs and provider trace when sources are used; never return raw HTML or full page dumps.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_codedocs_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_CODEDOCS_COMMAND.to_string(),
+        section: "mcp".to_string(),
+        purpose: "Query Context7 MCP for current, version-aware documentation and code examples before coding against an external library, SDK, framework, CLI or API. Use this after /codingbrain_ when the dependency is known and the agent needs exact signatures, install/setup steps, options, migration notes or idiomatic examples without a general web search.".to_string(),
+        result_schema: BRAIN_CODEDOCS_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "library".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Package, framework, SDK, CLI or API name to resolve through Context7, for example react, playwright, tauri, fastapi or stripe-node.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "query".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Precise documentation question, API surface, setup step, migration point, error message or code example needed for the current implementation.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "library_id".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional exact Context7-compatible library ID when already known. If absent, the bridge first resolves the library then queries docs.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "version".to_string(),
+                required: false,
+                default_value: "auto".to_string(),
+                allowed_values: Vec::new(),
+                description: "Optional version or channel when the implementation targets a specific package version. Use auto when the local dependency version should drive follow-up reasoning.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "provider".to_string(),
+                required: false,
+                default_value: "context7".to_string(),
+                allowed_values: vec!["context7".to_string()],
+                description: "Documentation MCP provider. This template intentionally routes only to Context7.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "max_tokens".to_string(),
+                required: false,
+                default_value: "6000".to_string(),
+                allowed_values: Vec::new(),
+                description: "Approximate documentation budget requested from the provider; the host may clamp it.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "docs_manifest".to_string(),
+                allowed_values: vec![
+                    "docs_manifest".to_string(),
+                    "examples".to_string(),
+                    "api_reference".to_string(),
+                    "setup_steps".to_string(),
+                ],
+                description: "Preferred result shape. Keep it compact and cite the resolved library ID/tool response provenance.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_github_mcp_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_GITHUB_MCP_COMMAND.to_string(),
+        section: "mcp".to_string(),
+        purpose: "Use GitHub MCP for remote repository intelligence and collaboration workflows: repository context, code search, issues, pull requests, Actions/CI, releases and PR discussion triage. Use read_only mode by default; any operation that comments, labels, edits, opens issues, changes branches or otherwise writes must require explicit user confirmation and a scoped token.".to_string(),
+        result_schema: BRAIN_GITHUB_MCP_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "operation".to_string(),
+                required: true,
+                default_value: "repo_context".to_string(),
+                allowed_values: vec![
+                    "repo_context".to_string(),
+                    "code_search".to_string(),
+                    "issue_pr_triage".to_string(),
+                    "ci_status".to_string(),
+                    "release_notes".to_string(),
+                    "create_issue".to_string(),
+                    "comment_pr".to_string(),
+                ],
+                description: "GitHub workflow requested. Prefer read-only operations unless the user explicitly asked for a write.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "repo".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Repository in owner/name form when the task targets a specific GitHub repo. Leave empty only for global installed-account search.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "query".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Search query, issue/PR topic, code symbol, filename, release keyword or CI failure clue.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "number".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Issue or pull request number when the operation targets a specific thread.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "ref".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Branch, tag or commit SHA for file, release or CI context.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "mode".to_string(),
+                required: false,
+                default_value: "read_only".to_string(),
+                allowed_values: vec!["read_only".to_string(), "write_requires_confirmation".to_string()],
+                description: "Safety mode. The bridge must block write-class operations unless user confirmation is explicit and auditable.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "github_manifest".to_string(),
+                allowed_values: vec![
+                    "github_manifest".to_string(),
+                    "diff_context".to_string(),
+                    "ci_report".to_string(),
+                    "issue_pr_summary".to_string(),
+                ],
+                description: "Compact result shape for loop-stream continuation, including tool names, repository coordinates and URLs/IDs when available.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_webact_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_WEBACT_COMMAND.to_string(),
+        section: "mcp".to_string(),
+        purpose: "Use Playwright MCP for browser automation when the task needs interaction, visual verification, screenshots or flow testing rather than a source-backed search answer. Typical loop: navigate, snapshot, click/type/evaluate, screenshot, then continue with findings. Do not submit purchases, account changes, private messages or sensitive forms without explicit user confirmation.".to_string(),
+        result_schema: BRAIN_WEBACT_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "action".to_string(),
+                required: true,
+                default_value: "snapshot".to_string(),
+                allowed_values: vec![
+                    "navigate".to_string(),
+                    "snapshot".to_string(),
+                    "click".to_string(),
+                    "type".to_string(),
+                    "screenshot".to_string(),
+                    "evaluate".to_string(),
+                    "test_flow".to_string(),
+                ],
+                description: "Browser operation to execute through Playwright MCP. Use test_flow for a bounded multi-step verification.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "url".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Target URL for navigate or test_flow. Use localhost/file URLs for local UI verification when appropriate.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "instruction".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Human-readable step goal, expected state, assertion or page element description.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "selector".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional selector, role/name hint or element reference for click/type/evaluate actions.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "text".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Text to type when action=type. Never include secrets unless the user explicitly provided them for this action.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "safety".to_string(),
+                required: false,
+                default_value: "no_external_submit_without_confirmation".to_string(),
+                allowed_values: vec![
+                    "no_external_submit_without_confirmation".to_string(),
+                    "read_only_visual_check".to_string(),
+                    "local_dev_allowed".to_string(),
+                ],
+                description: "Interaction safety boundary for the bridge and follow-up agent reasoning.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "browser_action_manifest".to_string(),
+                allowed_values: vec![
+                    "browser_action_manifest".to_string(),
+                    "screenshot_manifest".to_string(),
+                    "test_flow_report".to_string(),
+                ],
+                description: "Compact result shape with tool calls, page title/url/snapshot or artifact references when available.".to_string(),
+            },
+        ],
+    };
+    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
+    template
+}
+
+pub fn brain_securityscan_codeact_template() -> BrainGeneralCodeActTemplate {
+    let mut template = BrainGeneralCodeActTemplate {
+        command: BRAIN_SECURITYSCAN_COMMAND.to_string(),
+        section: "mcp".to_string(),
+        purpose: "Run Semgrep MCP static analysis on code paths or snippets for security findings, custom rules or AST inspection. Use it before commits/PRs for security-sensitive code, generated adapters, shell/filesystem/network/auth/deserialization changes and user-provided code. The result is evidence for review, not a formal proof that code is safe.".to_string(),
+        result_schema: BRAIN_SECURITYSCAN_RESULT_SCHEMA.to_string(),
+        proof_hash: String::new(),
+        slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "target".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Workspace path, file path, directory path or snippet identifier to scan. Prefer the narrowest meaningful target.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "mode".to_string(),
+                required: false,
+                default_value: "security_check".to_string(),
+                allowed_values: vec![
+                    "security_check".to_string(),
+                    "semgrep_scan".to_string(),
+                    "custom_rule".to_string(),
+                    "ast".to_string(),
+                ],
+                description: "Semgrep MCP operation. security_check is the default vulnerability-oriented route; ast is for structural analysis.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "config".to_string(),
+                required: false,
+                default_value: "auto".to_string(),
+                allowed_values: Vec::new(),
+                description: "Semgrep ruleset/config hint such as auto, p/security-audit, p/owasp-top-ten or a local config path when supported.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "rule".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Inline or named custom Semgrep rule when mode=custom_rule.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "language".to_string(),
+                required: false,
+                default_value: "auto".to_string(),
+                allowed_values: Vec::new(),
+                description: "Language hint for snippets or AST mode. Use auto for normal files.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "severity_threshold".to_string(),
+                required: false,
+                default_value: "warning".to_string(),
+                allowed_values: vec![
+                    "info".to_string(),
+                    "warning".to_string(),
+                    "error".to_string(),
+                    "critical".to_string(),
+                ],
+                description: "Minimum severity to prioritize in the compact result. The provider may still return lower-severity context.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "output".to_string(),
+                required: false,
+                default_value: "security_manifest".to_string(),
+                allowed_values: vec![
+                    "security_manifest".to_string(),
+                    "findings".to_string(),
+                    "sarif_summary".to_string(),
+                    "ast_summary".to_string(),
+                ],
+                description: "Compact loop-stream result shape with findings, files, line refs, rule IDs and remediation hints when available.".to_string(),
             },
         ],
     };
@@ -3155,6 +3472,75 @@ mod tests {
         assert!(BRAIN_CODEACT_ROUTING_RULES.contains("/websearch_"));
         assert!(BRAIN_CODEACT_ROUTING_RULES.contains("does not bypass the existing CodeAct loop"));
         assert!(BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION.contains("Prefer /websearch_"));
+    }
+
+    #[test]
+    fn brain_exposes_priority_mcp_codeact_templates() {
+        let codedocs = brain_codedocs_codeact_template();
+        let github = brain_github_mcp_codeact_template();
+        let webact = brain_webact_codeact_template();
+        let security = brain_securityscan_codeact_template();
+        let templates = brain_general_codeact_templates();
+
+        assert_eq!(codedocs.command, BRAIN_CODEDOCS_COMMAND);
+        assert_eq!(codedocs.section, "mcp");
+        assert_eq!(codedocs.result_schema, BRAIN_CODEDOCS_RESULT_SCHEMA);
+        assert!(codedocs.purpose.contains("Context7 MCP"));
+        assert!(codedocs.slots.iter().any(|slot| slot.name == "library" && slot.required));
+        assert!(codedocs.slots.iter().any(|slot| {
+            slot.name == "provider" && slot.default_value == "context7"
+        }));
+
+        assert_eq!(github.command, BRAIN_GITHUB_MCP_COMMAND);
+        assert_eq!(github.section, "mcp");
+        assert_eq!(github.result_schema, BRAIN_GITHUB_MCP_RESULT_SCHEMA);
+        assert!(github.purpose.contains("GitHub MCP"));
+        assert!(github.slots.iter().any(|slot| {
+            slot.name == "operation"
+                && slot.required
+                && slot.allowed_values.contains(&"ci_status".to_string())
+                && slot.allowed_values.contains(&"comment_pr".to_string())
+        }));
+        assert!(github.slots.iter().any(|slot| {
+            slot.name == "mode" && slot.default_value == "read_only"
+        }));
+
+        assert_eq!(webact.command, BRAIN_WEBACT_COMMAND);
+        assert_eq!(webact.section, "mcp");
+        assert_eq!(webact.result_schema, BRAIN_WEBACT_RESULT_SCHEMA);
+        assert!(webact.purpose.contains("Playwright MCP"));
+        assert!(webact.slots.iter().any(|slot| {
+            slot.name == "action"
+                && slot.required
+                && slot.allowed_values.contains(&"snapshot".to_string())
+                && slot.allowed_values.contains(&"test_flow".to_string())
+        }));
+        assert!(webact.slots.iter().any(|slot| {
+            slot.name == "safety" && slot.default_value.contains("no_external_submit")
+        }));
+
+        assert_eq!(security.command, BRAIN_SECURITYSCAN_COMMAND);
+        assert_eq!(security.section, "mcp");
+        assert_eq!(security.result_schema, BRAIN_SECURITYSCAN_RESULT_SCHEMA);
+        assert!(security.purpose.contains("Semgrep MCP"));
+        assert!(security.slots.iter().any(|slot| slot.name == "target" && slot.required));
+        assert!(security.slots.iter().any(|slot| {
+            slot.name == "mode"
+                && slot.default_value == "security_check"
+                && slot.allowed_values.contains(&"custom_rule".to_string())
+                && slot.allowed_values.contains(&"ast".to_string())
+        }));
+
+        for command in [
+            BRAIN_CODEDOCS_COMMAND,
+            BRAIN_GITHUB_MCP_COMMAND,
+            BRAIN_WEBACT_COMMAND,
+            BRAIN_SECURITYSCAN_COMMAND,
+        ] {
+            assert!(templates.iter().any(|candidate| candidate.command == command));
+            assert!(BRAIN_CODEACT_ROUTING_RULES.contains(command));
+            assert!(BRAIN_CODING_VISIBLE_CATALOG.contains(command));
+        }
     }
 
     #[test]
