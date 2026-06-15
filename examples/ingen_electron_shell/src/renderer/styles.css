@@ -9519,7 +9519,8 @@ ol.assistantText__list li::before {
 .brainActivators,
 .brainGoogleSuite,
 .brainMcpSuite,
-.brainMemoryIdentity {
+.brainMemoryIdentity,
+.brainLearningRegistry {
   position: relative;
   margin-top: 12px;
   min-width: 0;
@@ -9530,7 +9531,8 @@ ol.assistantText__list li::before {
 }
 
 .brainActivators::before,
-.brainMemoryIdentity::before {
+.brainMemoryIdentity::before,
+.brainLearningRegistry::before {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -9604,7 +9606,12 @@ ol.assistantText__list li::before {
 .brainMcpSuite .brainRow,
 .brainCommandPack__label,
 .brainMemoryIdentityField,
-.brainMemoryIdentity__label {
+.brainMemoryIdentity__label,
+.brainLearningRegistry__head,
+.brainLearningRegistry__tabs,
+.brainLearningRegistry__composer,
+.brainLearningRegistry__actions,
+.brainLearningRegistry__entries {
   position: relative;
   z-index: 1;
 }
@@ -9816,7 +9823,6 @@ ol.assistantText__list li::before {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
 }
 
-.brainLearningRegistry,
 .brainCustomCodeActs {
   display: grid;
   gap: 10px;
@@ -9827,6 +9833,17 @@ ol.assistantText__list li::before {
   border: 1px solid color-mix(in oklab, var(--forge-line), var(--forge-accent) 12%);
   border-radius: 7px;
   background: color-mix(in oklab, var(--forge-surface-deep), transparent 18%);
+}
+
+.brainLearningRegistry {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 640px);
+  max-width: 640px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-color: color-mix(in oklab, #ffbf48, transparent 58%);
+  background: transparent;
 }
 
 .brainCustomCodeActs {
@@ -9841,8 +9858,8 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__head,
 .brainCustomCodeActs__head {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
   align-items: start;
   min-width: 0;
 }
@@ -9854,11 +9871,11 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__head strong,
 .brainCustomCodeActs__head strong {
   display: block;
-  color: var(--forge-text);
+  color: var(--forge-muted);
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 12px;
-  font-weight: 680;
-  line-height: 1.25;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
 }
 
 .brainLearningRegistry__head span span,
@@ -9868,6 +9885,10 @@ ol.assistantText__list li::before {
   color: var(--forge-muted);
   font-size: 11px;
   line-height: 1.38;
+}
+
+.brainLearningRegistry__head span span {
+  display: none;
 }
 
 .brainCustomCodeActs__soonBadge {
@@ -9927,7 +9948,7 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -9938,12 +9959,12 @@ ol.assistantText__list li::before {
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  min-height: 34px;
+  min-height: 28px;
   padding: 0 8px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 28%);
-  border-radius: 6px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 76%);
+  border-radius: 0;
   color: var(--forge-muted);
-  background: color-mix(in oklab, var(--forge-panel), transparent 42%);
+  background: transparent;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
@@ -9954,9 +9975,9 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__tab:hover,
 .brainLearningRegistry__tab:focus-visible,
 .brainLearningRegistry__tab--active {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 22%);
-  color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-accent), transparent 88%);
+  border-color: color-mix(in oklab, #ffbf48, transparent 42%);
+  color: #f1d596;
+  background: color-mix(in oklab, #ffbf48, transparent 92%);
   outline: 0;
 }
 
@@ -9969,7 +9990,7 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__composer span,
 .brainCustomCodeActs__editor label span {
-  color: color-mix(in oklab, var(--forge-text), transparent 16%);
+  color: var(--forge-muted);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
@@ -9980,21 +10001,23 @@ ol.assistantText__list li::before {
 .brainCustomCodeActs__editor textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
-  border-radius: 6px;
-  color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-panel), #000 10%);
-  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
-  font-size: 12px;
-  line-height: 1.45;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, #ffbf48, transparent 72%);
+  border-bottom: 1px solid color-mix(in oklab, #ffbf48, transparent 78%);
+  border-radius: 0;
+  color: #f1d596;
+  background: transparent;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
   outline: 0;
 }
 
 .brainLearningRegistry__composer textarea,
 .brainCustomCodeActs__editor textarea {
   resize: vertical;
-  min-height: 76px;
-  padding: 8px 9px;
+  min-height: 72px;
+  padding: 9px 0;
 }
 
 .brainCustomCodeActs__editor input {
@@ -10006,8 +10029,9 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__composer textarea:focus,
 .brainCustomCodeActs__editor input:focus,
 .brainCustomCodeActs__editor textarea:focus {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 18%);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 84%);
+  color: #fff0b9;
+  border-color: color-mix(in oklab, #ffbf48, transparent 46%);
+  box-shadow: none;
 }
 
 .brainLearningRegistry__actions,
@@ -10027,17 +10051,68 @@ ol.assistantText__list li::before {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
+  min-height: 28px;
   width: fit-content;
+  padding: 0 9px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 62%);
+  border-radius: 0;
+  color: #f1d596;
+  background: color-mix(in oklab, #ffbf48, transparent 94%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.brainCustomCodeActs__head {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.brainCustomCodeActs__head strong {
+  color: var(--forge-text);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.brainCustomCodeActs__editor label span {
+  color: color-mix(in oklab, var(--forge-text), transparent 16%);
+}
+
+.brainCustomCodeActs__editor input,
+.brainCustomCodeActs__editor textarea {
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
+  border-radius: 6px;
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-panel), #000 10%);
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.brainCustomCodeActs__editor textarea {
+  min-height: 76px;
+  padding: 8px 9px;
+}
+
+.brainCustomCodeActs__editor input {
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+.brainCustomCodeActs__editor input:focus,
+.brainCustomCodeActs__editor textarea:focus {
+  border-color: color-mix(in oklab, var(--forge-accent), transparent 18%);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 84%);
+}
+
+.brainCustomCodeActs__editor button {
+  min-height: 32px;
   padding: 0 10px;
   border: 1px solid color-mix(in oklab, var(--forge-accent), transparent 36%);
   border-radius: 6px;
   color: color-mix(in oklab, var(--forge-text), var(--forge-accent) 18%);
   background: color-mix(in oklab, var(--forge-accent), transparent 90%);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 10.5px;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 .brainLearningRegistry__actions button:disabled,
