@@ -328,6 +328,7 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   }
 ];
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
+const BRAIN_LEARNING_MACRO_PREFIX = "• ";
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
@@ -754,6 +755,35 @@ function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["s
   return <span className="brainLearningRegistry__source">{label}</span>;
 }
 
+function getBrainLearningMacroLineText(line: string) {
+  return line.replace(/^\s*[•*-]\s*/, "").trim();
+}
+
+function hasBrainLearningMacroContent(value: string) {
+  return value.split(/\r?\n/).some((line) => getBrainLearningMacroLineText(line).length > 0);
+}
+
+function normalizeBrainLearningMacroDraft(value: string) {
+  const normalized = value.replace(/\r\n/g, "\n");
+  if (!normalized.trim()) {
+    return "";
+  }
+  return normalized
+    .split("\n")
+    .map((line) => {
+      const text = getBrainLearningMacroLineText(line);
+      return text ? `${BRAIN_LEARNING_MACRO_PREFIX}${text}` : BRAIN_LEARNING_MACRO_PREFIX;
+    })
+    .join("\n");
+}
+
+function normalizeBrainLearningMacroEntry(value: string) {
+  return normalizeBrainLearningMacroDraft(value)
+    .split("\n")
+    .filter((line) => getBrainLearningMacroLineText(line).length > 0)
+    .join("\n");
+}
+
 function BrainLearningRegistry() {
   const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
   const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("lesson");
@@ -782,7 +812,7 @@ function BrainLearningRegistry() {
   }, [activeCategory, draft]);
 
   const addEntry = () => {
-    const text = draft.trim();
+    const text = normalizeBrainLearningMacroEntry(draft);
     if (!text) {
       return;
     }
@@ -795,6 +825,21 @@ function BrainLearningRegistry() {
     });
     setEntries(next);
     setDraft("");
+  };
+
+  const insertMacroPunctuation = (textarea: HTMLTextAreaElement) => {
+    const selectionStart = textarea.selectionStart ?? draft.length;
+    const selectionEnd = textarea.selectionEnd ?? selectionStart;
+    const before = draft.slice(0, selectionStart);
+    const after = draft.slice(selectionEnd);
+    const insert = before.length > 0 ? `\n${BRAIN_LEARNING_MACRO_PREFIX}` : BRAIN_LEARNING_MACRO_PREFIX;
+    const nextDraft = `${before}${insert}${after}`;
+    const nextCursor = before.length + insert.length;
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      textarea.setSelectionRange(nextCursor, nextCursor);
+      syncDraftTextareaHeight();
+    });
   };
 
   const deleteEntry = (entryId: string) => {
@@ -833,40 +878,30 @@ function BrainLearningRegistry() {
           ref={draftTextareaRef}
           value={draft}
           aria-label={category.title}
-          placeholder={category.placeholder}
+          placeholder={`${BRAIN_LEARNING_MACRO_PREFIX}${category.placeholder}`}
           rows={3}
           spellCheck={false}
           onChange={(event) => {
-            setDraft(event.currentTarget.value);
+            const textarea = event.currentTarget;
+            const nextDraft = normalizeBrainLearningMacroDraft(textarea.value);
+            setDraft(nextDraft);
             window.requestAnimationFrame(syncDraftTextareaHeight);
           }}
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey) {
+            if (event.key !== "Enter") {
               return;
             }
             event.preventDefault();
-            addEntry();
+            insertMacroPunctuation(event.currentTarget);
           }}
         />
         <div className="brainLearningRegistry__actions">
-          <button type="button" disabled={!draft.trim()} onClick={addEntry}>
+          <button type="button" disabled={!hasBrainLearningMacroContent(draft)} onClick={addEntry}>
             Save
           </button>
         </div>
       </div>
       <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.title} macros`}>
-        {categoryEntries.length === 0 ? (
-          <article
-            className="brainLearningRegistry__entry brainLearningRegistry__macro brainLearningRegistry__macro--ghost"
-            role="listitem"
-            aria-disabled="true"
-          >
-            <p>{category.placeholder}</p>
-            <footer>
-              <span className="brainLearningRegistry__source">empty macro</span>
-            </footer>
-          </article>
-        ) : null}
         {categoryEntries.map((entry) => (
           <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
             <p>{entry.text}</p>
