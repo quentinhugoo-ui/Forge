@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
+  BRAIN_MODIFY_NAMED_BRAIN_COMMAND,
+  BRAIN_NEWBRAIN_COMMAND,
   BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
   BRAIN_SCRAPLING_MCP_COMMAND,
@@ -239,6 +241,8 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
     "/frontdesign_": "layout",
     "/google_agenda_": "calendar",
     "/brain_": "brain",
+    [BRAIN_NEWBRAIN_COMMAND]: "brain",
+    [BRAIN_MODIFY_NAMED_BRAIN_COMMAND]: "brain",
     "/newmodule_": "modules",
     "/rust_port_adapter_": "plug",
     "/rust_state_store_": "database"
@@ -336,6 +340,8 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/editimage_": "Edit an existing image, such as changing its style, colors, objects, or layout.",
   "/google_agenda_": "Use Google Calendar for events, schedules, reminders, and dates.",
   "/brain_": "Save or update useful memory after the user confirms it is correct.",
+  [BRAIN_NEWBRAIN_COMMAND]: "Create a specialized Brain for a recurring domain without changing the immutable General Brain.",
+  [BRAIN_MODIFY_NAMED_BRAIN_COMMAND]: "Add a lesson, rule, skill, task, or CodeAct draft to one specialized Brain.",
   "/questionnaire_": "Ask a short set of questions when the task needs clearer choices.",
   "/newcompute_": "Start a new heavy local calculation, such as a simulation or numeric analysis.",
   "/selectcompute_": "Reuse a saved calculation instead of rebuilding the same work.",
