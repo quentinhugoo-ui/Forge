@@ -68,4 +68,19 @@ describe("canonical memory durability", () => {
     expect(brainStoreSource).toContain("readBrainSpecializedBrains()");
     expect(brainStoreSource).toContain("void hydrateCanonicalBrainMemory()");
   });
+
+  it("copies agent-created files into a canonical session artifact ledger", () => {
+    expect(mainSource).toContain('return join(memoryRootPath(), "session-artifacts.json")');
+    expect(mainSource).toContain('return join(memoryRootPath(), "session-artifacts")');
+    expect(mainSource).toContain('schema: "ingen.session_artifact.ledger.v1"');
+    expect(mainSource).toContain("function persistAgentActionSessionArtifacts");
+    expect(mainSource).toContain("function executeTrackedAgentAction");
+    expect(mainSource).toContain("await persistAgentActionSessionArtifacts(request, result)");
+    expect(mainSource).toContain("await copyFile(originalPath, canonicalPath)");
+    expect(mainSource).toContain("sha256File(originalPath)");
+    expect(mainSource).toContain("sessionArtifactLedgerPath: sessionArtifactLedgerStorePath()");
+    expect(mainSource).toContain("await ensureSessionArtifactLedgerOnDisk()");
+    expect(mainSource).toContain("return executeTrackedAgentAction(request)");
+    expect(mainSource).not.toContain("return executeAgentActionRequest(agentActionHostConfig(), request)");
+  });
 });

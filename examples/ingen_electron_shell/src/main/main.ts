@@ -4089,6 +4089,14 @@ function brainRendererMemoryStorePath(): string {
   return join(memoryRootPath(), "renderer-brain-memory.json");
 }
 
+function sessionArtifactLedgerStorePath(): string {
+  return join(memoryRootPath(), "session-artifacts.json");
+}
+
+function sessionArtifactAssetsDir(): string {
+  return join(memoryRootPath(), "session-artifacts");
+}
+
 function memoryBackupDir(): string {
   return join(memoryRootPath(), "backups");
 }
@@ -4295,6 +4303,237 @@ async function ensureBrainCanonicalMemorySnapshotOnDisk(): Promise<void> {
     blankBrainCanonicalMemorySnapshot(),
     "renderer-brain-memory-init"
   );
+}
+
+interface SessionArtifactLedgerEntry {
+  schema: "ingen.session_artifact.entry.v1";
+  id: string;
+  source: "agent_action";
+  sessionId: string;
+  action: AgentActionRequest["action"];
+  cwd: string;
+  originalPath: string;
+  canonicalPath: string;
+  sha256: string;
+  bytes: number;
+  copied: boolean;
+  resultProofHash: string;
+  observedChanges: string[];
+  createdAt: string;
+}
+
+interface SessionArtifactLedgerEnvelope {
+  schema: "ingen.session_artifact.ledger.v1";
+  updatedAt: string;
+  sourceOfTruth: string;
+  entries: SessionArtifactLedgerEntry[];
+  proofHash: string;
+}
+
+function blankSessionArtifactLedger(): SessionArtifactLedgerEnvelope {
+  return {
+    schema: "ingen.session_artifact.ledger.v1",
+    updatedAt: new Date(0).toISOString(),
+    sourceOfTruth: memoryRootPath(),
+    entries: [],
+    proofHash: stableSearchArchiveHash([])
+  };
+}
+
+function protectedMapRootPath(): string {
+  return resolve("C:\\Users\\quent\\Documents\\EVE\\MAP").toLowerCase();
+}
+
+function pathInsideProtectedMap(filePath: string): boolean {
+  const protectedRoot = protectedMapRootPath();
+  const resolvedPath = resolve(filePath).toLowerCase();
+  return resolvedPath === protectedRoot || resolvedPath.startsWith(`${protectedRoot}\\`) || resolvedPath.startsWith(`${protectedRoot}/`);
+}
+
+function pathInsideSessionArtifactAssets(filePath: string): boolean {
+  const artifactRoot = resolve(sessionArtifactAssetsDir()).toLowerCase();
+  const resolvedPath = resolve(filePath).toLowerCase();
+  return resolvedPath === artifactRoot || resolvedPath.startsWith(`${artifactRoot}\\`) || resolvedPath.startsWith(`${artifactRoot}/`);
+}
+
+async function sha256File(filePath: string): Promise<{ sha256: string; bytes: number }> {
+  const fileStat = await stat(filePath);
+  const hash = createHash("sha256");
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", rejectPromise);
+    stream.on("end", () => resolvePromise());
+  });
+  return {
+    sha256: hash.digest("hex"),
+    bytes: fileStat.size
+  };
+}
+
+function canonicalSessionArtifactPath(sourcePath: string, sha256: string): string {
+  const safeName = safeMemoryFileToken(basename(sourcePath || "artifact"));
+  return join(sessionArtifactAssetsDir(), sha256.slice(0, 2), `${sha256}-${safeName}`);
+}
+
+function agentActionResultArtifactPathCandidates(result: AgentActionResult): string[] {
+  const candidates = new Set<string>();
+  const collect = (value: unknown, key = ""): void => {
+    if (typeof value === "string") {
+      if ((key === "path" || key === "toPath") && value.trim()) {
+        candidates.add(value.trim());
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "string" && key === "artifacts" && item.trim()) {
+          candidates.add(item.trim());
+        } else {
+          collect(item, key);
+        }
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      if (entryKey === "cwd") continue;
+      collect(entryValue, entryKey);
+    }
+  };
+  collect({
+    path: result.path,
+    toPath: result.toPath,
+    artifacts: result.artifacts,
+    appshot: result.appshot,
+    browserScreenshot: result.browserScreenshot,
+    download: result.download,
+    documentMedia: result.documentMedia,
+    audit: result.audit
+  });
+  return Array.from(candidates);
+}
+
+function resolveAgentActionArtifactPath(result: AgentActionResult, candidatePath: string): string {
+  return resolve(candidatePath.match(/^[a-zA-Z]:[\\/]/) ? candidatePath : join(result.cwd || activeWorkspaceDir, candidatePath));
+}
+
+async function readSessionArtifactLedger(): Promise<SessionArtifactLedgerEnvelope> {
+  try {
+    const raw = await readFile(sessionArtifactLedgerStorePath(), "utf8");
+    const parsed = JSON.parse(raw) as Partial<SessionArtifactLedgerEnvelope>;
+    const entries = Array.isArray(parsed.entries)
+      ? parsed.entries.filter((entry): entry is SessionArtifactLedgerEntry =>
+        isRecord(entry) &&
+        entry.schema === "ingen.session_artifact.entry.v1" &&
+        typeof entry.id === "string" &&
+        typeof entry.originalPath === "string" &&
+        typeof entry.canonicalPath === "string" &&
+        typeof entry.sha256 === "string" &&
+        typeof entry.bytes === "number"
+      )
+      : [];
+    return {
+      schema: "ingen.session_artifact.ledger.v1",
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+      sourceOfTruth: memoryRootPath(),
+      entries,
+      proofHash: typeof parsed.proofHash === "string" ? parsed.proofHash : stableSearchArchiveHash(entries)
+    };
+  } catch (error) {
+    if (existsSync(sessionArtifactLedgerStorePath())) {
+      await backupMemoryFile(sessionArtifactLedgerStorePath(), "corrupt-session-artifact-ledger");
+      console.error("Failed to read session artifact ledger; preserved backup before recovery.", error);
+    }
+    return blankSessionArtifactLedger();
+  }
+}
+
+async function writeSessionArtifactLedger(entries: SessionArtifactLedgerEntry[], reason: string): Promise<void> {
+  const sorted = entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const envelope: SessionArtifactLedgerEnvelope = {
+    schema: "ingen.session_artifact.ledger.v1",
+    updatedAt: new Date().toISOString(),
+    sourceOfTruth: memoryRootPath(),
+    entries: sorted,
+    proofHash: stableSearchArchiveHash(sorted.map((entry) => `${entry.sha256}:${entry.originalPath}:${entry.resultProofHash}`))
+  };
+  await atomicWriteJsonFile(sessionArtifactLedgerStorePath(), envelope, reason);
+}
+
+async function ensureSessionArtifactLedgerOnDisk(): Promise<void> {
+  await mkdir(sessionArtifactAssetsDir(), { recursive: true });
+  if (existsSync(sessionArtifactLedgerStorePath())) return;
+  await atomicWriteJsonFile(sessionArtifactLedgerStorePath(), blankSessionArtifactLedger(), "session-artifact-ledger-init");
+}
+
+async function persistAgentActionSessionArtifacts(
+  request: AgentActionRequest,
+  result: AgentActionResult
+): Promise<SessionArtifactLedgerEntry[]> {
+  if (!result.accepted) return [];
+  const paths = agentActionResultArtifactPathCandidates(result);
+  if (paths.length === 0) return [];
+  await ensureSessionArtifactLedgerOnDisk();
+  const existingLedger = await readSessionArtifactLedger();
+  const entriesById = new Map(existingLedger.entries.map((entry) => [entry.id, entry]));
+  const createdAt = new Date().toISOString();
+  const added: SessionArtifactLedgerEntry[] = [];
+  for (const candidate of paths) {
+    const originalPath = resolveAgentActionArtifactPath(result, candidate);
+    if (pathInsideProtectedMap(originalPath) || pathInsideSessionArtifactAssets(originalPath)) {
+      continue;
+    }
+    let fileStat;
+    try {
+      fileStat = await stat(originalPath);
+    } catch {
+      continue;
+    }
+    if (!fileStat.isFile()) continue;
+    const { sha256, bytes } = await sha256File(originalPath);
+    const canonicalPath = pathInsideMemoryRoot(originalPath)
+      ? originalPath
+      : canonicalSessionArtifactPath(originalPath, sha256);
+    if (!pathInsideMemoryRoot(originalPath)) {
+      await mkdir(dirname(canonicalPath), { recursive: true });
+      if (!existsSync(canonicalPath)) {
+        await copyFile(originalPath, canonicalPath);
+      }
+    }
+    const entry: SessionArtifactLedgerEntry = {
+      schema: "ingen.session_artifact.entry.v1",
+      id: stableSearchArchiveHash({ sha256, originalPath, resultProofHash: result.proofHash }).slice(0, 32),
+      source: "agent_action",
+      sessionId: panelsChatBottomState.activeSessionId || sidebarState.recentSessionId || "unknown-session",
+      action: request.action,
+      cwd: result.cwd || activeWorkspaceDir,
+      originalPath,
+      canonicalPath,
+      sha256,
+      bytes,
+      copied: canonicalPath !== originalPath,
+      resultProofHash: result.proofHash,
+      observedChanges: result.observedChanges ?? [],
+      createdAt
+    };
+    entriesById.set(entry.id, entry);
+    added.push(entry);
+  }
+  if (added.length > 0) {
+    await writeSessionArtifactLedger(Array.from(entriesById.values()), "session-artifacts");
+  }
+  return added;
+}
+
+async function executeTrackedAgentAction(request: AgentActionRequest): Promise<AgentActionResult> {
+  const result = await executeAgentActionRequest(agentActionHostConfig(), request);
+  try {
+    await persistAgentActionSessionArtifacts(request, result);
+  } catch (error) {
+    console.error("Failed to persist agent action session artifacts.", error);
+  }
+  return result;
 }
 
 function normalizeBrainIdentityName(value: unknown): string {
@@ -7441,7 +7680,7 @@ async function applyDeterministicOrganizationFallback(params: {
     params.commitProgress?.(assistantMessage);
     await waitAgentActionVisualStep();
     throwIfAssistantRunCancelled(params.assistantRun);
-    const result = await executeAgentActionRequest(agentActionHostConfig(), request);
+    const result = await executeTrackedAgentAction(request);
     throwIfAssistantRunCancelled(params.assistantRun);
     emitAgentRuntimeToolResult({
       agentEvents: params.agentEvents,
@@ -7592,7 +7831,7 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     throwIfAssistantRunCancelled(params.assistantRun);
-    const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
+    const result = await executeTrackedAgentAction(extracted.request);
     throwIfAssistantRunCancelled(params.assistantRun);
     emitAgentRuntimeToolResult({
       agentEvents: params.agentEvents,
@@ -13784,7 +14023,7 @@ function installTerminalIpc(): void {
         }
       };
     }
-    return executeAgentActionRequest(agentActionHostConfig(), request);
+    return executeTrackedAgentAction(request);
   });
 
   ipcMain.handle("forge:choose-workspace-folder", async (event): Promise<WorkspaceChoiceResult> => {
@@ -15046,13 +15285,16 @@ async function writeCanonicalMemoryManifest(): Promise<void> {
     chatArchivePath: chatArchiveStorePath(),
     brainIdentityPath: brainIdentityStorePath(),
     rendererBrainMemoryPath: brainRendererMemoryStorePath(),
+    sessionArtifactLedgerPath: sessionArtifactLedgerStorePath(),
+    sessionArtifactAssetsPath: sessionArtifactAssetsDir(),
     sessionAssetsPath: join(memoryRootPath(), "session-assets"),
     backupPath: memoryBackupDir(),
     proofHash: stableSearchArchiveHash({
       sourceOfTruth: memoryRootPath(),
       chatArchivePath: chatArchiveStorePath(),
       brainIdentityPath: brainIdentityStorePath(),
-      rendererBrainMemoryPath: brainRendererMemoryStorePath()
+      rendererBrainMemoryPath: brainRendererMemoryStorePath(),
+      sessionArtifactLedgerPath: sessionArtifactLedgerStorePath()
     })
   };
   await atomicWriteJsonFile(join(memoryRootPath(), "memory-source.json"), manifest, "memory-source");
@@ -15065,6 +15307,7 @@ async function reconcileCanonicalMemoryStore(): Promise<void> {
   await reconcileCanonicalBrainIdentityStore();
   await reconcileCanonicalChatArchiveStore();
   await ensureBrainCanonicalMemorySnapshotOnDisk();
+  await ensureSessionArtifactLedgerOnDisk();
   await writeCanonicalMemoryManifest();
 }
 
