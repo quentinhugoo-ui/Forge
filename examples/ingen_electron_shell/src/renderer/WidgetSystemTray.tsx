@@ -162,17 +162,6 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
     <aside className="widgetSystemTray" aria-label="System indicators">
       <button
         type="button"
-        className="widgetSystemTray__chevron"
-        aria-label="Show hidden icons"
-        title="Show hidden icons"
-        onClick={() => openShellUri("ms-settings:taskbar")}
-      >
-        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-          <path d="M6 12 10 8l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      <button
-        type="button"
         className="widgetSystemTray__icon"
         aria-label="Network"
         title="Network"
@@ -191,7 +180,7 @@ export function WidgetSystemTray({ visible }: { visible: boolean }) {
       </button>
       <button
         type="button"
-        className="widgetSystemTray__icon widgetSystemTray__battery"
+        className="widgetSystemTray__battery"
         aria-label={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
         title={batteryPercent !== null ? `Battery ${batteryPercent}%` : "Battery"}
         onClick={() => openShellUri("ms-settings:batterysaver")}

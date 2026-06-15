@@ -894,11 +894,9 @@ button {
   }
 }
 
+/* Visual reset only — each button type owns its own box (display/size) below,
+   so the shared rule never out-specifies the per-type layout. */
 .widgetSystemTray button {
-  display: grid;
-  place-items: center;
-  height: 24px;
-  width: 26px;
   padding: 0;
   color: inherit;
   background: transparent;
@@ -918,7 +916,14 @@ button {
   transform: scale(0.94);
 }
 
-.widgetSystemTray button svg {
+.widgetSystemTray__icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+}
+
+.widgetSystemTray__icon svg {
   width: 16px;
   height: 16px;
   fill: none;
@@ -927,14 +932,15 @@ button {
 .widgetSystemTray__battery {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  width: auto;
-  padding: 0 4px;
+  gap: 3px;
+  height: 24px;
+  padding: 0 5px;
 }
 
 .widgetSystemTray__battery svg {
   width: 22px;
   height: 16px;
+  fill: none;
 }
 
 .widgetSystemTray__batteryPct {
