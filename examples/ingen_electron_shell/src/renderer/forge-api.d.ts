@@ -10,6 +10,7 @@ interface ForgeWindowControlsApi {
   toggleMaximize: () => Promise<boolean>;
   setWidgetMode?: (enabled: boolean, delayMs?: number) => Promise<boolean>;
   setWidgetHitRegions?: (regions: Array<{ x: number; y: number; width: number; height: number }>) => Promise<boolean>;
+  setWidgetPanelExpanded?: (enabled: boolean) => Promise<boolean>;
   setWidgetClickThrough?: (enabled: boolean) => Promise<boolean>;
   setWidgetTaskbarAutoHide?: (enabled: boolean) => Promise<boolean>;
   toggleWidgetTaskbar?: () => Promise<boolean>;

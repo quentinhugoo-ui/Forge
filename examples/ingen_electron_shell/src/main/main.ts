@@ -259,6 +259,7 @@ const PANELS_CHAT_BOTTOM_MAX_VISUAL_SNAPSHOTS = 6;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_CUES = 160;
 const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
 const WIDGET_WINDOW_HEIGHT = 174;
+const WIDGET_WINDOW_PANEL_HEIGHT = 535;
 const WIDGET_WINDOW_BOTTOM_GAP = 0;
 const WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP = 2;
 const WIDGET_WINDOW_SHRINK_DELAY_MS = 720;
@@ -292,6 +293,7 @@ let widgetTaskbarAutoHideTimer: ReturnType<typeof setTimeout> | null = null;
 let widgetWindowBoundsAnimationTimer: ReturnType<typeof setInterval> | null = null;
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let widgetWindowClickThrough = false;
+let widgetWindowPanelExpanded = false;
 let widgetTaskbarOriginalState: number | null = null;
 let widgetTaskbarOriginalRegistryByte: number | null = null;
 let widgetTaskbarHidden = false;
@@ -11348,7 +11350,8 @@ function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: bo
   const verticalArea = targetTaskbarHidden ? display.bounds : workArea;
   const restoreBounds = widgetWindowRestoreState?.bounds ?? window.getBounds();
   const width = Math.min(workArea.width, Math.max(520, restoreBounds.width));
-  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, verticalArea.height - 24));
+  const targetHeight = widgetWindowPanelExpanded ? WIDGET_WINDOW_PANEL_HEIGHT : WIDGET_WINDOW_HEIGHT;
+  const height = Math.min(targetHeight, Math.max(136, verticalArea.height - 24));
   const bottomGap = targetTaskbarHidden ? WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP : WIDGET_WINDOW_BOTTOM_GAP;
   const x = Math.min(
     Math.max(restoreBounds.x, workArea.x),
@@ -11364,8 +11367,8 @@ function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: bo
 
 function boundsLookLikeWidget(bounds: Electron.Rectangle, display = screen.getDisplayMatching(bounds)): boolean {
   const { workArea } = display;
-  const nearBottom = bounds.y >= workArea.y + workArea.height - (WIDGET_WINDOW_HEIGHT + 140);
-  const shortEnough = bounds.height <= WIDGET_WINDOW_HEIGHT + 80;
+  const nearBottom = bounds.y >= workArea.y + workArea.height - (WIDGET_WINDOW_PANEL_HEIGHT + 140);
+  const shortEnough = bounds.height <= WIDGET_WINDOW_PANEL_HEIGHT + 80;
   const wideEnough = bounds.width >= Math.min(520, workArea.width) || bounds.width >= workArea.width * 0.45;
   return nearBottom && shortEnough && wideEnough;
 }
@@ -11409,6 +11412,7 @@ function releaseNativeWidgetWindowControlState(window: BrowserWindow): void {
   clearWidgetWindowBoundsAnimationTimer();
   resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);
+  widgetWindowPanelExpanded = false;
   widgetWindowRestoreState = null;
   window.setAlwaysOnTop(false);
 }
@@ -12597,6 +12601,32 @@ function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, reg
   return true;
 }
 
+function setNativeWindowWidgetPanelExpanded(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget panel expansion from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+  const expanded = enabled === true;
+  if (widgetWindowPanelExpanded === expanded) {
+    return true;
+  }
+  widgetWindowPanelExpanded = expanded;
+  if (widgetWindowRestoreState === null || !boundsLookLikeWidget(window.getBounds())) {
+    return true;
+  }
+  const bounds = widgetWindowBounds(window);
+  traceWidgetTaskbarStep("resize-widget-panel", { id: window.id, bounds, expanded });
+  clearWidgetWindowBoundsAnimationTimer();
+  window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
+  window.setAlwaysOnTop(true, "floating");
+  animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
+  return true;
+}
+
 function setNativeWindowWidgetClickThrough(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget click-through from invalid sender", event.senderFrame?.url ?? "");
@@ -12957,6 +12987,7 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-close", (event): boolean => closeNativeWindow(event));
   ipcMain.handle("forge:window-widget-mode", (event, enabled, delayMs): boolean => setNativeWindowWidgetMode(event, enabled, delayMs));
   ipcMain.handle("forge:window-widget-hit-regions", (event, regions): boolean => setNativeWindowWidgetHitRegions(event, regions));
+  ipcMain.handle("forge:window-widget-panel-expanded", (event, enabled): boolean => setNativeWindowWidgetPanelExpanded(event, enabled));
   ipcMain.handle("forge:window-widget-click-through", (event, enabled): boolean => setNativeWindowWidgetClickThrough(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-autohide", (event, enabled): boolean => setNativeWindowWidgetTaskbarAutoHide(event, enabled));
   ipcMain.handle("forge:window-widget-taskbar-toggle", (event): boolean => toggleNativeWindowWidgetTaskbar(event));

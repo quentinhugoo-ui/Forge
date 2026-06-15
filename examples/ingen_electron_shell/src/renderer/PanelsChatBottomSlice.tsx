@@ -4850,6 +4850,17 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     !widgetTranscriptCollapsed &&
     !composerQuestionnaire;
+  const widgetPanelExpanded = widgetMode && (Boolean(composerQuestionnaire) || widgetTranscriptPanelOpen);
+  useEffect(() => {
+    const setWidgetPanelExpanded = globalThis.window?.forgeWindowControls?.setWidgetPanelExpanded;
+    if (!setWidgetPanelExpanded) {
+      return undefined;
+    }
+    void setWidgetPanelExpanded(widgetPanelExpanded);
+    return () => {
+      void setWidgetPanelExpanded(false);
+    };
+  }, [widgetPanelExpanded]);
   const useMathInCompute = useCallback((formula: string) => {
     const math = formula.trim();
     if (!math || parallelMode) {
