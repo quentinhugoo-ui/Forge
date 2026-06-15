@@ -197,6 +197,8 @@ Update 2026-06-15: Brain CodeActs are now treated as loop-stream event boundarie
 
 Update 2026-06-15: the chat submit path now uses a single `executeUniversalLoopOrchestratorPass` followed by `executeUniversalLoopContinuation` instead of separate continuation blocks for Brain switching and Brain CodeActs. Each pass runs the same ordered circuit: agent actions, fallback projections, module CodeActs, Brain rules/events, questionnaire pause enforcement, Brain segment execution and verified display injection. The continuation selector can resume after a Brain switch, resume after an actionable CodeAct, pause cleanly for `/workspace_` and `/questionnaire_`, or stop and leave the assistant response as a normal single answer when no loop continuation is needed.
 
+Update 2026-06-15: non-Brain CodeAct events now share the same visual lifecycle as local agent actions: a `working` phase while the streamed event is active, with the existing animated icon treatment, then a `complete` phase that settles into the muted chatbar-gray event line. Brain creation/change/modification events keep their dedicated blue Brain treatment instead of being folded into the generic gray lifecycle.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.

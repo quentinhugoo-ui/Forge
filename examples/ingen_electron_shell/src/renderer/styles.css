@@ -4481,7 +4481,8 @@ button {
   color: #d3b8ff;
 }
 
-.transcriptCodeActEvent--agent {
+.transcriptCodeActEvent--agent,
+.transcriptCodeActEvent--codeact {
   transition:
     color 260ms ease-out,
     opacity 260ms ease-out,
@@ -4503,12 +4504,38 @@ button {
   color: #d8dde0;
 }
 
+.transcriptCodeActEvent--codeact-working {
+  color: #d8dde0;
+  opacity: 1;
+  filter: drop-shadow(0 0 10px color-mix(in oklab, currentColor 18%, transparent));
+}
+
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon {
+  animation: transcriptAgentEventPulse 1150ms ease-in-out infinite;
+}
+
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__text {
+  color: #d8dde0;
+}
+
 .transcriptCodeActEvent--agent-complete {
   opacity: 0.72;
   animation: transcriptAgentEventSettle 260ms ease-out both;
 }
 
 .transcriptCodeActEvent--agent-complete .transcriptCodeActEvent__text {
+  color: #8d9396;
+}
+
+.transcriptCodeActEvent--codeact-complete {
+  opacity: 0.72;
+  animation: transcriptAgentEventSettle 260ms ease-out both;
+}
+
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__text {
   color: #8d9396;
 }
 
@@ -6722,6 +6749,8 @@ ol.assistantText__list li::before {
   .transcriptCodeActEvent__icon .brainSegmentIcon path,
   .transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__icon,
   .transcriptCodeActEvent--agent-complete,
+  .transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon,
+  .transcriptCodeActEvent--codeact-complete,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
   .transcriptContextCompactionEvent,

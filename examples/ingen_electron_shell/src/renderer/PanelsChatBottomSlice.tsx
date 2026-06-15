@@ -3069,7 +3069,11 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
   const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const isPendingAgentEvent = writing && Boolean(agentCommand) && !event.detail;
   const fileModification = agentCommand ? agentFileModificationSummary(event, agentCommand) : undefined;
+  const isGenericCodeActEvent = !isBrainStyled && !agentCommand;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
+  const [genericCodeActPhase, setGenericCodeActPhase] = useState<"working" | "complete">(
+    writing && isGenericCodeActEvent ? "working" : "complete"
+  );
 
   useEffect(() => {
     if (!isBrainSegment) {
@@ -3080,11 +3084,24 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
     return () => window.clearTimeout(timeout);
   }, [event.command, isBrainSegment]);
 
+  useEffect(() => {
+    if (!isGenericCodeActEvent) {
+      return;
+    }
+    if (!writing) {
+      setGenericCodeActPhase("complete");
+      return;
+    }
+    setGenericCodeActPhase("working");
+    const timeout = window.setTimeout(() => setGenericCodeActPhase("complete"), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [event.command, event.line, isGenericCodeActEvent, writing]);
+
   const eventClassName = isBrainStyled
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
     : agentCommand
       ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${fileModification ? " transcriptCodeActEvent--fileModification" : ""}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`
-      : "transcriptCodeActEvent";
+      : `transcriptCodeActEvent transcriptCodeActEvent--codeact transcriptCodeActEvent--codeact-${genericCodeActPhase}`;
   const text = isBrainSegment
     ? brainSegmentEventText(event.command, brainSegmentPhase)
     : isPendingAgentEvent
