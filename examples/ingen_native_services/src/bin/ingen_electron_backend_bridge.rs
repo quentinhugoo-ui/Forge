@@ -251,6 +251,7 @@ struct BangerMapsRootIngestProjection {
     traversal_seed_hash: String,
     traversal_seed: BangerMapsTraversalSeed,
     content_cache: BangerMapsContentCacheProjection,
+    content_decode: BangerMapsContentDecodeProjection,
     verifier: BangerMapsRootIngestVerifier,
     error: Option<BangerNativeError>,
 }
@@ -316,6 +317,84 @@ struct BangerMapsContentCacheRecord {
     byte_count: usize,
     content_hash: String,
     error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsContentDecodeProjection {
+    schema: &'static str,
+    enabled: bool,
+    decoded_content_count: usize,
+    failed_content_count: usize,
+    b3dm_count: usize,
+    glb_count: usize,
+    gltf_count: usize,
+    total_glb_byte_count: usize,
+    total_bin_chunk_byte_count: usize,
+    decode_manifest_hash: String,
+    records: Vec<BangerMapsContentDecodeRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsContentDecodeRecord {
+    tile_id: String,
+    source_uri: String,
+    cache_path: String,
+    source_content_type: &'static str,
+    container: &'static str,
+    byte_count: usize,
+    content_hash: String,
+    b3dm: Option<BangerB3dmHeaderProjection>,
+    glb: Option<BangerGlbProjection>,
+    gltf: Option<BangerGltfSummaryProjection>,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerB3dmHeaderProjection {
+    version: u32,
+    byte_length: u32,
+    feature_table_json_byte_length: u32,
+    feature_table_binary_byte_length: u32,
+    batch_table_json_byte_length: u32,
+    batch_table_binary_byte_length: u32,
+    glb_byte_offset: usize,
+    glb_byte_count: usize,
+    feature_table_hash: String,
+    batch_table_hash: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerGlbProjection {
+    version: u32,
+    declared_byte_length: u32,
+    json_chunk_byte_count: usize,
+    bin_chunk_byte_count: usize,
+    chunk_count: usize,
+    unknown_chunk_count: usize,
+    json_hash: String,
+    bin_hash: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerGltfSummaryProjection {
+    asset_version: String,
+    scene_count: usize,
+    node_count: usize,
+    mesh_count: usize,
+    primitive_count: usize,
+    material_count: usize,
+    texture_count: usize,
+    image_count: usize,
+    accessor_count: usize,
+    buffer_view_count: usize,
+    buffer_count: usize,
+    extensions_used_count: usize,
+    extensions_required_count: usize,
 }
 
 #[derive(Serialize)]
@@ -443,13 +522,18 @@ fn main() {
         println!("{}", serde_json::to_string(&frame).expect("serialize banger preview frame"));
         return;
     }
+    if env::args().any(|argument| argument == "--banger-maps-content-decode") {
+        let ingest = banger_maps_root_ingest(Some(true), Some(true));
+        println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps content decode"));
+        return;
+    }
     if env::args().any(|argument| argument == "--banger-maps-content-cache") {
-        let ingest = banger_maps_root_ingest(Some(true));
+        let ingest = banger_maps_root_ingest(Some(true), None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps content cache"));
         return;
     }
     if env::args().any(|argument| argument == "--banger-maps-root-ingest") {
-        let ingest = banger_maps_root_ingest(None);
+        let ingest = banger_maps_root_ingest(None, None);
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps root ingest"));
         return;
     }
@@ -685,7 +769,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn banger_maps_root_ingest(force_content_fetch: Option<bool>) -> BangerMapsRootIngestProjection {
+fn banger_maps_root_ingest(force_content_fetch: Option<bool>, force_content_decode: Option<bool>) -> BangerMapsRootIngestProjection {
     let url = env::var("FORGE_BANGER_MAPS_ROOT_URL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -723,6 +807,7 @@ fn banger_maps_root_ingest(force_content_fetch: Option<bool>) -> BangerMapsRootI
                     traversal_seed_hash: proof_hash.clone(),
                     traversal_seed: empty_banger_maps_traversal_seed(),
                     content_cache: empty_banger_maps_content_cache(&cache_dir),
+                    content_decode: empty_banger_maps_content_decode(),
                     verifier: banger_maps_root_ingest_verifier(),
                     error: Some(BangerNativeError {
                         code: "root_fetch_failed",
@@ -733,7 +818,17 @@ fn banger_maps_root_ingest(force_content_fetch: Option<bool>) -> BangerMapsRootI
             }
         },
     };
-    summarize_banger_maps_root(&url, &cache_dir, &cache_path, &bytes, source, cache_hit, error, force_content_fetch)
+    summarize_banger_maps_root(
+        &url,
+        &cache_dir,
+        &cache_path,
+        &bytes,
+        source,
+        cache_hit,
+        error,
+        force_content_fetch,
+        force_content_decode,
+    )
 }
 
 fn banger_maps_cache_dir() -> PathBuf {
@@ -786,6 +881,7 @@ fn summarize_banger_maps_root(
     cache_hit: bool,
     error: Option<BangerNativeError>,
     force_content_fetch: Option<bool>,
+    force_content_decode: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
     let root_hash = sha256_hex(bytes);
     let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
@@ -796,6 +892,7 @@ fn summarize_banger_maps_root(
     let geometric_error = root.and_then(|value| value.get("geometricError")).and_then(Value::as_f64);
     let traversal_seed = build_banger_maps_traversal_seed(root);
     let content_cache = build_banger_maps_content_cache(url, cache_dir, &traversal_seed, force_content_fetch);
+    let content_decode = build_banger_maps_content_decode(&content_cache, force_content_decode);
     let asset_version = parsed
         .as_ref()
         .and_then(|value| value.get("asset"))
@@ -828,6 +925,7 @@ fn summarize_banger_maps_root(
         traversal_seed_hash,
         traversal_seed,
         content_cache,
+        content_decode,
         verifier: banger_maps_root_ingest_verifier(),
         error,
     }
@@ -1153,6 +1251,329 @@ fn build_banger_maps_content_cache(
         cache_manifest_hash,
         records,
     }
+}
+
+fn empty_banger_maps_content_decode() -> BangerMapsContentDecodeProjection {
+    BangerMapsContentDecodeProjection {
+        schema: "forge.banger.native_3d_tiles_content_decode.v1",
+        enabled: false,
+        decoded_content_count: 0,
+        failed_content_count: 0,
+        b3dm_count: 0,
+        glb_count: 0,
+        gltf_count: 0,
+        total_glb_byte_count: 0,
+        total_bin_chunk_byte_count: 0,
+        decode_manifest_hash: sha256_hex(b"empty_banger_maps_content_decode"),
+        records: Vec::new(),
+    }
+}
+
+fn build_banger_maps_content_decode(
+    content_cache: &BangerMapsContentCacheProjection,
+    force_content_decode: Option<bool>,
+) -> BangerMapsContentDecodeProjection {
+    let enabled = force_content_decode.unwrap_or_else(|| {
+        env::var("FORGE_BANGER_MAPS_DECODE_TILE_CONTENT")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    });
+    if !enabled {
+        return empty_banger_maps_content_decode();
+    }
+    let records = content_cache
+        .records
+        .iter()
+        .filter(|record| record.error.is_none() && (record.fetched || record.cache_hit))
+        .map(decode_banger_maps_content_record)
+        .collect::<Vec<_>>();
+    let decoded_content_count = records.iter().filter(|record| record.error.is_none()).count();
+    let failed_content_count = records.iter().filter(|record| record.error.is_some()).count();
+    let b3dm_count = records.iter().filter(|record| record.container == "b3dm").count();
+    let glb_count = records.iter().filter(|record| record.container == "glb").count();
+    let gltf_count = records.iter().filter(|record| record.container == "gltf").count();
+    let total_glb_byte_count = records
+        .iter()
+        .filter_map(|record| record.glb.as_ref().map(|glb| glb.declared_byte_length as usize))
+        .sum();
+    let total_bin_chunk_byte_count = records
+        .iter()
+        .filter_map(|record| record.glb.as_ref().map(|glb| glb.bin_chunk_byte_count))
+        .sum();
+    let decode_manifest_hash = sha256_hex(
+        records
+            .iter()
+            .map(|record| {
+                format!(
+                    "{}:{}:{}:{}:{};",
+                    record.tile_id,
+                    record.source_uri,
+                    record.container,
+                    record.content_hash,
+                    record.error.as_deref().unwrap_or("")
+                )
+            })
+            .collect::<String>()
+            .as_bytes(),
+    );
+    BangerMapsContentDecodeProjection {
+        schema: "forge.banger.native_3d_tiles_content_decode.v1",
+        enabled,
+        decoded_content_count,
+        failed_content_count,
+        b3dm_count,
+        glb_count,
+        gltf_count,
+        total_glb_byte_count,
+        total_bin_chunk_byte_count,
+        decode_manifest_hash,
+        records,
+    }
+}
+
+fn decode_banger_maps_content_record(record: &BangerMapsContentCacheRecord) -> BangerMapsContentDecodeRecord {
+    let bytes = match fs::read(&record.cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return failed_banger_decode_record(record, "missing", format!("decode read: {error}"));
+        }
+    };
+    let content_hash = sha256_hex(&bytes);
+    match record.extension.as_str() {
+        "b3dm" => match decode_banger_b3dm(&bytes) {
+            Ok((b3dm, glb_bytes)) => match decode_banger_glb(glb_bytes) {
+                Ok((glb, gltf)) => BangerMapsContentDecodeRecord {
+                    tile_id: record.tile_id.clone(),
+                    source_uri: record.source_uri.clone(),
+                    cache_path: record.cache_path.clone(),
+                    source_content_type: record.content_type,
+                    container: "b3dm",
+                    byte_count: bytes.len(),
+                    content_hash,
+                    b3dm: Some(b3dm),
+                    glb: Some(glb),
+                    gltf: Some(gltf),
+                    error: None,
+                },
+                Err(error) => failed_banger_decode_record(record, "b3dm", error),
+            },
+            Err(error) => failed_banger_decode_record(record, "b3dm", error),
+        },
+        "glb" => match decode_banger_glb(&bytes) {
+            Ok((glb, gltf)) => BangerMapsContentDecodeRecord {
+                tile_id: record.tile_id.clone(),
+                source_uri: record.source_uri.clone(),
+                cache_path: record.cache_path.clone(),
+                source_content_type: record.content_type,
+                container: "glb",
+                byte_count: bytes.len(),
+                content_hash,
+                b3dm: None,
+                glb: Some(glb),
+                gltf: Some(gltf),
+                error: None,
+            },
+            Err(error) => failed_banger_decode_record(record, "glb", error),
+        },
+        "gltf" => match decode_banger_gltf_json(&bytes) {
+            Ok(gltf) => BangerMapsContentDecodeRecord {
+                tile_id: record.tile_id.clone(),
+                source_uri: record.source_uri.clone(),
+                cache_path: record.cache_path.clone(),
+                source_content_type: record.content_type,
+                container: "gltf",
+                byte_count: bytes.len(),
+                content_hash,
+                b3dm: None,
+                glb: None,
+                gltf: Some(gltf),
+                error: None,
+            },
+            Err(error) => failed_banger_decode_record(record, "gltf", error),
+        },
+        _ => failed_banger_decode_record(record, "opaque", format!("unsupported content extension {}", record.extension)),
+    }
+}
+
+fn failed_banger_decode_record(
+    record: &BangerMapsContentCacheRecord,
+    container: &'static str,
+    error: String,
+) -> BangerMapsContentDecodeRecord {
+    BangerMapsContentDecodeRecord {
+        tile_id: record.tile_id.clone(),
+        source_uri: record.source_uri.clone(),
+        cache_path: record.cache_path.clone(),
+        source_content_type: record.content_type,
+        container,
+        byte_count: record.byte_count,
+        content_hash: record.content_hash.clone(),
+        b3dm: None,
+        glb: None,
+        gltf: None,
+        error: Some(error),
+    }
+}
+
+fn decode_banger_b3dm(bytes: &[u8]) -> Result<(BangerB3dmHeaderProjection, &[u8]), String> {
+    if bytes.len() < 28 {
+        return Err("b3dm header shorter than 28 bytes".to_string());
+    }
+    if &bytes[0..4] != b"b3dm" {
+        return Err("b3dm magic mismatch".to_string());
+    }
+    let version = read_u32_le(bytes, 4)?;
+    let byte_length = read_u32_le(bytes, 8)?;
+    if byte_length as usize > bytes.len() {
+        return Err(format!("b3dm declared length {byte_length} exceeds {} bytes", bytes.len()));
+    }
+    let feature_table_json_byte_length = read_u32_le(bytes, 12)?;
+    let feature_table_binary_byte_length = read_u32_le(bytes, 16)?;
+    let batch_table_json_byte_length = read_u32_le(bytes, 20)?;
+    let batch_table_binary_byte_length = read_u32_le(bytes, 24)?;
+    let glb_byte_offset = 28usize
+        + feature_table_json_byte_length as usize
+        + feature_table_binary_byte_length as usize
+        + batch_table_json_byte_length as usize
+        + batch_table_binary_byte_length as usize;
+    if glb_byte_offset > byte_length as usize {
+        return Err("b3dm table lengths exceed declared byte length".to_string());
+    }
+    let feature_start = 28usize;
+    let feature_end = feature_start + feature_table_json_byte_length as usize + feature_table_binary_byte_length as usize;
+    let batch_end = feature_end + batch_table_json_byte_length as usize + batch_table_binary_byte_length as usize;
+    let glb = &bytes[glb_byte_offset..byte_length as usize];
+    Ok((
+        BangerB3dmHeaderProjection {
+            version,
+            byte_length,
+            feature_table_json_byte_length,
+            feature_table_binary_byte_length,
+            batch_table_json_byte_length,
+            batch_table_binary_byte_length,
+            glb_byte_offset,
+            glb_byte_count: glb.len(),
+            feature_table_hash: sha256_hex(&bytes[feature_start..feature_end]),
+            batch_table_hash: sha256_hex(&bytes[feature_end..batch_end]),
+        },
+        glb,
+    ))
+}
+
+fn decode_banger_glb(bytes: &[u8]) -> Result<(BangerGlbProjection, BangerGltfSummaryProjection), String> {
+    if bytes.len() < 20 {
+        return Err("glb shorter than header plus first chunk".to_string());
+    }
+    if &bytes[0..4] != b"glTF" {
+        return Err("glb magic mismatch".to_string());
+    }
+    let version = read_u32_le(bytes, 4)?;
+    let declared_byte_length = read_u32_le(bytes, 8)?;
+    if version != 2 {
+        return Err(format!("unsupported glb version {version}"));
+    }
+    if declared_byte_length as usize > bytes.len() {
+        return Err(format!("glb declared length {declared_byte_length} exceeds {} bytes", bytes.len()));
+    }
+    let mut cursor = 12usize;
+    let mut chunk_count = 0usize;
+    let mut unknown_chunk_count = 0usize;
+    let mut json_chunk: Option<&[u8]> = None;
+    let mut bin_chunk: Option<&[u8]> = None;
+    while cursor + 8 <= declared_byte_length as usize {
+        let chunk_length = read_u32_le(bytes, cursor)? as usize;
+        let chunk_type = read_u32_le(bytes, cursor + 4)?;
+        let data_start = cursor + 8;
+        let data_end = data_start + chunk_length;
+        if data_end > declared_byte_length as usize {
+            return Err("glb chunk exceeds declared length".to_string());
+        }
+        chunk_count += 1;
+        match chunk_type {
+            0x4E4F534A => {
+                if json_chunk.is_none() {
+                    json_chunk = Some(&bytes[data_start..data_end]);
+                }
+            }
+            0x004E4942 => {
+                if bin_chunk.is_none() {
+                    bin_chunk = Some(&bytes[data_start..data_end]);
+                }
+            }
+            _ => unknown_chunk_count += 1,
+        }
+        cursor = data_end;
+    }
+    let json_chunk = json_chunk.ok_or_else(|| "glb JSON chunk missing".to_string())?;
+    let gltf = decode_banger_gltf_json(json_chunk)?;
+    let bin = bin_chunk.unwrap_or(&[]);
+    Ok((
+        BangerGlbProjection {
+            version,
+            declared_byte_length,
+            json_chunk_byte_count: json_chunk.len(),
+            bin_chunk_byte_count: bin.len(),
+            chunk_count,
+            unknown_chunk_count,
+            json_hash: sha256_hex(json_chunk),
+            bin_hash: sha256_hex(bin),
+        },
+        gltf,
+    ))
+}
+
+fn decode_banger_gltf_json(bytes: &[u8]) -> Result<BangerGltfSummaryProjection, String> {
+    let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let json_text = std::str::from_utf8(json_bytes)
+        .map_err(|error| format!("gltf json utf8: {error}"))?
+        .trim_end_matches(|character| character == ' ' || character == '\0');
+    let value = serde_json::from_str::<Value>(json_text).map_err(|error| format!("gltf json parse: {error}"))?;
+    Ok(BangerGltfSummaryProjection {
+        asset_version: value
+            .get("asset")
+            .and_then(|asset| asset.get("version"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        scene_count: json_array_len(&value, "scenes"),
+        node_count: json_array_len(&value, "nodes"),
+        mesh_count: json_array_len(&value, "meshes"),
+        primitive_count: value
+            .get("meshes")
+            .and_then(Value::as_array)
+            .map(|meshes| {
+                meshes
+                    .iter()
+                    .map(|mesh| mesh.get("primitives").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0),
+        material_count: json_array_len(&value, "materials"),
+        texture_count: json_array_len(&value, "textures"),
+        image_count: json_array_len(&value, "images"),
+        accessor_count: json_array_len(&value, "accessors"),
+        buffer_view_count: json_array_len(&value, "bufferViews"),
+        buffer_count: json_array_len(&value, "buffers"),
+        extensions_used_count: json_array_len(&value, "extensionsUsed"),
+        extensions_required_count: json_array_len(&value, "extensionsRequired"),
+    })
+}
+
+fn json_array_len(value: &Value, key: &str) -> usize {
+    value.get(key).and_then(Value::as_array).map(|items| items.len()).unwrap_or(0)
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let end = offset + 4;
+    if end > bytes.len() {
+        return Err(format!("u32 read beyond buffer at offset {offset}"));
+    }
+    Ok(u32::from_le_bytes(bytes[offset..end].try_into().expect("slice length checked")))
+}
+
+#[cfg(test)]
+fn push_u32_le(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 fn resolve_banger_tile_content_url(root_url: &str, content_uri: &str) -> String {
@@ -2487,6 +2908,7 @@ mod tests {
             false,
             None,
             Some(false),
+            Some(false),
         );
         assert!(projection.ok);
         assert_eq!(projection.schema, "forge.banger.native_3d_tiles_root_ingest.v1");
@@ -2546,6 +2968,7 @@ mod tests {
             false,
             None,
             Some(true),
+            Some(false),
         );
         assert!(projection.ok);
         assert!(projection.content_cache.enabled);
@@ -2558,6 +2981,112 @@ mod tests {
         assert_eq!(projection.content_cache.records[0].content_type, "binary_gltf");
         assert_eq!(projection.content_cache.records[0].content_hash, sha256_hex(b"glb-bytes"));
         assert!(std::path::Path::new(&projection.content_cache.records[0].cache_path).exists());
+    }
+
+    #[test]
+    fn decodes_glb_json_and_bin_chunks_for_gltf_summary() {
+        let glb = test_glb_bytes();
+        let (glb_projection, gltf) = decode_banger_glb(&glb).unwrap();
+        assert_eq!(glb_projection.version, 2);
+        assert_eq!(glb_projection.chunk_count, 2);
+        assert_eq!(glb_projection.unknown_chunk_count, 0);
+        assert!(glb_projection.json_chunk_byte_count > 0);
+        assert_eq!(glb_projection.bin_chunk_byte_count, 4);
+        assert_eq!(gltf.asset_version, "2.0");
+        assert_eq!(gltf.mesh_count, 1);
+        assert_eq!(gltf.primitive_count, 1);
+        assert_eq!(gltf.material_count, 1);
+        assert_eq!(gltf.accessor_count, 1);
+        assert_eq!(gltf.buffer_view_count, 1);
+        assert_eq!(gltf.buffer_count, 1);
+    }
+
+    #[test]
+    fn decodes_cached_b3dm_content_into_embedded_glb_summary() {
+        let cache_dir = env::temp_dir().join(format!(
+            "forge-banger-content-decode-test-{}",
+            sha256_hex(format!("{:?}", SystemTime::now()).as_bytes())
+        ));
+        let source_dir = cache_dir.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let root_path = source_dir.join("tileset.json");
+        let content_path = source_dir.join("tile.b3dm");
+        fs::write(&content_path, test_b3dm_bytes()).unwrap();
+        fs::write(
+            &root_path,
+            br#"{"asset":{"version":"1.1"},"root":{"geometricError":1,"content":{"uri":"tile.b3dm"}}}"#,
+        )
+        .unwrap();
+        let bytes = fs::read(&root_path).unwrap();
+        let projection = summarize_banger_maps_root(
+            root_path.to_str().unwrap(),
+            &cache_dir,
+            &cache_dir.join("root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+            Some(true),
+            Some(true),
+        );
+        assert!(projection.ok);
+        assert!(projection.content_decode.enabled);
+        assert_eq!(projection.content_decode.decoded_content_count, 1);
+        assert_eq!(projection.content_decode.failed_content_count, 0);
+        assert_eq!(projection.content_decode.b3dm_count, 1);
+        assert_eq!(projection.content_decode.glb_count, 0);
+        assert_eq!(projection.content_decode.records[0].container, "b3dm");
+        assert_eq!(projection.content_decode.records[0].source_content_type, "batched_3d_model");
+        let b3dm = projection.content_decode.records[0].b3dm.as_ref().unwrap();
+        assert_eq!(b3dm.version, 1);
+        assert!(b3dm.glb_byte_count > 0);
+        let glb = projection.content_decode.records[0].glb.as_ref().unwrap();
+        assert_eq!(glb.version, 2);
+        assert_eq!(glb.bin_chunk_byte_count, 4);
+        let gltf = projection.content_decode.records[0].gltf.as_ref().unwrap();
+        assert_eq!(gltf.mesh_count, 1);
+        assert_eq!(gltf.primitive_count, 1);
+    }
+
+    fn test_glb_bytes() -> Vec<u8> {
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0}]}],"materials":[{}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"buffers":[{"byteLength":4}]}"#;
+        let mut json_chunk = json.to_vec();
+        while json_chunk.len() % 4 != 0 {
+            json_chunk.push(0x20);
+        }
+        let mut bin_chunk = vec![1u8, 2, 3, 4];
+        while bin_chunk.len() % 4 != 0 {
+            bin_chunk.push(0);
+        }
+        let length = 12 + 8 + json_chunk.len() + 8 + bin_chunk.len();
+        let mut glb = Vec::with_capacity(length);
+        glb.extend_from_slice(b"glTF");
+        push_u32_le(&mut glb, 2);
+        push_u32_le(&mut glb, length as u32);
+        push_u32_le(&mut glb, json_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x4E4F534A);
+        glb.extend_from_slice(&json_chunk);
+        push_u32_le(&mut glb, bin_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x004E4942);
+        glb.extend_from_slice(&bin_chunk);
+        glb
+    }
+
+    fn test_b3dm_bytes() -> Vec<u8> {
+        let glb = test_glb_bytes();
+        let feature_json = br#"{"BATCH_LENGTH":0}"#;
+        let byte_length = 28 + feature_json.len() + glb.len();
+        let mut b3dm = Vec::with_capacity(byte_length);
+        b3dm.extend_from_slice(b"b3dm");
+        push_u32_le(&mut b3dm, 1);
+        push_u32_le(&mut b3dm, byte_length as u32);
+        push_u32_le(&mut b3dm, feature_json.len() as u32);
+        push_u32_le(&mut b3dm, 0);
+        push_u32_le(&mut b3dm, 0);
+        push_u32_le(&mut b3dm, 0);
+        b3dm.extend_from_slice(feature_json);
+        b3dm.extend_from_slice(&glb);
+        b3dm
     }
 }
 
