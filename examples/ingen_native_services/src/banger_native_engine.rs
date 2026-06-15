@@ -139,6 +139,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub gpu_scene_packet: BangerNativeGpuScenePacket,
     pub culling_manifest: BangerNativeCullingManifest,
     pub meshlet_visibility_packet: BangerNativeMeshletVisibilityPacket,
+    pub virtual_geometry_packet: BangerNativeVirtualGeometryPacket,
     pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
@@ -1426,6 +1427,69 @@ pub struct BangerNativeMeshletVisibilityValidationReceipt {
     pub missing_streaming_request_count: usize,
     pub validation_hash: String,
     pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryPacket {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub visibility_packet_hash: String,
+    pub resource_table_hash: String,
+    pub cluster_count: usize,
+    pub micro_page_count: usize,
+    pub resident_micro_page_count: usize,
+    pub streaming_micro_page_count: usize,
+    pub triangle_budget: u64,
+    pub max_lod_bucket: u32,
+    pub page_table_hash: String,
+    pub lod_hierarchy_hash: String,
+    pub streaming_heap_hash: String,
+    pub indirect_compaction_hash: String,
+    pub work_graph_dispatch_hash: String,
+    pub packet_hash: String,
+    pub pages: Vec<BangerNativeVirtualGeometryPage>,
+    pub dispatches: Vec<BangerNativeVirtualGeometryDispatch>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryPage {
+    pub page_id: String,
+    pub cluster_id: String,
+    pub object_id: String,
+    pub resource_slot: u32,
+    pub source_page_hash: String,
+    pub lod_bucket: u32,
+    pub mip_level: u32,
+    pub triangle_count: u32,
+    pub vertex_count: u32,
+    pub byte_offset: u64,
+    pub byte_len: u64,
+    pub screen_error: f32,
+    pub residency_state: &'static str,
+    pub streaming_priority: u32,
+    pub virtual_address: [u32; 4],
+    pub page_table_word: u64,
+    pub bounds_quantized: [i16; 4],
+    pub cone_quantized: [i16; 4],
+    pub page_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryDispatch {
+    pub batch_id: String,
+    pub lod_bucket: u32,
+    pub raster_path: &'static str,
+    pub page_count: usize,
+    pub threadgroup_count: u32,
+    pub indirect_dispatch_args: [u32; 3],
+    pub first_page_hash: Option<String>,
+    pub batch_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3563,6 +3627,11 @@ impl BangerNativeEngine {
             &resource_table,
             &render_graph_compilation,
         );
+        let virtual_geometry_packet = build_virtual_geometry_packet(
+            &prepared,
+            &meshlet_visibility_packet,
+            &resource_table,
+        );
         let nanite_second_layer_packet = build_nanite_second_layer_packet(
             &prepared,
             &gpu_scene_packet,
@@ -3621,6 +3690,7 @@ impl BangerNativeEngine {
         let page_residency_allocator = build_page_residency_allocator_packet(
             &prepared,
             &resource_table,
+            &virtual_geometry_packet,
             &nanite_second_layer_packet,
             &virtual_shadow_packet,
             &material_closure_packet,
@@ -3710,6 +3780,7 @@ impl BangerNativeEngine {
             &gpu_scene_packet,
             &culling_manifest,
             &meshlet_visibility_packet,
+            &virtual_geometry_packet,
             &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
@@ -3791,6 +3862,7 @@ impl BangerNativeEngine {
             gpu_scene_packet,
             culling_manifest,
             meshlet_visibility_packet,
+            virtual_geometry_packet,
             nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
@@ -5355,6 +5427,412 @@ fn build_meshlet_visibility_packet(
     }
 }
 
+fn build_virtual_geometry_packet(
+    prepared: &MonsterPreparedCompute,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeVirtualGeometryPacket {
+    let mut pages = Vec::new();
+    for visibility in &meshlet_visibility_packet.entries {
+        let byte_len = resource_table
+            .slots
+            .iter()
+            .find(|slot| slot.slot == visibility.resource_slot)
+            .map(|slot| slot.byte_len)
+            .unwrap_or(256 * 1024);
+        let split_count = virtual_geometry_split_count(visibility, byte_len);
+        for mip_level in 0..split_count {
+            pages.push(virtual_geometry_page_from_visibility(
+                visibility,
+                byte_len,
+                mip_level,
+                split_count,
+            ));
+        }
+    }
+    let dispatches = virtual_geometry_dispatches(&pages);
+    let page_table_hash = virtual_geometry_page_table_hash(&pages);
+    let lod_hierarchy_hash = virtual_geometry_lod_hierarchy_hash(&pages);
+    let streaming_heap_hash = virtual_geometry_streaming_heap_hash(&pages);
+    let indirect_compaction_hash = virtual_geometry_indirect_compaction_hash(&dispatches);
+    let work_graph_dispatch_hash = virtual_geometry_work_graph_dispatch_hash(&dispatches);
+    let packet_hash = virtual_geometry_packet_hash(
+        prepared,
+        meshlet_visibility_packet,
+        resource_table,
+        &page_table_hash,
+        &lod_hierarchy_hash,
+        &streaming_heap_hash,
+        &indirect_compaction_hash,
+        &work_graph_dispatch_hash,
+        &pages,
+        &dispatches,
+    );
+    BangerNativeVirtualGeometryPacket {
+        schema: "forge.banger.virtual_geometry_packet.v1",
+        schema_version: 1,
+        authority: "banger_gpu_driven_virtual_geometry_page_scheduler",
+        clean_room_basis: "local_unreal_sparse_nanite_cluster_page_hierarchy_feedback_dispatch_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        visibility_packet_hash: meshlet_visibility_packet.packet_hash.clone(),
+        resource_table_hash: resource_table.table_hash.clone(),
+        cluster_count: meshlet_visibility_packet.cluster_count,
+        micro_page_count: pages.len(),
+        resident_micro_page_count: pages
+            .iter()
+            .filter(|page| page.residency_state == "resident_page")
+            .count(),
+        streaming_micro_page_count: pages
+            .iter()
+            .filter(|page| page.residency_state != "resident_page")
+            .count(),
+        triangle_budget: pages.iter().map(|page| u64::from(page.triangle_count)).sum(),
+        max_lod_bucket: pages.iter().map(|page| page.lod_bucket).max().unwrap_or_default(),
+        page_table_hash,
+        lod_hierarchy_hash,
+        streaming_heap_hash,
+        indirect_compaction_hash,
+        work_graph_dispatch_hash,
+        packet_hash,
+        pages,
+        dispatches,
+    }
+}
+
+fn virtual_geometry_split_count(visibility: &BangerNativeMeshletVisibilityEntry, byte_len: u64) -> u32 {
+    let size_pages = (byte_len / (64 * 1024)).clamp(1, 4) as u32;
+    let lod_pages = visibility.lod_bucket.min(3).saturating_add(1);
+    size_pages.max(lod_pages).clamp(2, 6)
+}
+
+fn virtual_geometry_page_from_visibility(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    byte_len: u64,
+    mip_level: u32,
+    split_count: u32,
+) -> BangerNativeVirtualGeometryPage {
+    let source_triangles = (visibility.indirect_draw_args[0] / 3).max(1);
+    let triangle_count = source_triangles
+        .div_ceil(split_count)
+        .saturating_sub(mip_level.saturating_mul(2))
+        .max(1);
+    let vertex_count = triangle_count.saturating_mul(3).min(128);
+    let page_byte_len = byte_len.div_ceil(u64::from(split_count)).max(4096);
+    let byte_offset = page_byte_len.saturating_mul(u64::from(mip_level));
+    let screen_error = visibility.lod_error / (mip_level as f32 + 1.0);
+    let residency_state = if mip_level == 0 && visibility.raster_path == "mesh_shader_or_hardware_raster_candidate" {
+        "resident_page"
+    } else if screen_error <= 0.45 {
+        "warm_page"
+    } else {
+        "streaming_request"
+    };
+    let page_table_word = virtual_geometry_page_table_word(visibility, mip_level, triangle_count);
+    let virtual_address = [
+        visibility.resource_slot,
+        visibility.lod_bucket,
+        mip_level,
+        page_table_word as u32,
+    ];
+    let bounds_quantized = virtual_geometry_bounds_quantized(visibility, mip_level);
+    let cone_quantized = virtual_geometry_cone_quantized(visibility);
+    let page_id = hash_text_hex(
+        "forge.banger.virtual_geometry.page_id.v1",
+        &format!(
+            "{}:{}:{}:{}",
+            visibility.cluster_id, visibility.resource_slot, visibility.page_hash, mip_level
+        ),
+    );
+    let streaming_priority = page_residency_priority(
+        residency_state,
+        visibility.lod_bucket.saturating_add(mip_level),
+        page_table_word,
+        page_byte_len,
+    );
+    let page_hash = virtual_geometry_page_hash(
+        &page_id,
+        visibility,
+        mip_level,
+        triangle_count,
+        vertex_count,
+        byte_offset,
+        page_byte_len,
+        screen_error,
+        residency_state,
+        streaming_priority,
+        &virtual_address,
+        page_table_word,
+        &bounds_quantized,
+        &cone_quantized,
+    );
+    BangerNativeVirtualGeometryPage {
+        page_id,
+        cluster_id: visibility.cluster_id.clone(),
+        object_id: visibility.object_id.clone(),
+        resource_slot: visibility.resource_slot,
+        source_page_hash: visibility.page_hash.clone(),
+        lod_bucket: visibility.lod_bucket,
+        mip_level,
+        triangle_count,
+        vertex_count,
+        byte_offset,
+        byte_len: page_byte_len,
+        screen_error,
+        residency_state,
+        streaming_priority,
+        virtual_address,
+        page_table_word,
+        bounds_quantized,
+        cone_quantized,
+        page_hash,
+    }
+}
+
+fn virtual_geometry_page_table_word(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    mip_level: u32,
+    triangle_count: u32,
+) -> u64 {
+    (u64::from(visibility.resource_slot) << 48)
+        | (u64::from(visibility.lod_bucket.min(255)) << 40)
+        | (u64::from(mip_level.min(255)) << 32)
+        | u64::from(triangle_count.min(0xffff))
+        | ((visibility.visibility_word & 0xffff) << 16)
+}
+
+fn virtual_geometry_bounds_quantized(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    mip_level: u32,
+) -> [i16; 4] {
+    [
+        (visibility.bounding_sphere[0] * 256.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        (visibility.bounding_sphere[1] * 256.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        (visibility.bounding_sphere[2] * 256.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        ((visibility.bounding_sphere[3] / (mip_level as f32 + 1.0)) * 256.0)
+            .round()
+            .clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+    ]
+}
+
+fn virtual_geometry_cone_quantized(visibility: &BangerNativeMeshletVisibilityEntry) -> [i16; 4] {
+    [
+        (visibility.cone_axis[0] * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        (visibility.cone_axis[1] * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        (visibility.cone_axis[2] * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        (visibility.cone_cutoff * 32767.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+    ]
+}
+
+fn virtual_geometry_dispatches(
+    pages: &[BangerNativeVirtualGeometryPage],
+) -> Vec<BangerNativeVirtualGeometryDispatch> {
+    let mut grouped: BTreeMap<(u32, &'static str), Vec<&BangerNativeVirtualGeometryPage>> = BTreeMap::new();
+    for page in pages {
+        let raster_path = if page.residency_state == "resident_page" {
+            "mesh_shader_or_hardware_raster_candidate"
+        } else {
+            "compute_raster_streaming_fallback"
+        };
+        grouped.entry((page.lod_bucket, raster_path)).or_default().push(page);
+    }
+    grouped
+        .into_iter()
+        .map(|((lod_bucket, raster_path), batch_pages)| {
+            let page_count = batch_pages.len();
+            let threadgroup_count = page_count.div_ceil(32).max(1) as u32;
+            let indirect_dispatch_args = [threadgroup_count, 1, 1];
+            let first_page_hash = batch_pages.first().map(|page| page.page_hash.clone());
+            let batch_id = format!("virtual_geometry_lod{lod_bucket}_{raster_path}");
+            let batch_hash = virtual_geometry_dispatch_hash(
+                &batch_id,
+                lod_bucket,
+                raster_path,
+                page_count,
+                threadgroup_count,
+                &indirect_dispatch_args,
+                first_page_hash.as_deref(),
+            );
+            BangerNativeVirtualGeometryDispatch {
+                batch_id,
+                lod_bucket,
+                raster_path,
+                page_count,
+                threadgroup_count,
+                indirect_dispatch_args,
+                first_page_hash,
+                batch_hash,
+            }
+        })
+        .collect()
+}
+
+fn virtual_geometry_page_hash(
+    page_id: &str,
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    mip_level: u32,
+    triangle_count: u32,
+    vertex_count: u32,
+    byte_offset: u64,
+    byte_len: u64,
+    screen_error: f32,
+    residency_state: &str,
+    streaming_priority: u32,
+    virtual_address: &[u32; 4],
+    page_table_word: u64,
+    bounds_quantized: &[i16; 4],
+    cone_quantized: &[i16; 4],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.page.v1\0");
+    h.update(page_id.as_bytes());
+    h.update(visibility.entry_hash.as_bytes());
+    h.update(mip_level.to_le_bytes());
+    h.update(triangle_count.to_le_bytes());
+    h.update(vertex_count.to_le_bytes());
+    h.update(byte_offset.to_le_bytes());
+    h.update(byte_len.to_le_bytes());
+    h.update(screen_error.to_le_bytes());
+    h.update(residency_state.as_bytes());
+    h.update(streaming_priority.to_le_bytes());
+    for value in virtual_address {
+        h.update(value.to_le_bytes());
+    }
+    h.update(page_table_word.to_le_bytes());
+    for value in bounds_quantized {
+        h.update(value.to_le_bytes());
+    }
+    for value in cone_quantized {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_dispatch_hash(
+    batch_id: &str,
+    lod_bucket: u32,
+    raster_path: &str,
+    page_count: usize,
+    threadgroup_count: u32,
+    indirect_dispatch_args: &[u32; 3],
+    first_page_hash: Option<&str>,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.dispatch.v1\0");
+    h.update(batch_id.as_bytes());
+    h.update(lod_bucket.to_le_bytes());
+    h.update(raster_path.as_bytes());
+    h.update((page_count as u64).to_le_bytes());
+    h.update(threadgroup_count.to_le_bytes());
+    for value in indirect_dispatch_args {
+        h.update(value.to_le_bytes());
+    }
+    if let Some(first_page_hash) = first_page_hash {
+        h.update(first_page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_page_table_hash(pages: &[BangerNativeVirtualGeometryPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.page_table.v1\0");
+    for page in pages {
+        h.update(page.page_id.as_bytes());
+        for value in page.virtual_address {
+            h.update(value.to_le_bytes());
+        }
+        h.update(page.page_table_word.to_le_bytes());
+        h.update(page.page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_lod_hierarchy_hash(pages: &[BangerNativeVirtualGeometryPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.lod_hierarchy.v1\0");
+    for page in pages {
+        h.update(page.cluster_id.as_bytes());
+        h.update(page.lod_bucket.to_le_bytes());
+        h.update(page.mip_level.to_le_bytes());
+        h.update(page.screen_error.to_le_bytes());
+        h.update(page.triangle_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_streaming_heap_hash(pages: &[BangerNativeVirtualGeometryPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.streaming_heap.v1\0");
+    for page in pages {
+        h.update(page.page_id.as_bytes());
+        h.update(page.residency_state.as_bytes());
+        h.update(page.streaming_priority.to_le_bytes());
+        h.update(page.byte_offset.to_le_bytes());
+        h.update(page.byte_len.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_indirect_compaction_hash(
+    dispatches: &[BangerNativeVirtualGeometryDispatch],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.indirect_compaction.v1\0");
+    for dispatch in dispatches {
+        h.update(dispatch.batch_hash.as_bytes());
+        for value in dispatch.indirect_dispatch_args {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_work_graph_dispatch_hash(
+    dispatches: &[BangerNativeVirtualGeometryDispatch],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.work_graph_dispatch.v1\0");
+    for dispatch in dispatches {
+        h.update(dispatch.batch_id.as_bytes());
+        h.update(dispatch.raster_path.as_bytes());
+        h.update((dispatch.page_count as u64).to_le_bytes());
+        h.update(dispatch.threadgroup_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    resource_table: &BangerNativeResourceTable,
+    page_table_hash: &str,
+    lod_hierarchy_hash: &str,
+    streaming_heap_hash: &str,
+    indirect_compaction_hash: &str,
+    work_graph_dispatch_hash: &str,
+    pages: &[BangerNativeVirtualGeometryPage],
+    dispatches: &[BangerNativeVirtualGeometryDispatch],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(meshlet_visibility_packet.packet_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(page_table_hash.as_bytes());
+    h.update(lod_hierarchy_hash.as_bytes());
+    h.update(streaming_heap_hash.as_bytes());
+    h.update(indirect_compaction_hash.as_bytes());
+    h.update(work_graph_dispatch_hash.as_bytes());
+    h.update((pages.len() as u64).to_le_bytes());
+    h.update((dispatches.len() as u64).to_le_bytes());
+    for page in pages {
+        h.update(page.page_hash.as_bytes());
+    }
+    for dispatch in dispatches {
+        h.update(dispatch.batch_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn build_nanite_second_layer_packet(
     prepared: &MonsterPreparedCompute,
     gpu_scene_packet: &BangerNativeGpuScenePacket,
@@ -6872,6 +7350,7 @@ fn build_temporal_history_packet(
 fn build_page_residency_allocator_packet(
     prepared: &MonsterPreparedCompute,
     resource_table: &BangerNativeResourceTable,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
@@ -6879,6 +7358,9 @@ fn build_page_residency_allocator_packet(
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> BangerNativePageResidencyAllocatorPacket {
     let mut entries = Vec::new();
+    for (index, page) in virtual_geometry_packet.pages.iter().enumerate() {
+        entries.push(page_residency_entry_from_virtual_geometry(page, index as u32));
+    }
     for (index, entry) in nanite_second_layer_packet.entries.iter().enumerate() {
         entries.push(page_residency_entry_from_nanite(entry, resource_table, index as u32));
     }
@@ -15522,6 +16004,116 @@ fn page_residency_entry_from_nanite(
         virtual_address,
         physical_address,
         residency_state: entry.residency_state,
+        priority,
+        lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
+        producer_hash,
+        feedback_hash,
+        compacted_feedback_hash,
+        allocation_hash,
+        eviction_hash,
+        temporal_pin_hash,
+        entry_hash,
+    }
+}
+
+fn page_residency_entry_from_virtual_geometry(
+    page: &BangerNativeVirtualGeometryPage,
+    salt: u32,
+) -> BangerNativePageResidencyEntry {
+    let page_kind = "virtual_geometry_micro_page";
+    let physical_pool = "virtual_geometry_micro_page_pool";
+    let page_id = hash_text_hex(
+        "forge.banger.page_residency.virtual_geometry_page_id.v1",
+        &format!("{}:{}:{}", page.cluster_id, page.mip_level, page.page_hash),
+    );
+    let physical_address = page_residency_physical_address(&page.page_hash, salt, physical_pool);
+    let priority = page_residency_priority(
+        page.residency_state,
+        page.lod_bucket.saturating_add(page.mip_level),
+        page.page_table_word,
+        page.byte_len,
+    )
+    .saturating_add(page.streaming_priority / 8);
+    let lock_state = page_residency_lock_state(page.residency_state, priority);
+    let feedback_space_id = page_residency_feedback_space_id(page_kind, physical_pool);
+    let feedback_request_word = page.page_table_word ^ u64::from(page.streaming_priority);
+    let feedback_age_frames =
+        page_residency_feedback_age_frames(page.residency_state, page.lod_bucket + page.mip_level);
+    let stale_feedback = page_residency_stale_feedback(page.residency_state, feedback_age_frames);
+    let deferred_page_table_update =
+        page_residency_deferred_page_table_update(page.residency_state, stale_feedback);
+    let aliasing_candidate =
+        page_residency_aliasing_candidate(page_kind, &physical_address, priority, stale_feedback);
+    let producer_hash =
+        page_residency_producer_hash(page_kind, &page.object_id, &page.cluster_id, &page.source_page_hash);
+    let feedback_hash = page_residency_feedback_hash(&page.page_hash, feedback_request_word, priority);
+    let compacted_feedback_hash = page_residency_compacted_feedback_entry_hash(
+        physical_pool,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        priority,
+    );
+    let allocation_hash = page_residency_allocation_entry_hash(
+        &page_id,
+        page_kind,
+        physical_pool,
+        &page.virtual_address,
+        &physical_address,
+        priority,
+        lock_state,
+    );
+    let eviction_hash = page_residency_eviction_entry_hash(&page_id, lock_state, priority, &feedback_hash);
+    let temporal_pin_hash = page_residency_temporal_pin_hash(
+        &page_id,
+        page_kind,
+        None,
+        feedback_age_frames,
+        deferred_page_table_update,
+    );
+    let entry_hash = page_residency_entry_hash(
+        &page_id,
+        page_kind,
+        physical_pool,
+        &page.object_id,
+        &page.cluster_id,
+        page.resource_slot,
+        &page.page_hash,
+        &page.virtual_address,
+        &physical_address,
+        page.residency_state,
+        priority,
+        lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
+        &producer_hash,
+        &feedback_hash,
+        &compacted_feedback_hash,
+        &allocation_hash,
+        &eviction_hash,
+        &temporal_pin_hash,
+    );
+    BangerNativePageResidencyEntry {
+        page_id,
+        page_kind,
+        physical_pool,
+        object_id: page.object_id.clone(),
+        cluster_id: page.cluster_id.clone(),
+        resource_slot: page.resource_slot,
+        source_page_hash: page.page_hash.clone(),
+        virtual_address: page.virtual_address,
+        physical_address,
+        residency_state: page.residency_state,
         priority,
         lock_state,
         feedback_space_id,
@@ -24332,6 +24924,7 @@ fn render_handoff_hash(
     gpu_scene_packet: &BangerNativeGpuScenePacket,
     culling_manifest: &BangerNativeCullingManifest,
     meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
@@ -24379,6 +24972,12 @@ fn render_handoff_hash(
     h.update(meshlet_visibility_packet.hzb_resource_hash.as_bytes());
     h.update(meshlet_visibility_packet.raster_path_selection_hash.as_bytes());
     h.update(meshlet_visibility_packet.validation_receipt_hash.as_bytes());
+    h.update(virtual_geometry_packet.packet_hash.as_bytes());
+    h.update(virtual_geometry_packet.page_table_hash.as_bytes());
+    h.update(virtual_geometry_packet.lod_hierarchy_hash.as_bytes());
+    h.update(virtual_geometry_packet.streaming_heap_hash.as_bytes());
+    h.update(virtual_geometry_packet.indirect_compaction_hash.as_bytes());
+    h.update(virtual_geometry_packet.work_graph_dispatch_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
     h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
@@ -26298,6 +26897,75 @@ mod tests {
                     "mesh_shader_or_hardware_raster_candidate"
                         | "compute_software_raster_candidate"
                 )));
+        assert_eq!(
+            response.virtual_geometry_packet.schema,
+            "forge.banger.virtual_geometry_packet.v1"
+        );
+        assert_eq!(response.virtual_geometry_packet.schema_version, 1);
+        assert_eq!(
+            response.virtual_geometry_packet.authority,
+            "banger_gpu_driven_virtual_geometry_page_scheduler"
+        );
+        assert_eq!(
+            response.virtual_geometry_packet.visibility_packet_hash,
+            response.meshlet_visibility_packet.packet_hash
+        );
+        assert_eq!(
+            response.virtual_geometry_packet.resource_table_hash,
+            response.resource_table.table_hash
+        );
+        assert_eq!(
+            response.virtual_geometry_packet.cluster_count,
+            response.meshlet_visibility_packet.cluster_count
+        );
+        assert!(
+            response.virtual_geometry_packet.micro_page_count
+                > response.virtual_geometry_packet.cluster_count
+        );
+        assert_eq!(
+            response.virtual_geometry_packet.micro_page_count,
+            response.virtual_geometry_packet.pages.len()
+        );
+        assert_eq!(
+            response.virtual_geometry_packet.resident_micro_page_count
+                + response.virtual_geometry_packet.streaming_micro_page_count,
+            response.virtual_geometry_packet.micro_page_count
+        );
+        assert!(response.virtual_geometry_packet.triangle_budget > 0);
+        assert_eq!(response.virtual_geometry_packet.page_table_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_packet.lod_hierarchy_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_packet.streaming_heap_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_packet.indirect_compaction_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_packet.work_graph_dispatch_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_packet.packet_hash.len(), 64);
+        assert!(response
+            .virtual_geometry_packet
+            .pages
+            .iter()
+            .all(|page| page.page_hash.len() == 64
+                && page.triangle_count > 0
+                && page.vertex_count > 0
+                && page.byte_len >= 4096
+                && page.streaming_priority > 0
+                && matches!(
+                    page.residency_state,
+                    "resident_page" | "warm_page" | "streaming_request"
+                )));
+        assert!(response
+            .virtual_geometry_packet
+            .dispatches
+            .iter()
+            .all(|dispatch| dispatch.page_count > 0
+                && dispatch.threadgroup_count > 0
+                && dispatch.indirect_dispatch_args[0] == dispatch.threadgroup_count
+                && dispatch.batch_hash.len() == 64));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
+            .any(|entry| entry.page_kind == "virtual_geometry_micro_page"
+                && entry.physical_pool == "virtual_geometry_micro_page_pool"
+                && entry.entry_hash.len() == 64));
         assert_eq!(
             response.nanite_second_layer_packet.schema,
             "forge.banger.nanite_second_layer_packet.v1"
