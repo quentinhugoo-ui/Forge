@@ -21,10 +21,6 @@ const WAVE_REDUCED_FRAME_INTERVAL_MS = 1000 / 12;
 const WAVE_POINTER_OFFSCREEN = -5;
 const WAVE_POINTER_ENTRY_RATE = 5.6;
 const WAVE_POINTER_EXIT_RATE = 7.8;
-const WAVE_POINTER_SPRING = 48;
-const WAVE_POINTER_DAMPING = 10.8;
-const WAVE_POINTER_ROLL_GAIN = 20;
-const WAVE_POINTER_MAX_ROLL_SPEED = 1.25;
 const WAVE_POINTER_EPSILON = 0.002;
 const WAVE_POINTER_BLOCKER_SELECTOR = [
   ".leftPanel",
@@ -658,10 +654,10 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const hitPoint = new THREE.Vector3();
   const pointerNdc = new THREE.Vector2();
-  const pointerTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const spherePosition = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const sphereVelocity = new THREE.Vector2(0, 0);
+  const mouseTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mousePrev = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
   const mouseUniform = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mouseVel = new THREE.Vector2(0, 0);
   const halfCW = (POINT_COLS / 2) * POINT_SPACING;
   const halfCD = (POINT_ROWS / 2) * POINT_SPACING;
   const gridWorldWidth = POINT_COLS * POINT_SPACING;
@@ -674,7 +670,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let viewportHeight = 1;
   let msaaTexture: WebGpuTexture | null = null;
   let pointerActive = false;
-  let sphereReady = false;
+  let hasMouse = false;
   let pointerStrength = 0;
   let configured = false;
   let deviceLost = false;
@@ -736,18 +732,24 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
     if (raycaster.ray.intersectPlane(plane, hitPoint)) {
       const ux = (hitPoint.x / pointScaleX + halfCW) / gridWorldWidth;
       const uy = (hitPoint.z + halfCD) / (POINT_ROWS * POINT_SPACING) + 0.15 - cursorBottomEdgeOffset;
-      pointerTarget.set(ux, uy);
       pointerActive = true;
-      if (!sphereReady) {
-        spherePosition.copy(pointerTarget);
-        sphereVelocity.set(0, 0);
-        sphereReady = true;
+      if (!hasMouse) {
+        mousePrev.set(ux, uy);
+        pointerStrength = 0;
+        mouseVel.set(0, 0);
+        hasMouse = true;
+      } else {
+        mouseVel.set(ux - mousePrev.x, uy - mousePrev.y);
       }
+      mousePrev.set(ux, uy);
+      mouseTarget.set(ux, uy);
     }
   };
 
   const onLeave = () => {
     pointerActive = false;
+    hasMouse = false;
+    mouseVel.set(0, 0);
   };
 
   const onChatKeyColor = (event: Event) => {
@@ -864,16 +866,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
     if (!pointerActive && pointerStrength < WAVE_POINTER_EPSILON) {
       pointerStrength = 0;
     }
-    if (sphereReady) {
-      sphereVelocity.x += (pointerTarget.x - spherePosition.x) * WAVE_POINTER_SPRING * deltaSeconds;
-      sphereVelocity.y += (pointerTarget.y - spherePosition.y) * WAVE_POINTER_SPRING * deltaSeconds;
-      sphereVelocity.multiplyScalar(Math.exp(-WAVE_POINTER_DAMPING * deltaSeconds));
-      spherePosition.addScaledVector(sphereVelocity, deltaSeconds);
-    }
-    const rollSpeed =
-      sphereReady && pointerStrength > WAVE_POINTER_EPSILON
-        ? Math.min(WAVE_POINTER_MAX_ROLL_SPEED, sphereVelocity.length() * WAVE_POINTER_ROLL_GAIN)
-        : 0;
+    const pointerSpeed = pointerStrength > WAVE_POINTER_EPSILON ? mouseVel.length() : 0;
 
     for (let s = 0; s < MAX_GHOSTS; s++) {
       const age = elapsed - ghostData[s * 4 + 2];
@@ -891,17 +884,18 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
     uniformData[22] = viewportWidth;
     uniformData[23] = viewportHeight;
     mouseUniform.set(
-      pointerStrength > WAVE_POINTER_EPSILON ? spherePosition.x : WAVE_POINTER_OFFSCREEN,
-      pointerStrength > WAVE_POINTER_EPSILON ? spherePosition.y : WAVE_POINTER_OFFSCREEN
+      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.x : WAVE_POINTER_OFFSCREEN,
+      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.y : WAVE_POINTER_OFFSCREEN
     );
     uniformData[24] = mouseUniform.x;
     uniformData[25] = mouseUniform.y;
-    uniformData[26] = rollSpeed;
+    uniformData[26] = pointerSpeed;
     uniformData[27] = pointerStrength;
     uniformData[28] = sceneHeight;
     uniformData[29] = drainLevel;
     uniformData[30] = 0;
     uniformData[31] = 0;
+    mouseVel.multiplyScalar(0.9);
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformData);
     device.queue.writeBuffer(ghostBuffer, 0, ghostData);
@@ -1052,9 +1046,9 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const hitPoint = new THREE.Vector3();
   const pointerNdc = new THREE.Vector2();
-  const pointerTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const spherePosition = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
-  const sphereVelocity = new THREE.Vector2(0, 0);
+  const mouseTarget = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mousePrev = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
+  const mouseVel = new THREE.Vector2(0, 0);
   const mouseUniform = new THREE.Vector2(WAVE_POINTER_OFFSCREEN, WAVE_POINTER_OFFSCREEN);
   const halfCW = (POINT_COLS / 2) * POINT_SPACING;
   const halfCD = (POINT_ROWS / 2) * POINT_SPACING;
@@ -1065,7 +1059,7 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
   let cropY = 240;
   let pointScaleX = 1;
   let pointerActive = false;
-  let sphereReady = false;
+  let hasMouse = false;
   let pointerStrength = 0;
   let drainLevel = 0;
   let shutdownRequested = false;
@@ -1111,18 +1105,24 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
     if (raycaster.ray.intersectPlane(plane, hitPoint)) {
       const ux = (hitPoint.x / pointScaleX + halfCW) / gridWorldWidth;
       const uy = (hitPoint.z + halfCD) / (POINT_ROWS * POINT_SPACING) + 0.15 - cursorBottomEdgeOffset;
-      pointerTarget.set(ux, uy);
       pointerActive = true;
-      if (!sphereReady) {
-        spherePosition.copy(pointerTarget);
-        sphereVelocity.set(0, 0);
-        sphereReady = true;
+      if (!hasMouse) {
+        mousePrev.set(ux, uy);
+        pointerStrength = 0;
+        mouseVel.set(0, 0);
+        hasMouse = true;
+      } else {
+        mouseVel.set(ux - mousePrev.x, uy - mousePrev.y);
       }
+      mousePrev.set(ux, uy);
+      mouseTarget.set(ux, uy);
     }
   };
 
   const onLeave = () => {
     pointerActive = false;
+    hasMouse = false;
+    mouseVel.set(0, 0);
   };
 
   const onChatKeyColor = (event: Event) => {
@@ -1231,16 +1231,7 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
     if (!pointerActive && pointerStrength < WAVE_POINTER_EPSILON) {
       pointerStrength = 0;
     }
-    if (sphereReady) {
-      sphereVelocity.x += (pointerTarget.x - spherePosition.x) * WAVE_POINTER_SPRING * deltaSeconds;
-      sphereVelocity.y += (pointerTarget.y - spherePosition.y) * WAVE_POINTER_SPRING * deltaSeconds;
-      sphereVelocity.multiplyScalar(Math.exp(-WAVE_POINTER_DAMPING * deltaSeconds));
-      spherePosition.addScaledVector(sphereVelocity, deltaSeconds);
-    }
-    const rollSpeed =
-      sphereReady && pointerStrength > WAVE_POINTER_EPSILON
-        ? Math.min(WAVE_POINTER_MAX_ROLL_SPEED, sphereVelocity.length() * WAVE_POINTER_ROLL_GAIN)
-        : 0;
+    const pointerSpeed = pointerStrength > WAVE_POINTER_EPSILON ? mouseVel.length() : 0;
 
     for (let s = 0; s < MAX_GHOSTS; s++) {
       const age = elapsed - ghostData[s * 4 + 2];
@@ -1251,11 +1242,12 @@ function initPoolClawBanner(canvas: HTMLCanvasElement, THREE: ThreeModule): Bann
     mat.uniforms.uTime.value = elapsed;
     mat.uniforms.uIntro.value = prefersReducedMotion ? INTRO_REVEAL_SECONDS : Math.min(elapsed, INTRO_REVEAL_SECONDS);
     mouseUniform.set(
-      pointerStrength > WAVE_POINTER_EPSILON ? spherePosition.x : WAVE_POINTER_OFFSCREEN,
-      pointerStrength > WAVE_POINTER_EPSILON ? spherePosition.y : WAVE_POINTER_OFFSCREEN
+      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.x : WAVE_POINTER_OFFSCREEN,
+      pointerStrength > WAVE_POINTER_EPSILON ? mouseTarget.y : WAVE_POINTER_OFFSCREEN
     );
     mat.uniforms.uMouse.value.copy(mouseUniform);
-    mat.uniforms.uMouseVel.value.set(rollSpeed, pointerStrength);
+    mat.uniforms.uMouseVel.value.set(pointerSpeed, pointerStrength);
+    mouseVel.multiplyScalar(0.9);
     renderer.render(scene, camera);
     if (shutdownRequested) {
       stopRenderer();
