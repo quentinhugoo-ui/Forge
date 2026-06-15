@@ -19,11 +19,16 @@ describe("Coding Brain live preview CodeAct", () => {
     expect(brainSource).toContain("write one short natural paragraph");
     expect(brainSource).toContain("the live visual is opening in the conversation");
     expect(brainSource).toContain("create or modify a real local file first through AGENT_ACTION_JSON");
+    expect(brainSource).toContain("Windows/local action tools remain available in Coding Brain");
+    expect(brainSource).toContain("copy-paste instructions");
+    expect(brainSource).toContain("do not paste implementation code in the same Brain-switch message");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION");
     expect(ipcSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND");
     expect(mainSource).toContain("visual_artifact_rule=");
     expect(mainSource).toContain("AGENT_ACTION_JSON first");
+    expect(mainSource).toContain("Coding Brain conserve les outils Windows/local action");
+    expect(mainSource).toContain("n'ecris pas de bloc de code a copier-coller");
     expect(mainSource).toContain("html|css|javascript|typescript|react|vite|page|site|frontend|front-end|composant");
   });
 
@@ -46,5 +51,14 @@ describe("Coding Brain live preview CodeAct", () => {
   it("renders the preview CodeAct as a readable loop-stream event", () => {
     expect(panelsSource).toContain('BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"');
     expect(panelsSource).toContain('return "is opening the live preview";');
+  });
+
+  it("forces visual coding snippets back into the Windows tool loop", () => {
+    expect(mainSource).toContain("function shouldForceInitialCodingVisualAction");
+    expect(mainSource).toContain("assistantLooksLikeSnippetInsteadOfLocalAction");
+    expect(mainSource).toContain("CODING_VISUAL_ACTION_FORCED_CONTINUATION v1");
+    expect(mainSource).toContain("document_write_text avec path=");
+    expect(mainSource).toContain("Interdit dans ce tour: bloc de code Markdown");
+    expect(mainSource).toContain("agentActionLoopInitialCodingVisualForcedContinuation");
   });
 });

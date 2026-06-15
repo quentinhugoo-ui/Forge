@@ -4749,6 +4749,35 @@ function textLooksLikeLocalActionIntent(text: string): boolean {
   return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build|code|coder|html|css|javascript|typescript|react|vite|page|site|frontend|front-end|composant)\b/.test(normalized);
 }
 
+function textLooksLikeVisualCodingArtifactGoal(text: string): boolean {
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return /\b(?:code|coder|html|css|javascript|js|typescript|ts|react|vite|page|site|frontend|front-end|composant|component|animation|canvas|webgl|svg|visuel|visual|interface|ui)\b/.test(normalized);
+}
+
+function assistantLooksLikeSnippetInsteadOfLocalAction(text: string): boolean {
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return (
+    /```(?:html|css|js|javascript|typescript|tsx|jsx)?[\s\S]*?```/i.test(text) ||
+    /\b(?:copie-colle|copier-coller|mets?\s+ca\s+dans\s+un\s+fichier|mettez\s+ca\s+dans\s+un\s+fichier|ouvre-le\s+dans\s+ton\s+navigateur|ouvrir\s+dans\s+ton\s+navigateur)\b/i.test(normalized)
+  );
+}
+
+function shouldForceInitialCodingVisualAction(originalUserText: string, assistantText: string): boolean {
+  return (
+    textLooksLikeVisualCodingArtifactGoal(originalUserText) &&
+    assistantLooksLikeSnippetInsteadOfLocalAction(assistantText) &&
+    !extractAgentActionJsonRequest(assistantText) &&
+    !assistantText.includes(BRAIN_CODING_LIVE_PREVIEW_COMMAND) &&
+    !brainSegmentFromAssistantText(assistantText)
+  );
+}
+
 function textIsAgentActionContinuation(text: string): boolean {
   return /\bAGENT_ACTION_(?:RESULT|FORCED_CONTINUATION)\b/i.test(text);
 }
@@ -4835,7 +4864,7 @@ function brainSegmentManifest(): string {
       "active=coding",
       `activated_by=${BRAIN_CODING_COMMAND}`,
       `rule=${BRAIN_CODING_COMMAND} is already active for this session; continue directly in Coding Brain and do not emit ${BRAIN_CODING_COMMAND} again unless a later turn explicitly switches away first.`,
-      `visual_artifact_rule=For HTML/CSS/JS/React/Vite pages or visual components, create or modify the real local file with AGENT_ACTION_JSON first, wait for AGENT_ACTION_RESULT proof, then emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} path="verified absolute file path" kind="html|react|vite". Do not only paste a code block unless the user explicitly asked for a snippet.`,
+      `visual_artifact_rule=For HTML/CSS/JS/React/Vite pages, animations or visual components, never answer with copy-paste code or "put this in a file" unless the user explicitly asked for snippet-only help. Create or modify the real local file with AGENT_ACTION_JSON first, wait for AGENT_ACTION_RESULT proof, then emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} path="verified absolute file path" kind="html|react|vite".`,
       BRAIN_CODING_VISIBLE_CATALOG
     ].join("\n");
   }
@@ -6447,6 +6476,24 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
   ].join("\n");
 }
 
+function agentActionInitialCodingVisualForcedContinuationUserText(originalUserText: string, previousAssistantText: string): string {
+  return [
+    "CODING_VISUAL_ACTION_FORCED_CONTINUATION v1",
+    "",
+    "La derniere reponse a traite une demande de coding visuel comme un snippet a copier-coller. Ce n'est pas acceptable dans InGen Desktop.",
+    "Tu es en Coding Brain et tu conserves les outils Windows/local action. Le loop stream doit continuer avec une vraie action runtime.",
+    "Ecris un court paragraphe naturel en francais, puis exactement une ligne AGENT_ACTION_JSON qui cree ou modifie un fichier local reel.",
+    "Action recommandee pour une page HTML/JS autonome: document_write_text avec path=\"nom-pertinent.html\" et content contenant le fichier complet.",
+    "Apres AGENT_ACTION_RESULT accepte, verifie le chemin absolu puis ouvre le canvas avec /coding_live_preview_ path=\"chemin absolu verifie\" kind=\"html\".",
+    "Interdit dans ce tour: bloc de code Markdown, 'copie-colle', 'mets ca dans un fichier', resume final, ou pretendre que le fichier existe sans AGENT_ACTION_RESULT.",
+    "La ligne AGENT_ACTION_JSON doit commencer en colonne 1.",
+    "",
+    `Derniere reponse assistant a corriger:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
+    "",
+    `Objectif utilisateur initial:\n${originalUserText}`
+  ].join("\n");
+}
+
 function agentActionFailureContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
   return [
     "AGENT_ACTION_FAILURE_CONTINUATION v1",
@@ -6807,10 +6854,42 @@ async function executeAssistantAgentActionLoop(params: {
   let assistantMessage = params.assistantMessage;
   let loopState = createAgentActionLoopState(params.originalUserText);
   let step = 0;
+  let initialCodingVisualActionForced = false;
   while (true) {
     throwIfAssistantRunCancelled(params.assistantRun);
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
+      if (!initialCodingVisualActionForced && shouldForceInitialCodingVisualAction(params.originalUserText, assistantMessage.text)) {
+        initialCodingVisualActionForced = true;
+        const forcedLiveSink = createAssistantLiveTextSink({
+          baseTranscript: params.baseTranscript,
+          assistantMessageId: assistantMessage.id,
+          agentEvents: params.agentEvents,
+          commitTranscript: params.commitTranscript,
+          assistantRun: params.assistantRun
+        });
+        const forcedContinuation = await buildAssistantTranscriptMessage(
+          agentActionInitialCodingVisualForcedContinuationUserText(params.originalUserText, assistantMessage.text),
+          params.providerAttachments,
+          params.userMessageId,
+          params.moduleId,
+          params.baseTranscript,
+          forcedLiveSink,
+          assistantMessage.id
+        );
+        throwIfAssistantRunCancelled(params.assistantRun);
+        assistantMessage = {
+          ...forcedContinuation,
+          id: assistantMessage.id,
+          proofHash: hashJson({
+            agentActionLoopInitialCodingVisualForcedContinuation: true,
+            previousProofHash: assistantMessage.proofHash,
+            continuationProofHash: forcedContinuation.proofHash
+          })
+        };
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        continue;
+      }
       if (loopState.toolSteps > 0) {
         loopState = agentActionLoopWithStatus(loopState, loopState.finalStatus === "running" ? "completed" : loopState.finalStatus);
         assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
@@ -14306,12 +14385,19 @@ function suppressRepeatedBrainSegmentCodeAct(message: TranscriptMessage, activeS
 function brainSegmentContinuationUserText(userText: string, segment: ActiveBrainSegmentId): string {
   const command = brainSegmentCommand(segment);
   const catalog = segment === "science" ? "Science/Engineering/3D Brain" : "Coding Brain";
-  return [
+  const lines = [
     userText || "Continue la demande utilisateur en cours.",
     "",
     `Contexte InGen: ${command} vient d'etre active. Le catalogue ${catalog} est maintenant injecte. Continue la demande utilisateur avec ce Brain actif; ne reactive pas ${command} sauf si une nouvelle demande l'exige.`,
     `Loop stream mode: answer in short French paragraphs, separated by useful CodeActs when an action is in progress. If you need several framing questions, do not write a long checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, intro, q1/q2/q3/q4/q5 maximum and three contextual expert option cards per question via q1_options/q2_options/q3_options/q4_options/q5_options. The intro frames the project goal in 2-3 short French sentences. Each option must follow "Label (Tag) - 1-2 useful French sentences: benefit, tradeoff, when to choose it"; use concise tags such as Recommended, Fast, Quality, Ambitious, Cheaper, Safer or Riskier when useful, mark "(Recommended)" when it is the best starting point, and include a more ambitious/quality/longer/costlier path when relevant. For color-choice questions, include bounded preview tokens such as color:#38bdf8 or colors:#38bdf8,#a855f7 inside the option label; never include arbitrary CSS or JS. Forbidden: Option 1/2/3, vague meta choices, "je ne sais pas", "comparer plusieurs pistes", or generic one-word answers. The host always adds the fourth Other option with a free-text field.`
-  ].join("\n");
+  ];
+  if (segment === "coding") {
+    lines.push(
+      "Coding Brain conserve les outils Windows/local action et le loop stream: pour creer du code, modifier un fichier, lancer un test ou inspecter le poste, utilise AGENT_ACTION_JSON puis attends AGENT_ACTION_RESULT avant de conclure.",
+      `Pour une demande visuelle HTML/CSS/JS/React/Vite, n'ecris pas de bloc de code a copier-coller: cree ou modifie un vrai fichier local avec AGENT_ACTION_JSON, verifie le resultat accepte, puis annonce l'ouverture du visuel et emets ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} avec le chemin absolu verifie.`
+    );
+  }
+  return lines.join("\n");
 }
 
 function waitForNativeMapsFirstVisual(): Promise<void> {
