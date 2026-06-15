@@ -180,6 +180,16 @@ describe("Scrapers MCP CodeAct", () => {
     expect(attachments[0]).toMatchObject({
       name: "Hero image",
       url: "https://cdn.example.com/hero",
+      textPreview: expect.stringContaining("media_url=https://cdn.example.com/hero")
+    });
+    expect(attachments[0]).toMatchObject({
+      name: "Hero image",
+      url: "https://cdn.example.com/hero",
+      textPreview: expect.stringContaining("source_url=https://example.com/")
+    });
+    expect(attachments[0]).toMatchObject({
+      name: "Hero image",
+      url: "https://cdn.example.com/hero",
       textPreview: expect.stringContaining("scraped_media=true")
     });
     expect(attachments[1]).toMatchObject({
