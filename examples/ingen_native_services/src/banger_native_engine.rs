@@ -22649,6 +22649,43 @@ fn ocean_normal(p: vec2<f32>) -> vec3<f32> {
     return normalize(vec3<f32>(h - hx, 0.55, h - hy));
 }
 
+fn ellipse_sdf(p: vec2<f32>, center: vec2<f32>, radius: vec2<f32>) -> f32 {
+    let q = (p - center) / radius;
+    return (length(q) - 1.0) * min(radius.x, radius.y);
+}
+
+fn coastal_sdf(p: vec2<f32>) -> f32 {
+    let left_island = ellipse_sdf(p, vec2<f32>(-19.0, 22.0), vec2<f32>(8.7, 5.2));
+    let right_headland = ellipse_sdf(p, vec2<f32>(22.0, 34.0), vec2<f32>(13.5, 6.4));
+    let far_barrier = ellipse_sdf(p, vec2<f32>(3.0, 58.0), vec2<f32>(39.0, 4.5));
+    let foreground_rock_a = ellipse_sdf(p, vec2<f32>(-6.0, 12.5), vec2<f32>(2.4, 1.55));
+    let foreground_rock_b = ellipse_sdf(p, vec2<f32>(8.0, 15.0), vec2<f32>(3.2, 1.75));
+    return min(min(left_island, right_headland), min(far_barrier, min(foreground_rock_a, foreground_rock_b)));
+}
+
+fn coastal_occupancy(p: vec2<f32>) -> f32 {
+    return 1.0 - smoothstep(-0.25, 1.15, coastal_sdf(p));
+}
+
+fn coastal_edge(p: vec2<f32>) -> f32 {
+    return 1.0 - smoothstep(0.0, 2.4, abs(coastal_sdf(p)));
+}
+
+fn coastal_height(p: vec2<f32>) -> f32 {
+    let occ = coastal_occupancy(p);
+    let ridge = fbm(p * vec2<f32>(0.22, 0.36)) * 2.7 + fbm(p * vec2<f32>(0.82, 0.44)) * 0.85;
+    let cliff = smoothstep(1.15, 0.0, abs(coastal_sdf(p))) * 1.25;
+    return occ * (0.90 + ridge + cliff);
+}
+
+fn coastal_normal(p: vec2<f32>) -> vec3<f32> {
+    let e = 0.18;
+    let h = coastal_height(p);
+    let hx = coastal_height(p + vec2<f32>(e, 0.0));
+    let hy = coastal_height(p + vec2<f32>(0.0, e));
+    return normalize(vec3<f32>(h - hx, 0.72, h - hy));
+}
+
 fn sun_disk_sdf(uv: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
     let stretched = (uv - center) * vec2<f32>(1.0, 1.35);
     return length(stretched) - radius;
@@ -22734,7 +22771,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
     let shore_lift = smoothstep(0.065, 0.0, abs(water_depth_delta)) * 0.18;
     let spectral_height = (displacement.x * 2.0 - 1.0) * 0.88;
     let choppy = (displacement.yz * 2.0 - vec2<f32>(1.0, 1.0)) * mix(0.34, 0.08, distance_t);
-    let h = ocean_height(world + choppy) * 0.36 + spectral_height + water_depth_delta * 0.42 + shore_lift;
+    let terrain_height = coastal_height(world);
+    let terrain_mix = coastal_occupancy(world);
+    let water_height = ocean_height(world + choppy) * 0.36 + spectral_height + water_depth_delta * 0.42 + shore_lift;
+    let h = mix(water_height, terrain_height, terrain_mix);
     let ndc_x = x / (z * 0.34);
     let ndc_y = mix(-1.16, -0.08, pow(gz, 0.48)) + h * mix(0.055, 0.010, distance_t);
     out.position = vec4<f32>(ndc_x, ndc_y, mix(0.12, 0.86, distance_t), 1.0);
@@ -22774,6 +22814,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let hzb = sample_water_hzb(screen_uv + spectral_slope * 0.018, 1u);
     let water_depth_delta = water_info.y - water_info.x;
     let shoreline = smoothstep(0.075, 0.0, abs(water_depth_delta));
+    let coast = coastal_occupancy(in.world_xz);
+    let coast_edge = coastal_edge(in.world_xz);
     let flow = water_info.zw * 2.0 - vec2<f32>(1.0, 1.0);
     let spectral_foam = slope_sample.z;
     let refraction_mask = hzb.z;
@@ -22786,7 +22828,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         fbm(in.world_xz * vec2<f32>(0.07, 0.34) + flow * 1.8 + spectral_slope * 0.32),
     ) * smoothstep(0.0, 0.52, 1.0 - in.distance_t);
     let wave_foam = smoothstep(0.62, 1.12, abs(normal.x) + abs(normal.z) + micro_break * 0.22) * smoothstep(0.0, 0.42, 1.0 - in.distance_t);
-    let foam = saturate(wave_foam * 0.40 + spectral_foam * 0.32 + foam_threads * 0.24 + shoreline * (0.40 + 0.60 * foam_seed) + flow_energy * shoreline * 0.42);
+    let impact_foam = coast_edge * (0.40 + 0.60 * foam_seed) * smoothstep(0.0, 0.84, 1.0 - in.distance_t);
+    let foam = saturate(wave_foam * 0.40 + spectral_foam * 0.32 + foam_threads * 0.24 + shoreline * (0.40 + 0.60 * foam_seed) + flow_energy * shoreline * 0.42 + impact_foam * 0.58);
     let shallow_tint = smoothstep(0.16, 0.0, abs(water_depth_delta));
     let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (5.2 + in.distance_t * 12.0)) * smoothstep(0.02, 0.96, 1.0 - in.distance_t);
     let broken_streaks = smoothstep(0.42, 0.90, fbm(vec2<f32>(in.world_xz.x * 0.11, in.world_xz.y * 0.64) + spectral_slope * 0.7));
@@ -22807,6 +22850,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     color = mix(color, vec3<f32>(0.72, 0.91, 0.88), shoreline * 0.14);
     color = mix(color, vec3<f32>(0.75, 0.91, 0.94), foam * 0.30);
     color = mix(color, vec3<f32>(0.62, 0.34, 0.24), horizon_haze * 0.16);
+    let rock_normal = coastal_normal(in.world_xz);
+    let rock_light = saturate(dot(rock_normal, normalize(vec3<f32>(0.42, 0.74, 0.52))));
+    let rock_grain = fbm(in.world_xz * vec2<f32>(0.42, 0.88));
+    var rock_color = mix(vec3<f32>(0.09, 0.075, 0.065), vec3<f32>(0.36, 0.25, 0.18), rock_light);
+    rock_color = mix(rock_color, vec3<f32>(0.15, 0.22, 0.20), smoothstep(0.54, 0.92, rock_grain) * 0.22);
+    rock_color += vec3<f32>(1.0, 0.42, 0.13) * sun_path * (0.08 + rock_light * 0.10);
+    let wet_edge = coast_edge * smoothstep(0.04, 0.68, 1.0 - in.distance_t);
+    rock_color = mix(rock_color, vec3<f32>(0.04, 0.07, 0.075), wet_edge * 0.32);
+    color = mix(color, rock_color, coast);
+    color = mix(color, vec3<f32>(0.82, 0.93, 0.92), saturate(coast_edge * (1.0 - coast * 0.35)) * 0.18);
     color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
     return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
 }
