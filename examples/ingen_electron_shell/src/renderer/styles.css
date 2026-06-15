@@ -9790,6 +9790,11 @@ ol.assistantText__list li::before {
   margin: 16px 0 0;
 }
 
+.brainCustomCodeActs--soon {
+  border-color: color-mix(in oklab, var(--forge-line), transparent 18%);
+  background: color-mix(in oklab, var(--forge-surface-deep), #777 8%);
+}
+
 .brainLearningRegistry__head,
 .brainCustomCodeActs__head {
   display: grid;
@@ -9797,6 +9802,10 @@ ol.assistantText__list li::before {
   gap: 10px;
   align-items: start;
   min-width: 0;
+}
+
+.brainCustomCodeActs__head {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
 }
 
 .brainLearningRegistry__head strong,
@@ -9816,6 +9825,61 @@ ol.assistantText__list li::before {
   color: var(--forge-muted);
   font-size: 11px;
   line-height: 1.38;
+}
+
+.brainCustomCodeActs__soonBadge {
+  align-self: start;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 12%);
+  border-radius: 5px;
+  color: color-mix(in oklab, var(--forge-muted), #fff 8%);
+  background: color-mix(in oklab, var(--forge-panel), #777 14%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.brainCustomCodeActs__soonPanel {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px dashed color-mix(in oklab, var(--forge-line), transparent 18%);
+  border-radius: 6px;
+  color: color-mix(in oklab, var(--forge-muted), #fff 4%);
+  background: color-mix(in oklab, var(--forge-panel), #777 10%);
+  opacity: 0.76;
+}
+
+.brainCustomCodeActs__soonPanel div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.brainCustomCodeActs__soonPanel code {
+  min-width: 0;
+  color: color-mix(in oklab, var(--forge-muted), #fff 18%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.brainCustomCodeActs__soonPanel span {
+  color: color-mix(in oklab, var(--forge-text), transparent 34%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.brainCustomCodeActs__soonPanel p {
+  margin: 0;
+  color: color-mix(in oklab, var(--forge-muted), #fff 3%);
+  font-size: 11.5px;
+  line-height: 1.42;
 }
 
 .brainLearningRegistry__tabs {

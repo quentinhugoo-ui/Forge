@@ -19,9 +19,7 @@ import { BrainBlob } from "./brain-blob";
 import {
   BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
   BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
-  appendBrainCustomCodeAct,
   appendBrainLearningMemoryEntry,
-  normalizeBrainCustomCodeActCommand,
   readBrainAgentMemory,
   readBrainCustomCodeActs,
   readBrainLearningMemoryEntries,
@@ -869,11 +867,6 @@ function BrainLearningRegistry() {
 
 function BrainCustomCodeActRegistry() {
   const [entries, setEntries] = useState(() => readBrainCustomCodeActs());
-  const [command, setCommand] = useState("/agent_draft_");
-  const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState("");
-  const normalizedCommand = normalizeBrainCustomCodeActCommand(command);
-  const canAdd = description.trim().length > 0 || template.trim().length > 0;
 
   useEffect(() => {
     const syncEntries = () => setEntries(readBrainCustomCodeActs());
@@ -881,75 +874,32 @@ function BrainCustomCodeActRegistry() {
     return () => window.removeEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncEntries);
   }, []);
 
-  const addCodeAct = () => {
-    const next = appendBrainCustomCodeAct({
-      command: normalizedCommand,
-      description,
-      template,
-      source: "manual",
-      trust: "user_confirmed",
-      evidence: "brain_custom_codeact_registry:manual_editor"
-    });
-    setEntries(next);
-    setCommand("/agent_draft_");
-    setDescription("");
-    setTemplate("");
-  };
-
   const deleteCodeAct = (entryId: string) => {
     setEntries(removeBrainCustomCodeAct(entryId));
   };
 
   return (
-    <section className="brainCustomCodeActs" aria-label="Agent drafted CodeActs">
+    <section className="brainCustomCodeActs brainCustomCodeActs--soon" aria-label="Agent drafted CodeActs">
       <div className="brainCustomCodeActs__head">
         <span className="brainRow__icon">
           <Glyph kind="code" size={17} />
         </span>
         <span>
           <strong>Agent CodeAct drafts</strong>
-          <span>Reusable actions the agent or user can draft before they become official commands.</span>
+          <span>Executable CodeAct creation is paused until the native handlers and contracts are mature.</span>
         </span>
+        <strong className="brainCustomCodeActs__soonBadge">SOON</strong>
       </div>
-      <div className="brainCustomCodeActs__editor">
-        <label>
-          <span>Command</span>
-          <input
-            value={command}
-            placeholder="/agent_draft_"
-            spellCheck={false}
-            onBlur={() => setCommand(normalizedCommand)}
-            onChange={(event) => setCommand(event.currentTarget.value)}
-          />
-        </label>
-        <label>
-          <span>Description</span>
-          <textarea
-            value={description}
-            placeholder="What should this CodeAct reliably do?"
-            rows={2}
-            spellCheck={false}
-            onChange={(event) => setDescription(event.currentTarget.value)}
-          />
-        </label>
-        <label className="brainCustomCodeActs__template">
-          <span>Template</span>
-          <textarea
-            value={template}
-            placeholder={`${normalizedCommand}\ninput=\"...\"\ngoal=\"...\"`}
-            rows={4}
-            spellCheck={false}
-            onChange={(event) => setTemplate(event.currentTarget.value)}
-          />
-        </label>
-        <button type="button" disabled={!canAdd} onClick={addCodeAct}>
-          <Glyph kind="plus" size={13} />
-          Save draft
-        </button>
+      <div className="brainCustomCodeActs__soonPanel" aria-disabled="true">
+        <div>
+          <code>/new_codeact_</code>
+          <span>Native CodeAct authoring</span>
+        </div>
+        <p>Creation stays locked for now. Use specialized Brain tasks to describe future CodeActs until the executable app/front/runtime/MCP path is implemented and tested.</p>
       </div>
       <div className="brainCustomCodeActs__entries" role="list" aria-label="Saved custom CodeAct drafts">
         {entries.length === 0 ? (
-          <p className="brainLearningRegistry__empty">No custom CodeAct draft yet.</p>
+          <p className="brainLearningRegistry__empty">No custom CodeAct draft yet. Creation is marked SOON.</p>
         ) : entries.map((entry) => (
           <article className="brainCustomCodeActs__entry" key={entry.id} role="listitem">
             <header>
