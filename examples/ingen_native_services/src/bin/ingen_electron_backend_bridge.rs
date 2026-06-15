@@ -3,9 +3,11 @@ use ingen_native_services::banger_native_engine::{
 };
 use ingen_native_services::gpu_adapter_probe::{native_gpu_adapter_probe, NativeGpuAdapterProbe};
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::env;
+use std::{env, fs};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -229,6 +231,45 @@ struct BangerMapsInteropFloor {
     tileset: &'static str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsRootIngestProjection {
+    ok: bool,
+    schema: &'static str,
+    source: &'static str,
+    root_tileset_url: String,
+    cache_dir: String,
+    cache_path: String,
+    cache_hit: bool,
+    network_fetch_attempted: bool,
+    root_hash: String,
+    root_byte_count: usize,
+    tile_count: usize,
+    content_uri_count: usize,
+    geometric_error: Option<f64>,
+    asset_version: String,
+    traversal_seed_hash: String,
+    verifier: BangerMapsRootIngestVerifier,
+    error: Option<BangerNativeError>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerMapsRootIngestVerifier {
+    wall: &'static str,
+    frontier_hypothesis: &'static str,
+    local_gate: &'static str,
+    rollback_path: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerNativeError {
+    code: &'static str,
+    message: String,
+    proof_hash: String,
+}
+
 impl BangerMapsTilesetContract {
     fn google_photorealistic_default() -> Self {
         let contract_seed = "forge.banger.maps_photorealistic_3d_tiles_contract.v1:google_photorealistic_3d_tiles:Cesium3DTileset_style_native_streamer:WGS84";
@@ -335,6 +376,11 @@ fn main() {
     if env::args().any(|argument| argument == "--banger-preview-frame") {
         let frame = banger_preview_frame();
         println!("{}", serde_json::to_string(&frame).expect("serialize banger preview frame"));
+        return;
+    }
+    if env::args().any(|argument| argument == "--banger-maps-root-ingest") {
+        let ingest = banger_maps_root_ingest();
+        println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps root ingest"));
         return;
     }
     let projection = projection();
@@ -567,6 +613,205 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn banger_maps_root_ingest() -> BangerMapsRootIngestProjection {
+    let url = env::var("FORGE_BANGER_MAPS_ROOT_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://forge-6cai.onrender.com/api/banger/google-tiles/root.json".to_string());
+    let cache_dir = banger_maps_cache_dir();
+    let url_hash = sha256_hex(url.as_bytes());
+    let cache_path = cache_dir.join(format!("{url_hash}.root.json"));
+    let _ = fs::create_dir_all(&cache_dir);
+    let fetched = fetch_banger_maps_root(&url);
+    let (bytes, source, cache_hit, error) = match fetched {
+        Ok(bytes) => {
+            let _ = fs::write(&cache_path, &bytes);
+            (bytes, "network", false, None)
+        }
+        Err(message) => match fs::read(&cache_path) {
+            Ok(bytes) => (bytes, "cache_after_network_error", true, None),
+            Err(_) => {
+                let proof_hash = sha256_hex(format!("{url}:{message}").as_bytes());
+                return BangerMapsRootIngestProjection {
+                    ok: false,
+                    schema: "forge.banger.native_3d_tiles_root_ingest.v1",
+                    source: "network_error_no_cache",
+                    root_tileset_url: redact_url_secret(&url),
+                    cache_dir: cache_dir.display().to_string(),
+                    cache_path: cache_path.display().to_string(),
+                    cache_hit: false,
+                    network_fetch_attempted: true,
+                    root_hash: String::new(),
+                    root_byte_count: 0,
+                    tile_count: 0,
+                    content_uri_count: 0,
+                    geometric_error: None,
+                    asset_version: String::new(),
+                    traversal_seed_hash: proof_hash.clone(),
+                    verifier: banger_maps_root_ingest_verifier(),
+                    error: Some(BangerNativeError {
+                        code: "root_fetch_failed",
+                        message,
+                        proof_hash,
+                    }),
+                };
+            }
+        },
+    };
+    summarize_banger_maps_root(&url, &cache_dir, &cache_path, &bytes, source, cache_hit, error)
+}
+
+fn banger_maps_cache_dir() -> PathBuf {
+    env::var("FORGE_BANGER_TILE_CACHE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| env::var("LOCALAPPDATA").ok().map(|base| PathBuf::from(base).join("InGen").join("BangerTilesCache")))
+        .unwrap_or_else(|| env::temp_dir().join("Forge").join("BangerTilesCache"))
+}
+
+fn fetch_banger_maps_root(url: &str) -> Result<Vec<u8>, String> {
+    if let Some(path) = url.strip_prefix("file://") {
+        let local_path = if cfg!(windows) {
+            path.trim_start_matches('/')
+        } else {
+            path
+        };
+        return fs::read(local_path).map_err(|error| format!("root file: {error}"));
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return fs::read(url).map_err(|error| format!("root file: {error}"));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("forge-banger-native-3d-tiles/0.1")
+        .build()
+        .map_err(|error| format!("root client: {error}"))?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|error| format!("root request: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        return Err(format!("root status {}: {}", status.as_u16(), body.chars().take(240).collect::<String>()));
+    }
+    response
+        .bytes()
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| format!("root body: {error}"))
+}
+
+fn summarize_banger_maps_root(
+    url: &str,
+    cache_dir: &std::path::Path,
+    cache_path: &std::path::Path,
+    bytes: &[u8],
+    source: &'static str,
+    cache_hit: bool,
+    error: Option<BangerNativeError>,
+) -> BangerMapsRootIngestProjection {
+    let root_hash = sha256_hex(bytes);
+    let json_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let parsed = serde_json::from_slice::<Value>(json_bytes).ok();
+    let root = parsed.as_ref().and_then(|value| value.get("root")).or(parsed.as_ref());
+    let tile_count = root.map(count_banger_tiles).unwrap_or(0);
+    let content_uri_count = root.map(count_banger_tile_content_uris).unwrap_or(0);
+    let geometric_error = root.and_then(|value| value.get("geometricError")).and_then(Value::as_f64);
+    let asset_version = parsed
+        .as_ref()
+        .and_then(|value| value.get("asset"))
+        .and_then(|asset| asset.get("version"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let traversal_seed_hash = sha256_hex(
+        format!("{root_hash}:{tile_count}:{content_uri_count}:{geometric_error:?}:{asset_version}").as_bytes(),
+    );
+    BangerMapsRootIngestProjection {
+        ok: parsed.is_some(),
+        schema: "forge.banger.native_3d_tiles_root_ingest.v1",
+        source,
+        root_tileset_url: redact_url_secret(url),
+        cache_dir: cache_dir.display().to_string(),
+        cache_path: cache_path.display().to_string(),
+        cache_hit,
+        network_fetch_attempted: true,
+        root_hash,
+        root_byte_count: bytes.len(),
+        tile_count,
+        content_uri_count,
+        geometric_error,
+        asset_version,
+        traversal_seed_hash,
+        verifier: banger_maps_root_ingest_verifier(),
+        error,
+    }
+}
+
+fn count_banger_tiles(tile: &Value) -> usize {
+    1 + tile
+        .get("children")
+        .and_then(Value::as_array)
+        .map(|children| children.iter().map(count_banger_tiles).sum::<usize>())
+        .unwrap_or(0)
+}
+
+fn count_banger_tile_content_uris(tile: &Value) -> usize {
+    let content_count = tile
+        .get("content")
+        .and_then(|content| content.get("uri"))
+        .and_then(Value::as_str)
+        .map(|_| 1)
+        .unwrap_or(0);
+    let contents_count = tile
+        .get("contents")
+        .and_then(Value::as_array)
+        .map(|contents| {
+            contents
+                .iter()
+                .filter_map(|content| content.get("uri").and_then(Value::as_str))
+                .count()
+        })
+        .unwrap_or(0);
+    content_count
+        + contents_count
+        + tile
+            .get("children")
+            .and_then(Value::as_array)
+            .map(|children| children.iter().map(count_banger_tile_content_uris).sum::<usize>())
+            .unwrap_or(0)
+}
+
+fn redact_url_secret(url: &str) -> String {
+    let Some((head, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let redacted = query
+        .split('&')
+        .map(|part| {
+            let key = part.split_once('=').map(|(key, _)| key).unwrap_or(part);
+            if key.eq_ignore_ascii_case("key") || key.eq_ignore_ascii_case("access_token") {
+                format!("{key}=redacted")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{head}?{redacted}")
+}
+
+fn banger_maps_root_ingest_verifier() -> BangerMapsRootIngestVerifier {
+    BangerMapsRootIngestVerifier {
+        wall: "native_3d_tiles_root_ingestion",
+        frontier_hypothesis: "Banger can promote Google/Cesium geospatial rendering by first owning root tileset ingestion and cache hashing.",
+        local_gate: "ingen_electron_backend_bridge --banger-maps-root-ingest",
+        rollback_path: "CesiumJS visual fallback remains authoritative until native glTF GPU submission is promoted.",
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1768,5 +2013,45 @@ mod tests {
         assert_ne!(first_depth, resized_depth);
         assert_eq!(first_target.len(), 64);
         assert_eq!(first_depth.len(), 64);
+    }
+
+    #[test]
+    fn summarizes_3d_tiles_root_for_native_traversal_seed() {
+        let root = serde_json::json!({
+            "asset": { "version": "1.1" },
+            "root": {
+                "geometricError": 4096.0,
+                "content": { "uri": "root.b3dm" },
+                "children": [
+                    { "geometricError": 2048.0, "content": { "uri": "child.glb" } },
+                    { "geometricError": 2048.0 }
+                ]
+            }
+        });
+        let root_tile = root.get("root").unwrap();
+        assert_eq!(count_banger_tiles(root_tile), 3);
+        assert_eq!(count_banger_tile_content_uris(root_tile), 2);
+        let bytes = serde_json::to_vec(&root).unwrap();
+        let projection = summarize_banger_maps_root(
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=secret&foo=bar",
+            std::path::Path::new("cache"),
+            std::path::Path::new("cache/root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+        );
+        assert!(projection.ok);
+        assert_eq!(projection.schema, "forge.banger.native_3d_tiles_root_ingest.v1");
+        assert_eq!(projection.tile_count, 3);
+        assert_eq!(projection.content_uri_count, 2);
+        assert_eq!(projection.geometric_error, Some(4096.0));
+        assert_eq!(projection.asset_version, "1.1");
+        assert_eq!(projection.root_hash.len(), 64);
+        assert_eq!(projection.traversal_seed_hash.len(), 64);
+        assert_eq!(
+            projection.root_tileset_url,
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted&foo=bar"
+        );
     }
 }
