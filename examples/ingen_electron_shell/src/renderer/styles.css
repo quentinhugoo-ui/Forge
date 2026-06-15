@@ -7713,43 +7713,6 @@ ol.assistantText__list li::before {
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
-.shell--widget-mode .bottomControls::before {
-  content: "";
-  position: absolute;
-  inset: -8px -12px -10px;
-  z-index: -1;
-  border-radius: 8px !important;
-  background:
-    linear-gradient(180deg, rgba(12, 12, 13, 0.88), rgba(7, 7, 8, 0.74)),
-    rgba(0, 0, 0, 0.76);
-  box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  opacity: 0;
-  pointer-events: none;
-  transform: scaleX(0.985) translateY(1px);
-  transform-origin: center;
-  transition:
-    opacity 130ms ease-out,
-    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.shell--widget-mode .bottomControls:hover::before,
-.shell--widget-mode .bottomControls:focus-within::before {
-  opacity: 1;
-  transform: scaleX(1) translateY(0);
-}
-
-.shell--widget-mode .bottomControls:hover,
-.shell--widget-mode .bottomControls:focus-within {
-  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.78);
-}
-
-.shell--widget-mode .bottomControls:hover button,
-.shell--widget-mode .bottomControls:focus-within button {
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 10%) !important;
-}
-
 .permissionModeControl {
   --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
   grid-column: 1;
@@ -8487,10 +8450,18 @@ ol.assistantText__list li::before {
   text-overflow: clip !important;
 }
 
+.shell--widget-mode .bottomControls__modelButton,
+.shell--widget-mode .bottomControls__reasoningButton {
+  contain: layout;
+  overflow: visible !important;
+}
+
 .bottomControls button {
+  position: relative;
+  z-index: 0;
   height: 20px;
   padding: 0 4px;
-  overflow: hidden;
+  overflow: visible;
   color: var(--forge-muted) !important;
   background: transparent !important;
   border: 0 !important;
@@ -8499,11 +8470,43 @@ ol.assistantText__list li::before {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 140ms ease-out;
+  transition:
+    color 140ms ease-out,
+    text-shadow 140ms ease-out;
+}
+
+.shell--widget-mode .bottomControls button::before {
+  content: "";
+  position: absolute;
+  inset: -3px -7px;
+  z-index: -1;
+  border-radius: 999px !important;
+  background:
+    radial-gradient(ellipse at center, rgba(4, 5, 6, 0.36) 0%, rgba(4, 5, 6, 0.22) 42%, rgba(4, 5, 6, 0) 74%);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9);
+  transition:
+    opacity 120ms ease-out,
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .bottomControls button:hover::before,
+.shell--widget-mode .bottomControls button:focus-visible::before,
+.shell--widget-mode .bottomControls button[aria-expanded="true"]::before {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .bottomControls button:hover {
   color: var(--forge-text) !important;
+}
+
+.shell--widget-mode .bottomControls button:hover,
+.shell--widget-mode .bottomControls button:focus-visible,
+.shell--widget-mode .bottomControls button[aria-expanded="true"] {
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 8%) !important;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.58);
 }
 
 .canvasSurfaces {
