@@ -149,7 +149,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions");
     expect(promptManifest).toContain("windows_reach=Prefer typed adapters powershell|cmd|windows_command before shell_full");
     expect(promptManifest).toContain("retry=If AGENT_ACTION_RESULT reports failure");
-    expect(promptManifest).toContain("loop_stream=When local action is needed");
+    expect(promptManifest).toContain("action_flow=When local action is needed");
     expect(promptManifest).toContain("loop_style=Use varied, concrete progress notes");
     expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");

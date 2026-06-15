@@ -94,7 +94,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
     expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
     expect(mainSource).toContain("function agentLoopNarrationContractManifest");
-    expect(mainSource).toContain("LOOP_STREAM_NARRATION_CONTRACT v1");
+    expect(mainSource).toContain("ACTION_NARRATION_CONTRACT v1");
     expect(mainSource).toContain("visible_step_shape=Each visible paragraph should make the step understandable");
     expect(mainSource).toContain("event_coupling=When you say an action will be taken");
     expect(mainSource).toContain("pedagogy=Name pivots and tradeoffs plainly");
@@ -202,8 +202,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("LOCAL_ACTION_ATLAS_BOOT v1");
     expect(mainSource).toContain("full local action atlas is injected at session boot and after conversation compaction only");
     expect(mainSource).toContain("boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction");
-    expect(mainSource).toContain("codeact_loop_rule=Use Brain CodeActs as loop-stream events");
-    expect(mainSource).toContain("codeact_loop_rule=For non-trivial work, Brain CodeActs are loop-stream events");
+    expect(mainSource).toContain("codeact_loop_rule=Use Brain CodeActs as action events");
+    expect(mainSource).toContain("codeact_loop_rule=For non-trivial work, Brain CodeActs are action events");
     expect(mainSource).toContain("function brainCodeActLoopRulesManifest");
     expect(mainSource).toContain("brainCodeActLoopRulesManifest()");
     expect(mainSource).toContain("capabilities_codeact=");
@@ -315,7 +315,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function agentActionFileOrganizationProgressText");
     expect(mainSource).toContain("function agentActionFileOrganizationFinalText");
     expect(mainSource).toContain("await waitAgentActionVisualStep()");
-    expect(mainSource).toContain("LOOP_STREAM_NARRATION_CONTRACT v1");
+    expect(mainSource).toContain("ACTION_NARRATION_CONTRACT v1");
     expect(mainSource).toContain("pedagogy=Name pivots and tradeoffs plainly");
     expect(mainSource).toContain("evidence=After a tool result, mention the runtime proof that matters");
     expect(mainSource).toContain("Je commence le tri par les elements les plus evidents.");

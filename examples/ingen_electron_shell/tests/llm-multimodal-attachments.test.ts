@@ -182,7 +182,7 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("persistBrainIdentityContext()");
     expect(mainSource).toContain('if (!user && !assistant && !homeLocation) return "";');
     expect(mainSource).toContain("user_home_location=${JSON.stringify(homeLocation)}");
-    expect(mainSource).toContain("Never treat user_home_location as live device geolocation.");
+    expect(mainSource).toContain("Never treat user_home_location as live device geolocation or as the default /maps_ target.");
     expect(mainSource).not.toContain("si_demande_nom_ou_prenom");
     expect(mainSource).not.toContain("source=Brain Memory > Identity editor; these fields are durable user-confirmed Brain memory.");
     expect(mainSource).not.toContain("When the user asks your name, what you are called, comment tu t'appelles");
@@ -488,12 +488,19 @@ describe("LLM multimodal attachments", () => {
     expect(brainSource).toContain("explicit map, localization, route, coordinates");
     expect(brainSource).toContain("historical, literary, vocabulary, table, classification or explanation request");
     expect(brainSource).toContain("use /websearch_ and then /scrapers_");
+    expect(brainSource).toContain("bare /maps_ opens a neutral Earth view");
+    expect(brainSource).toContain("never the saved home city");
     expect(brainSource).not.toContain("geographic place detected alone means /maps_");
+    expect(brainSource).not.toContain("Default uses the Brain home city");
     expect(mainSource).toContain("${BRAIN_MAPS_COMMAND} exige une intention carte/localisation/itineraire");
     expect(mainSource).toContain("ne suffit jamais: utilise plutot ${BRAIN_WEBSEARCH_COMMAND}");
+    expect(mainSource).toContain("n'utilise jamais user_home_location comme cible par defaut");
+    expect(mainSource).toContain("Never treat user_home_location as live device geolocation or as the default /maps_ target");
     expect(mainSource).toContain("function inferMapsTargetFromUserText");
     expect(mainSource).toContain("function userTextHasDirectMapsIntent");
     expect(mainSource).toContain("function shouldSuppressMapsForUserText");
+    expect(mainSource).toContain("function textLooksLikeMapBackedAnswerIntent");
+    expect(mainSource).toContain("commands.includes(BRAIN_MAPS_COMMAND) && textLooksLikeMapBackedAnswerIntent");
     expect(mainSource).toContain("suppressedMapsCodeAct");
     expect(mainSource).toContain("applyGeographicMapsFallback");
     expect(mainSource).toContain('return `${BRAIN_MAPS_COMMAND} target="${target}"`;');
