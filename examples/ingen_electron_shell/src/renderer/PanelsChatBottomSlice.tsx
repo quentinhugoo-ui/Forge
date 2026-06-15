@@ -4199,6 +4199,61 @@ function TranscriptCanvas({
   );
 }
 
+function WidgetTranscriptPanel({
+  activeSessionId,
+  messages,
+  agentName,
+  assistantBusy,
+  stopAnimationSignal,
+  onEditImage,
+  onUseMathInCompute,
+  onReduce
+}: {
+  activeSessionId: string;
+  messages: TranscriptMessage[];
+  agentName: string;
+  assistantBusy: boolean;
+  stopAnimationSignal: number;
+  onEditImage: (preview: ComposerUploadPreview) => void;
+  onUseMathInCompute: AssistantMathUseHandler;
+  onReduce: () => void;
+}) {
+  const titleId = useId();
+
+  return (
+    <section
+      className="composerQuestionnaire widgetTranscriptPanel"
+      aria-labelledby={titleId}
+    >
+      <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
+        <span className="composerQuestionnaire__dot" aria-hidden="true" />
+        <strong id={titleId}>Conversation</strong>
+        <button
+          type="button"
+          className="widgetTranscriptPanel__reduce"
+          aria-label="Réduire le panneau de conversation"
+          onClick={onReduce}
+        >
+          Réduire
+        </button>
+      </div>
+      <div className="widgetTranscriptPanel__body">
+        <TranscriptCanvas
+          activeSessionId={activeSessionId}
+          messages={messages}
+          agentName={agentName}
+          parallelSessionIndex={0}
+          className="chatCanvas chatCanvas--widgetPanel"
+          assistantBusy={assistantBusy}
+          stopAnimationSignal={stopAnimationSignal}
+          onEditImage={onEditImage}
+          onUseMathInCompute={onUseMathInCompute}
+        />
+      </div>
+    </section>
+  );
+}
+
 interface PanelsChatBottomSliceProps {
   composerOnly?: boolean;
   parallelPrompts?: string[];
@@ -4410,6 +4465,7 @@ export function PanelsChatBottomSlice({
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
+  const [widgetTranscriptCollapsed, setWidgetTranscriptCollapsed] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -4607,6 +4663,14 @@ export function PanelsChatBottomSlice({
   const uploadPreviews = snapshot.composer.uploadPreviews;
   const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
+  const widgetTranscriptMessages = useMemo(
+    () => canvasMessages.filter((message) => message.role === "user" || message.role === "assistant"),
+    [canvasMessages]
+  );
+  const widgetTranscriptHasConversation = useMemo(
+    () => widgetTranscriptMessages.some((message) => message.text.trim().length > 0 || (message.attachments ?? []).length > 0),
+    [widgetTranscriptMessages]
+  );
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
@@ -4769,6 +4833,22 @@ export function PanelsChatBottomSlice({
     : activeQuestionnaire
       ? { questionnaire: activeQuestionnaire, parallelSessionIndex: 0 }
       : null;
+  useEffect(() => {
+    if (!widgetMode) {
+      setWidgetTranscriptCollapsed(false);
+    }
+  }, [widgetMode]);
+  useEffect(() => {
+    if (widgetMode && widgetTranscriptHasConversation) {
+      setWidgetTranscriptCollapsed(false);
+    }
+  }, [snapshot.activeSessionId, widgetMode, widgetTranscriptHasConversation]);
+  const widgetTranscriptPanelOpen =
+    widgetMode &&
+    !widgetModeTransitioning &&
+    widgetTranscriptHasConversation &&
+    !widgetTranscriptCollapsed &&
+    !composerQuestionnaire;
   const useMathInCompute = useCallback((formula: string) => {
     const math = formula.trim();
     if (!math || parallelMode) {
@@ -4960,6 +5040,7 @@ export function PanelsChatBottomSlice({
       className={[
         "panelsChatBottom",
         composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
+        widgetTranscriptPanelOpen ? "panelsChatBottom--widgetTranscriptOpen" : "",
         permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
       ].filter(Boolean).join(" ")}
       aria-label="Panels chat composer and bottom controls"
@@ -5049,6 +5130,18 @@ export function PanelsChatBottomSlice({
         <ComposerQuestionnaire
           questionnaire={composerQuestionnaire.questionnaire}
           onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
+        />
+      ) : null}
+      {widgetTranscriptPanelOpen ? (
+        <WidgetTranscriptPanel
+          activeSessionId={snapshot.activeSessionId}
+          messages={widgetTranscriptMessages}
+          agentName={brainAgentName}
+          assistantBusy={Boolean(snapshot.composer.assistantBusy)}
+          stopAnimationSignal={assistantStopSignal}
+          onEditImage={stageImageForEdit}
+          onUseMathInCompute={useMathInCompute}
+          onReduce={() => setWidgetTranscriptCollapsed(true)}
         />
       ) : null}
       <form

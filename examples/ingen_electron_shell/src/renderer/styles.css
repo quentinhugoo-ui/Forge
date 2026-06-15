@@ -3719,7 +3719,8 @@ button {
   z-index: 30;
 }
 
-.panelsChatBottom--questionnaireOpen {
+.panelsChatBottom--questionnaireOpen,
+.panelsChatBottom--widgetTranscriptOpen {
   z-index: 31;
 }
 
@@ -3826,6 +3827,88 @@ button {
   animation: composerQuestionnaireEnter 180ms ease-out both;
   transform-origin: bottom center;
   transition: left var(--sidebar-motion), width var(--sidebar-motion), bottom var(--sidebar-motion);
+}
+
+.widgetTranscriptPanel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.widgetTranscriptPanel__header {
+  padding: 0 1px 2px;
+}
+
+.composerQuestionnaire .widgetTranscriptPanel__reduce {
+  width: auto;
+  min-width: 58px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 9px;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 10%);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.widgetTranscriptPanel__body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.widgetTranscriptPanel .chatCanvas--widgetPanel {
+  position: relative;
+  inset: auto;
+  left: auto;
+  top: auto;
+  bottom: auto;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  pointer-events: auto;
+  transition: none;
+}
+
+.widgetTranscriptPanel .chatCanvas--widgetPanel .chatCanvas__chapters {
+  display: none;
+}
+
+.widgetTranscriptPanel .chatCanvas--widgetPanel .chatCanvas__messages {
+  height: 100%;
+  min-height: 0;
+  padding: 6px 7px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: 12px;
+  --transcript-media-width: min(280px, 54vw);
+  --transcript-media-avoidance-width: min(220px, 48vw);
+  --transcript-media-flow-height: min(280px, 42vh);
+  --transcript-media-top-offset: 36px;
+  --transcript-media-right-gap: 12px;
+  --transcript-media-left-gap: 12px;
+}
+
+.widgetTranscriptPanel .transcriptItem {
+  margin-bottom: 12px;
+}
+
+.widgetTranscriptPanel .transcriptItem--user + .transcriptItem--assistant,
+.widgetTranscriptPanel .transcriptItem--assistant + .transcriptItem--user {
+  margin-top: 18px;
+}
+
+.widgetTranscriptPanel .transcriptPill {
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.36;
+}
+
+.widgetTranscriptPanel .transcriptCodeActEvent {
+  width: min(100%, calc(100% - 6px));
+  min-height: 28px;
+  margin-left: 4px;
+  gap: 8px;
+  font-size: 11.5px;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire {
@@ -12506,6 +12589,15 @@ ol.assistantText__list li::before {
 
 .shell--widget-canvas-hidden::before {
   transform: translate3d(0, calc(-100vh - 96px), 0);
+}
+
+.shell--widget-mode .widgetTranscriptPanel .chatCanvas--widgetPanel,
+.shell--widget-canvas-hidden .widgetTranscriptPanel .chatCanvas--widgetPanel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition: none;
+  will-change: auto;
 }
 
 @media (max-width: 1220px) {
