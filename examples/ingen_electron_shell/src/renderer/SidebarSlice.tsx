@@ -1550,6 +1550,7 @@ export function SidebarSlice({
   const { snapshot } = useSidebarShadowStore();
   const [pinnedWorkspaceKey, setPinnedWorkspaceKey] = useState(readPinnedWorkspaceKey);
   const [workspaceMenuKey, setWorkspaceMenuKey] = useState("");
+  const [selectedToolId, setSelectedToolId] = useState("");
   const visibleRecent = snapshot.recentItems.filter((item) => item.rowVisible);
   const recentWorkspaceGroups = orderWorkspaceGroups(
     groupSessionsByWorkspace(visibleRecent, snapshot.recentSessionId, activeParallelLaneCount),
@@ -1594,14 +1595,17 @@ export function SidebarSlice({
                       ? sidebarShadowStore.command({ kind: "activate_control", label: "Automations" })
                       : sidebarShadowStore.command({ kind: "set_active_drawer", drawer: tool.drawer });
               const hasDrawer = tool.drawer !== "";
+              const selected = tool.id !== "new-session" && (tool.selected || selectedToolId === tool.id);
               return (
                 <Fragment key={tool.id}>
                   <button
                     type="button"
-                    className="sidebarAction"
+                    className={selected ? "sidebarAction sidebarAction--selected" : "sidebarAction"}
                     aria-label={tool.label}
+                    aria-pressed={selected}
                     aria-expanded={hasDrawer ? tool.selected : undefined}
                     onClick={() => {
+                      setSelectedToolId(tool.id === "new-session" ? "" : tool.id);
                       if (tool.id === "new-session") {
                         onNewSession?.();
                       }

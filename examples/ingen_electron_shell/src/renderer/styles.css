@@ -91,6 +91,7 @@ button {
    !important to beat the reset's !important). Keep this list explicit. */
 .shell .leftPanel,
 .shell .rightPanel,
+.shell .sidebarAction,
 .shell .composer,
 .shell .profileDock__card,
 .shell .permissionModeMenu {
@@ -967,17 +968,27 @@ button {
   padding: 0 8px;
   color: var(--forge-sidebar-text);
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
   isolation: isolate;
-  transition: color 140ms ease-out, transform 140ms ease-out;
+  transition: border-color 140ms ease-out, color 140ms ease-out, transform 140ms ease-out;
 }
 
 .sidebarAction,
 .sidebarAction.sidebarAction--selected {
   background: transparent;
+}
+
+.sidebarAction.sidebarAction--selected {
+  color: var(--forge-text);
+  border-color: var(--forge-line);
+}
+
+.sidebarAction:hover,
+.sidebarAction:focus-visible {
+  border-color: var(--forge-line);
 }
 
 .sidebarAction::before {
