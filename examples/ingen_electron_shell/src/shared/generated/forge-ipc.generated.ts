@@ -781,6 +781,7 @@ export type PanelsChatBottomCommand = PanelsChatBottomCommandBase & {
   userFirstName?: string;
   agentFirstName?: string;
   userHomeLocation?: string;
+  personalityManifest?: string;
 };
 
 export type CanvasSurfacesCommand = CanvasSurfacesCommandBase & {

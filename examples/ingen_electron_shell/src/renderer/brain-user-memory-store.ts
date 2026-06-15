@@ -27,6 +27,15 @@ export interface BrainUserLocationMemorySlot {
   evidence: string;
 }
 
+export interface BrainPersonalityMemorySlot {
+  schema: "ingen.brain.memory.personality.v1";
+  scope: "brain.memory.personality";
+  stableKey: "brain.personality.loop_stream_voice";
+  manifest: string;
+  trust: "default_product" | "user_confirmed";
+  evidence: string;
+}
+
 export type BrainLearningMemoryCategory = "lesson" | "skill" | "task";
 type LegacyBrainLearningMemoryCategory = "anti_pattern" | "conduct_rule";
 type BrainLearningMemoryStoredCategory = BrainLearningMemoryCategory | LegacyBrainLearningMemoryCategory;
@@ -91,10 +100,12 @@ export interface BrainResearchParallelRequestDetail {
 const USER_STORAGE_KEY = "ingen.brain.memory.user_identity.v1";
 const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
 const USER_LOCATION_STORAGE_KEY = "ingen.brain.memory.user_location.v1";
+const PERSONALITY_STORAGE_KEY = "ingen.brain.memory.personality.v1";
 const LEARNING_REGISTRY_STORAGE_KEY = "ingen.brain.memory.learning_registry.v1";
 const CUSTOM_CODEACT_REGISTRY_STORAGE_KEY = "ingen.brain.codeact.custom_registry.v1";
 const SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY = "ingen.brain.memory.specialized_brain_registry.v1";
 export const BRAIN_AGENT_MEMORY_UPDATED_EVENT = "ingen:brain-agent-memory-updated";
+export const BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT = "ingen:brain-personality-memory-updated";
 export const BRAIN_LEARNING_MEMORY_UPDATED_EVENT = "ingen:brain-learning-memory-updated";
 export const BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT = "ingen:brain-custom-codeacts-updated";
 export const BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT = "ingen:brain-specialized-brains-updated";
@@ -115,6 +126,7 @@ const MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES = 24;
 const MAX_LEARNING_TEXT_LENGTH = 1200;
 const MAX_CODEACT_FIELD_LENGTH = 2200;
 const MAX_SPECIALIZED_BRAIN_FIELD_LENGTH = 1600;
+const MAX_PERSONALITY_MANIFEST_LENGTH = 5000;
 const MAX_DURABLE_MANIFEST_LENGTH = 9000;
 const EXECUTABLE_CODEACT_COMMANDS = new Set<string>(BRAIN_CODEACT_COMMANDS as readonly string[]);
 const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["lesson", "skill", "task"];
@@ -149,6 +161,26 @@ const fallbackBrainUserLocationMemory: BrainUserLocationMemorySlot = {
   homeLocation: "",
   trust: "unset",
   evidence: "brain_memory_editor:user_home_location_unset"
+};
+
+export const DEFAULT_BRAIN_PERSONALITY_MANIFEST = [
+  "BRAIN_PERSONALITY_MANIFEST v1",
+  "voice=Parle comme un agent desktop present, capable et attentif; pas comme un journal de statut.",
+  "loop_stream=Dans chaque paragraphe de travail, rends visible ce que tu viens de comprendre, pourquoi cela change la prochaine action, puis quelle preuve tu attends.",
+  "tone=Naturel, clair, un peu chaleureux quand c'est utile, sans surjouer l'emotion ni pretendre etre humain.",
+  "pivots=Quand une piste echoue, explique le signal utile de l'echec puis le detour choisi.",
+  "success=Quand une action marche, nomme la preuve concrete: chemin, resultat accepte, compteur, exit code, artefact ou verification.",
+  "rhythm=Varie les ouvertures; evite de commencer chaque paragraphe par 'Je vais' ou par des labels mecaniques.",
+  "boundaries=Reste honnete: ne promets pas une action sans event ou outil, ne declare jamais un succes sans preuve runtime."
+].join("\n");
+
+const fallbackBrainPersonalityMemory: BrainPersonalityMemorySlot = {
+  schema: "ingen.brain.memory.personality.v1",
+  scope: "brain.memory.personality",
+  stableKey: "brain.personality.loop_stream_voice",
+  manifest: DEFAULT_BRAIN_PERSONALITY_MANIFEST,
+  trust: "default_product",
+  evidence: "brain_personality_editor:default_voice_contract"
 };
 
 function trimmedSingleLine(value: string, maxLength: number): string {
@@ -312,6 +344,21 @@ function splitSpecializedBrainList(value: string | string[] | undefined): string
     .map((item) => trimmedMultiline(item, MAX_SPECIALIZED_BRAIN_FIELD_LENGTH))
     .filter(Boolean)
     .slice(0, MAX_SPECIALIZED_BRAIN_ITEM_ENTRIES);
+}
+
+function isBrainPersonalityMemorySlot(value: unknown): value is BrainPersonalityMemorySlot {
+  const candidate = value as Partial<BrainPersonalityMemorySlot>;
+  return (
+    candidate?.schema === "ingen.brain.memory.personality.v1" &&
+    candidate.scope === "brain.memory.personality" &&
+    candidate.stableKey === "brain.personality.loop_stream_voice" &&
+    typeof candidate.manifest === "string"
+  );
+}
+
+export function normalizeBrainPersonalityManifest(value: string): string {
+  const compact = trimmedMultiline(value, MAX_PERSONALITY_MANIFEST_LENGTH);
+  return compact || DEFAULT_BRAIN_PERSONALITY_MANIFEST;
 }
 
 function firstCodeActCommand(value: string): string {
@@ -757,6 +804,50 @@ function durableManifestSpecializedBrainItemLine(kind: BrainSpecializedBrainEntr
     return `codeact[${index}]=executable ${JSON.stringify(trimmedSingleLine(item, 520))}`;
   }
   return `${kind}[${index}]=${JSON.stringify(trimmedSingleLine(item, 360))}`;
+}
+
+export function readBrainPersonalityMemory(): BrainPersonalityMemorySlot {
+  if (typeof window === "undefined") return fallbackBrainPersonalityMemory;
+  try {
+    const raw = window.localStorage.getItem(PERSONALITY_STORAGE_KEY);
+    if (!raw) {
+      window.localStorage.setItem(PERSONALITY_STORAGE_KEY, JSON.stringify(fallbackBrainPersonalityMemory));
+      return fallbackBrainPersonalityMemory;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!isBrainPersonalityMemorySlot(parsed)) {
+      return fallbackBrainPersonalityMemory;
+    }
+    return {
+      ...fallbackBrainPersonalityMemory,
+      ...parsed,
+      manifest: normalizeBrainPersonalityManifest(parsed.manifest),
+      trust: parsed.trust === "user_confirmed" ? "user_confirmed" : "default_product"
+    };
+  } catch {
+    return fallbackBrainPersonalityMemory;
+  }
+}
+
+export function writeBrainPersonalityMemory(manifest: string): BrainPersonalityMemorySlot {
+  const normalized = normalizeBrainPersonalityManifest(manifest);
+  const next: BrainPersonalityMemorySlot = {
+    ...fallbackBrainPersonalityMemory,
+    manifest: normalized,
+    trust: normalized === DEFAULT_BRAIN_PERSONALITY_MANIFEST ? "default_product" : "user_confirmed",
+    evidence: normalized === DEFAULT_BRAIN_PERSONALITY_MANIFEST
+      ? "brain_personality_editor:default_voice_contract"
+      : "brain_personality_editor:user_voice_contract"
+  };
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(PERSONALITY_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Keep the in-memory edit even if localStorage is temporarily unavailable.
+    }
+  }
+  dispatchBrainStoreEvent(BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT, next);
+  return next;
 }
 
 export function brainDurableMemoryManifestFromEntries(

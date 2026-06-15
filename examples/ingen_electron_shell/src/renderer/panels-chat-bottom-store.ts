@@ -13,9 +13,11 @@ import {
 import {
   BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
   BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
+  BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT,
   BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT,
   brainDurableMemoryManifest,
   readBrainAgentMemory,
+  readBrainPersonalityMemory,
   readBrainUserLocationMemory,
   readBrainUserMemory
 } from "./brain-user-memory-store";
@@ -284,11 +286,13 @@ export function createPanelsChatBottomStore(api = browserApi()) {
     const userMemory = readBrainUserMemory();
     const agentMemory = readBrainAgentMemory();
     const locationMemory = readBrainUserLocationMemory();
+    const personalityMemory = readBrainPersonalityMemory();
     return {
       kind: "update_brain_identity",
       userFirstName: userMemory.preferredFirstName,
       agentFirstName: agentMemory.preferredFirstName,
       userHomeLocation: locationMemory.homeLocation,
+      personalityManifest: personalityMemory.manifest,
       value: brainDurableMemoryManifest()
     };
   }
@@ -302,6 +306,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       userFirstName: command.userFirstName ?? "",
       agentFirstName: command.agentFirstName ?? "",
       userHomeLocation: command.userHomeLocation ?? "",
+      personalityManifest: command.personalityManifest ?? "",
       value: command.value ?? ""
     });
     if (syncKey === lastSyncedBrainContext) {
@@ -514,6 +519,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
       void syncBrainContext(true);
     };
     window.addEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncDurableBrainMemory);
+    window.addEventListener(BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT, syncDurableBrainMemory);
     window.addEventListener(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, syncDurableBrainMemory);
     window.addEventListener(BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT, syncDurableBrainMemory);
     window.setTimeout(syncDurableBrainMemory, 0);

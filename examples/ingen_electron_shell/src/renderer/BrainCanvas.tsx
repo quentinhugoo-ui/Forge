@@ -19,15 +19,19 @@ import { BrainBlob } from "./brain-blob";
 import {
   BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT,
   BRAIN_LEARNING_MEMORY_UPDATED_EVENT,
+  BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT,
+  DEFAULT_BRAIN_PERSONALITY_MANIFEST,
   appendBrainLearningMemoryEntry,
   readBrainAgentMemory,
   readBrainCustomCodeActs,
   readBrainLearningMemoryEntries,
+  readBrainPersonalityMemory,
   readBrainUserLocationMemory,
   readBrainUserMemory,
   removeBrainCustomCodeAct,
   removeBrainLearningMemoryEntry,
   writeBrainAgentMemory,
+  writeBrainPersonalityMemory,
   writeBrainUserLocationMemory,
   writeBrainUserMemory,
   type BrainCustomCodeActEntry,
@@ -1716,6 +1720,95 @@ function PersonalitySpace() {
   );
 }
 
+function PersonalityManifestSpace() {
+  const userMemory = readBrainUserMemory();
+  const agentMemory = readBrainAgentMemory();
+  const locationMemory = readBrainUserLocationMemory();
+  const [personalityMemory, setPersonalityMemory] = useState(() => readBrainPersonalityMemory());
+
+  useEffect(() => {
+    const syncMemory = () => setPersonalityMemory(readBrainPersonalityMemory());
+    window.addEventListener(BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT, syncMemory);
+    return () => window.removeEventListener(BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT, syncMemory);
+  }, []);
+
+  useEffect(() => {
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation,
+      personalityManifest: personalityMemory.manifest
+    });
+  }, [
+    agentMemory.preferredFirstName,
+    locationMemory.homeLocation,
+    personalityMemory.manifest,
+    userMemory.preferredFirstName
+  ]);
+
+  const commitPersonality = (value: string) => {
+    const next = writeBrainPersonalityMemory(value);
+    setPersonalityMemory(next);
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation,
+      personalityManifest: next.manifest
+    });
+  };
+
+  const resetPersonality = () => {
+    commitPersonality(DEFAULT_BRAIN_PERSONALITY_MANIFEST);
+  };
+
+  return (
+    <div className="brainCanvas__space">
+      <p className="brainCanvas__spaceIntro">
+        How the agent sounds when it thinks, explains, pivots and works inside loop streams.
+      </p>
+      <div className="brainCanvas__rows" role="list">
+        <section className="brainPersonalityEditor" aria-label="Agent personality manifest" role="listitem">
+          <div className="brainPersonalityEditor__head">
+            <span className="brainRow__icon">
+              <Glyph kind="masks" size={17} />
+            </span>
+            <span>
+              <strong>Loop-stream voice</strong>
+              <span>Injected once with the Brain manifest, then again after context compaction.</span>
+            </span>
+            <span className="brainStatus brainStatus--active">
+              <i aria-hidden="true" />
+              {personalityMemory.trust.replaceAll("_", " ")}
+            </span>
+          </div>
+          <textarea
+            aria-label="Editable Brain personality manifest"
+            value={personalityMemory.manifest}
+            rows={9}
+            spellCheck={false}
+            onChange={(event) => commitPersonality(event.currentTarget.value)}
+          />
+          <div className="brainPersonalityEditor__actions">
+            <button type="button" onClick={resetPersonality}>
+              <Glyph kind="reuse" size={13} />
+              Reset default
+            </button>
+          </div>
+        </section>
+        <SlotRow
+          glyph="shield-check"
+          title="Autonomy"
+          text="Side-effect actions stay governed by runtime policies; personality only changes wording, never permissions."
+          status="active"
+          active
+        />
+      </div>
+    </div>
+  );
+}
+
 export function BrainCanvas({ onClose }: { onClose?: () => void }) {
   const [space, setSpace] = useState<BrainSpace>("memory");
   return (
@@ -1746,7 +1839,7 @@ export function BrainCanvas({ onClose }: { onClose?: () => void }) {
       {space === "memory" ? <MemorySpace /> : null}
       {space === "hardware" ? <HardwareSpace /> : null}
       {space === "godel" ? <GodelSpace /> : null}
-      {space === "personality" ? <PersonalitySpace /> : null}
+      {space === "personality" ? <PersonalityManifestSpace /> : null}
     </section>
   );
 }

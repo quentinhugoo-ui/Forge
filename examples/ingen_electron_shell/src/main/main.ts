@@ -4048,6 +4048,7 @@ interface BrainIdentityContext {
   userFirstName: string;
   agentFirstName: string;
   userHomeLocation: string;
+  personalityManifest: string;
   durableMemoryManifest: string;
 }
 
@@ -4055,6 +4056,7 @@ const brainIdentityContext: BrainIdentityContext = {
   userFirstName: "",
   agentFirstName: "",
   userHomeLocation: "",
+  personalityManifest: "",
   durableMemoryManifest: ""
 };
 
@@ -4083,6 +4085,29 @@ function normalizeBrainDurableMemoryManifest(value: unknown): string {
   return trimUtf8Bytes(compact, 8_000);
 }
 
+function defaultBrainPersonalityManifest(): string {
+  return [
+    "BRAIN_PERSONALITY_MANIFEST v1",
+    "voice=Parle comme un agent desktop present, capable et attentif; pas comme un journal de statut.",
+    "loop_stream=Dans chaque paragraphe de travail, rends visible ce que tu viens de comprendre, pourquoi cela change la prochaine action, puis quelle preuve tu attends.",
+    "tone=Naturel, clair, un peu chaleureux quand c'est utile, sans surjouer l'emotion ni pretendre etre humain.",
+    "pivots=Quand une piste echoue, explique le signal utile de l'echec puis le detour choisi.",
+    "success=Quand une action marche, nomme la preuve concrete: chemin, resultat accepte, compteur, exit code, artefact ou verification.",
+    "rhythm=Varie les ouvertures; evite de commencer chaque paragraphe par 'Je vais' ou par des labels mecaniques.",
+    "boundaries=Reste honnete: ne promets pas une action sans event ou outil, ne declare jamais un succes sans preuve runtime."
+  ].join("\n");
+}
+
+function normalizeBrainPersonalityManifest(value: unknown): string {
+  if (typeof value !== "string") return defaultBrainPersonalityManifest();
+  const compact = trimUtf8Bytes(value.replace(/\r\n?/g, "\n").trim(), 5_000);
+  if (!compact) return defaultBrainPersonalityManifest();
+  if (!compact.startsWith("BRAIN_PERSONALITY_MANIFEST v1")) {
+    return ["BRAIN_PERSONALITY_MANIFEST v1", compact].join("\n");
+  }
+  return compact;
+}
+
 async function restoreBrainIdentityContextFromDisk(): Promise<void> {
   try {
     const raw = await readFile(brainIdentityStorePath(), "utf8");
@@ -4090,9 +4115,11 @@ async function restoreBrainIdentityContextFromDisk(): Promise<void> {
     brainIdentityContext.userFirstName = normalizeBrainIdentityName(parsed.userFirstName);
     brainIdentityContext.agentFirstName = normalizeBrainIdentityName(parsed.agentFirstName);
     brainIdentityContext.userHomeLocation = normalizeBrainHomeLocation(parsed.userHomeLocation);
+    brainIdentityContext.personalityManifest = normalizeBrainPersonalityManifest(parsed.personalityManifest);
     brainIdentityContext.durableMemoryManifest = normalizeBrainDurableMemoryManifest(parsed.durableMemoryManifest);
   } catch {
     // No persisted identity yet; keep first-install fields blank.
+    brainIdentityContext.personalityManifest = defaultBrainPersonalityManifest();
   }
 }
 
@@ -4116,6 +4143,10 @@ function brainIdentityMemoryManifest(): string {
 
 function brainDurableMemoryContextManifest(): string {
   return brainIdentityContext.durableMemoryManifest;
+}
+
+function brainPersonalityContextManifest(): string {
+  return normalizeBrainPersonalityManifest(brainIdentityContext.personalityManifest);
 }
 
 type PhotonFeature = {
@@ -4739,6 +4770,7 @@ function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
   const nextUserFirstName = normalizeBrainIdentityName(command.userFirstName);
   const nextAgentFirstName = normalizeBrainIdentityName(command.agentFirstName);
   const nextUserHomeLocation = normalizeBrainHomeLocation(command.userHomeLocation);
+  const nextPersonalityManifest = normalizeBrainPersonalityManifest(command.personalityManifest);
   const nextDurableMemoryManifest = command.kind === "update_brain_identity"
     ? normalizeBrainDurableMemoryManifest(command.value)
     : brainIdentityContext.durableMemoryManifest;
@@ -4746,10 +4778,12 @@ function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
     brainIdentityContext.userFirstName === nextUserFirstName &&
     brainIdentityContext.agentFirstName === nextAgentFirstName &&
     brainIdentityContext.userHomeLocation === nextUserHomeLocation &&
+    brainIdentityContext.personalityManifest === nextPersonalityManifest &&
     brainIdentityContext.durableMemoryManifest === nextDurableMemoryManifest;
   brainIdentityContext.userFirstName = nextUserFirstName;
   brainIdentityContext.agentFirstName = nextAgentFirstName;
   brainIdentityContext.userHomeLocation = nextUserHomeLocation;
+  brainIdentityContext.personalityManifest = nextPersonalityManifest;
   brainIdentityContext.durableMemoryManifest = nextDurableMemoryManifest;
   if (unchanged) return;
   void persistBrainIdentityContext();
@@ -4765,6 +4799,7 @@ function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
 
 function brainBootManifest(): string {
   const identityMemory = brainIdentityMemoryManifest();
+  const personalityMemory = brainPersonalityContextManifest();
   const durableBrainMemory = brainDurableMemoryContextManifest();
   const codingBrainOnlyCommands = new Set<string>([
     BRAIN_CODEDOCS_COMMAND,
@@ -4785,6 +4820,7 @@ function brainBootManifest(): string {
     "source=src/brain.rs",
     "injection_policy=general_brain_once_at_session_start_and_after_compaction; specialized_brains_once_on_switch_and_after_compaction",
     identityMemory,
+    personalityMemory,
     durableBrainMemory,
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
@@ -4820,6 +4856,7 @@ function brainRuntimeReminderManifest(): string {
     "BRAIN_RUNTIME_REMINDER v1",
     "boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction",
     "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
+    brainPersonalityContextManifest(),
     `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
     "codeact_loop_rule=For non-trivial work, Brain CodeActs are loop-stream events. Emit a short progress paragraph and the relevant CodeAct/action, then wait for host continuation instead of dumping a full final answer.",
     "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
@@ -5051,6 +5088,7 @@ function brainSegmentManifest(): string {
     return [
       "ACTIVE_BRAIN_SEGMENT v1",
       "active=science",
+      brainPersonalityContextManifest(),
       `activated_by=${BRAIN_SCIENCE_COMMAND}`,
       `rule=${BRAIN_SCIENCE_COMMAND} is already active for this session; continue directly in Science Brain and do not emit ${BRAIN_SCIENCE_COMMAND} again unless a later turn explicitly switches away first.`,
       BRAIN_SCIENCE_VISIBLE_CATALOG
@@ -5060,6 +5098,7 @@ function brainSegmentManifest(): string {
     return [
       "ACTIVE_BRAIN_SEGMENT v1",
       "active=coding",
+      brainPersonalityContextManifest(),
       `activated_by=${BRAIN_CODING_COMMAND}`,
       `rule=${BRAIN_CODING_COMMAND} is already active for this session; continue directly in Coding Brain and do not emit ${BRAIN_CODING_COMMAND} again unless a later turn explicitly switches away first.`,
       `visual_artifact_rule=For HTML/CSS/JS/React/Vite pages, animations or visual components, never answer with copy-paste code or "put this in a file" unless the user explicitly asked for snippet-only help. Create or modify the real local file with AGENT_ACTION_JSON first, wait for AGENT_ACTION_RESULT proof, then emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} path="verified absolute file path" kind="html|react|vite".`,
@@ -5070,6 +5109,7 @@ function brainSegmentManifest(): string {
   return [
     "ACTIVE_BRAIN_SEGMENT v1",
     "active=general",
+    brainPersonalityContextManifest(),
     `mandatory=Before answering or asking clarifying questions, classify the user's task by semantic domain. If you understand that it belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, future Banger 3D, Monster or /newcompute_ work, write a short natural acknowledgement and activate ${BRAIN_SCIENCE_COMMAND} before any detailed specialized answer or questionnaire.`,
     "mandatory=Physical product or prototype conception is engineering by default, even if the object is ordinary or newly mentioned.",
     "mandatory=The decision to activate /sciencebrain_ is semantic, not keyword-based: infer the domain implied by the user's natural-language request, even when the exact object, field or project name has never appeared in the Brain.",
@@ -6655,6 +6695,7 @@ function agentActionShouldRunFileOrganizationFallback(originalUserText: string, 
 function agentLoopNarrationContractManifest(): string {
   return [
     "LOOP_STREAM_NARRATION_CONTRACT v1",
+    "voice_source=Follow BRAIN_PERSONALITY_MANIFEST when choosing warmth, rhythm, phrasing and how much human presence to show.",
     "visible_language=French; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
     "visible_step_shape=Each visible paragraph should make the step understandable: what was just learned, why the next move follows, and what action or verification comes next.",
     "paragraph_size=Use one compact paragraph of 1-3 sentences before an event or action. Avoid long checklists during the loop.",

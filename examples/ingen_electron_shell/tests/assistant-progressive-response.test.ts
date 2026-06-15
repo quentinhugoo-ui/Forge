@@ -71,6 +71,19 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("prefersReducedMotion()");
   });
 
+  it("reveals styled inline markdown only at parsed-safe breakpoints", () => {
+    expect(animationSource).toContain("ASSISTANT_INLINE_ATOMIC_PATTERN");
+    expect(animationSource).toContain("function assistantInlineAtomicRanges");
+    expect(animationSource).toContain("function assistantBreakpointInsideAtomicRange");
+    expect(animationSource).toContain("const atomicRanges = assistantInlineAtomicRanges(text)");
+    expect(animationSource).toContain("!assistantBreakpointInsideAtomicRange(point, atomicRanges)");
+    expect(animationSource).toContain("while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null)");
+    expect(animationSource).toContain("__[^_\\n]+?__");
+    expect(animationSource).toContain("_[^_\\n]+?_");
+    expect(animationSource).toContain('} else if (token.startsWith("__"))');
+    expect(animationSource).toContain('} else if (token.startsWith("_"))');
+  });
+
   it("runs agent action requests as a visible loop stream", () => {
     expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
@@ -82,6 +95,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
     expect(mainSource).toContain("function agentLoopNarrationContractManifest");
     expect(mainSource).toContain("LOOP_STREAM_NARRATION_CONTRACT v1");
+    expect(mainSource).toContain("BRAIN_PERSONALITY_MANIFEST v1");
+    expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");
+    expect(mainSource).toContain("function brainPersonalityContextManifest");
+    expect(mainSource).toContain("personalityManifest");
     expect(mainSource).toContain("visible_step_shape=Each visible paragraph should make the step understandable");
     expect(mainSource).toContain("event_coupling=When you say an action will be taken");
     expect(mainSource).toContain("pedagogy=Name pivots and tradeoffs plainly");

@@ -203,6 +203,8 @@ Update 2026-06-15: the deterministic desktop/file-organization fallback is no lo
 
 Update 2026-06-15: loop-stream writing now uses a shared `LOOP_STREAM_NARRATION_CONTRACT` across AGENT_ACTION continuations, forced retries, failure recovery, Brain switches and Brain CodeAct continuations. The contract makes every visible paragraph explain the last evidence, the next decision, and the action or verification that follows; it removes domain-specific narration prompts and mechanical step labels from the normal loop-writing path.
 
+Update 2026-06-15: Brain personality is now a user-editable manifest in the Brain page. `BRAIN_PERSONALITY_MANIFEST` is persisted with Brain identity context, injected with the General boot manifest, repeated after compaction/runtime reminders, and included when Science or Coding Brain is active. The loop-stream narration contract now treats this manifest as the source of truth for warmth, rhythm and human presence without changing execution permissions.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.
