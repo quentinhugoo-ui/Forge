@@ -9653,6 +9653,13 @@ ol.assistantText__list li::before {
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 11px;
   font-weight: 650;
+.brainMemoryIdentity--personality {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 720px);
+  max-width: 720px;
+}
+
 }
 
 .brainMemoryIdentity__fields {
@@ -9681,6 +9688,80 @@ ol.assistantText__list li::before {
 .brainMemoryIdentityField__label {
   color: var(--forge-muted);
   font-size: 11px;
+.brainPersonalityManifestField {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.brainPersonalityManifestField__hint,
+.brainPersonalityManifestField__policy {
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.brainPersonalityManifestField__textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  padding: 9px 0;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, #ffbf48, transparent 72%);
+  border-bottom: 1px solid color-mix(in oklab, #ffbf48, transparent 78%);
+  outline: 0;
+  color: #f1d596;
+  background: transparent;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  caret-color: var(--forge-accent);
+  text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 90%);
+}
+
+.brainPersonalityManifestField__textarea:focus {
+  color: #fff0b9;
+  border-color: color-mix(in oklab, #ffbf48, transparent 46%);
+}
+
+.brainPersonalityEditor__actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.brainPersonalityEditor__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 62%);
+  border-radius: 6px;
+  color: #f1d596;
+  background: color-mix(in oklab, #ffbf48, transparent 94%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.brainPersonalityEditor__actions button:hover,
+.brainPersonalityEditor__actions button:focus-visible {
+  color: #fff0b9;
+  border-color: color-mix(in oklab, #ffbf48, transparent 38%);
+  outline: 0;
+}
+
+.brainPersonalityManifestField__policy {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+}
+
   line-height: 1.35;
 }
 
@@ -9745,7 +9826,8 @@ ol.assistantText__list li::before {
 .brainActivators .brainRow code,
 .brainMemoryIdentity__label .brainGlyph,
 .brainMemoryIdentityField__edit,
-.brainMemoryIdentityField__input {
+.brainMemoryIdentityField__input,
+.brainPersonalityManifestField__textarea {
   animation: brainSwitchForegroundColorize calc(var(--brain-blob-time, 3.8s) * 3) ease-in-out infinite;
 }
 
@@ -9756,7 +9838,9 @@ ol.assistantText__list li::before {
 }
 
 .brainActivators .brainRow code,
-.brainMemoryIdentityField__input {
+.brainMemoryIdentityField__input,
+.brainPersonalityManifestField__textarea,
+.brainPersonalityEditor__actions button {
   color: #f1d596;
   text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 86%);
 }
@@ -10039,89 +10123,6 @@ ol.assistantText__list li::before {
   min-height: 32px;
   width: fit-content;
   padding: 0 10px;
-.brainPersonalityEditor {
-  display: grid;
-  gap: 10px;
-  max-width: 780px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 36%);
-  background: color-mix(in oklab, var(--forge-surface), transparent 68%);
-}
-
-.brainPersonalityEditor__head {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.brainPersonalityEditor__head > span:nth-child(2) {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.brainPersonalityEditor__head strong {
-  color: var(--forge-text);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.brainPersonalityEditor__head span span {
-  color: var(--forge-muted);
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-
-.brainPersonalityEditor textarea {
-  width: 100%;
-  min-height: 220px;
-  resize: vertical;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
-  border-radius: 0;
-  outline: 0;
-  color: var(--forge-text);
-  background: color-mix(in oklab, #050506, transparent 28%);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11.5px;
-  line-height: 1.55;
-}
-
-.brainPersonalityEditor textarea:focus {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 28%);
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--forge-accent), transparent 72%);
-}
-
-.brainPersonalityEditor__actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.brainPersonalityEditor__actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 32%);
-  color: var(--forge-muted);
-  background: transparent;
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.brainPersonalityEditor__actions button:hover,
-.brainPersonalityEditor__actions button:focus-visible {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 36%);
-  color: var(--forge-text);
-  outline: 0;
-}
-
   border: 1px solid color-mix(in oklab, var(--forge-accent), transparent 36%);
   border-radius: 6px;
   color: color-mix(in oklab, var(--forge-text), var(--forge-accent) 18%);

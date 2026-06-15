@@ -1769,41 +1769,39 @@ function PersonalityManifestSpace() {
         How the agent sounds when it thinks, explains, pivots and works inside loop streams.
       </p>
       <div className="brainCanvas__rows" role="list">
-        <section className="brainPersonalityEditor" aria-label="Agent personality manifest" role="listitem">
-          <div className="brainPersonalityEditor__head">
-            <span className="brainRow__icon">
-              <Glyph kind="masks" size={17} />
-            </span>
-            <span>
-              <strong>Loop-stream voice</strong>
-              <span>Injected once with the Brain manifest, then again after context compaction.</span>
-            </span>
+        <section className="brainMemoryIdentity brainMemoryIdentity--personality" aria-label="Agent personality manifest" role="listitem">
+          <p className="brainMemoryIdentity__label">
+            <Glyph kind="masks" size={18} />
+            <span>Personality</span>
             <span className="brainStatus brainStatus--active">
               <i aria-hidden="true" />
               {personalityMemory.trust.replaceAll("_", " ")}
             </span>
-          </div>
-          <textarea
-            aria-label="Editable Brain personality manifest"
-            value={personalityMemory.manifest}
-            rows={9}
-            spellCheck={false}
-            onChange={(event) => commitPersonality(event.currentTarget.value)}
-          />
+          </p>
+          <label className="brainPersonalityManifestField">
+            <span className="brainMemoryIdentityField__label">Loop-stream voice contract</span>
+            <span className="brainPersonalityManifestField__hint">
+              Injected with the Brain manifest, after context compaction, and on Brain switches.
+            </span>
+            <textarea
+              aria-label="Editable Brain personality manifest"
+              className="brainPersonalityManifestField__textarea"
+              value={personalityMemory.manifest}
+              rows={9}
+              spellCheck={false}
+              onChange={(event) => commitPersonality(event.currentTarget.value)}
+            />
+          </label>
           <div className="brainPersonalityEditor__actions">
             <button type="button" onClick={resetPersonality}>
               <Glyph kind="reuse" size={13} />
               Reset default
             </button>
           </div>
+          <p className="brainPersonalityManifestField__policy">
+            Runtime permissions do not change here. This only controls wording, pacing and narration quality.
+          </p>
         </section>
-        <SlotRow
-          glyph="shield-check"
-          title="Autonomy"
-          text="Side-effect actions stay governed by runtime policies; personality only changes wording, never permissions."
-          status="active"
-          active
-        />
       </div>
     </div>
   );

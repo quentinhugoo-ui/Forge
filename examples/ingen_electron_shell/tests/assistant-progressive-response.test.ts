@@ -10,6 +10,7 @@ const ipcContractSource = readFileSync(join(root, "src", "shared", "ipc-contract
 const animationSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-action-loop.ts"), "utf8");
+const brainMemorySource = readFileSync(join(root, "src", "renderer", "brain-user-memory-store.ts"), "utf8");
 const normalizedMainSource = mainSource.replace(/\r\n/g, "\n");
 
 describe("assistant progressive response feed", () => {
@@ -96,6 +97,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function agentLoopNarrationContractManifest");
     expect(mainSource).toContain("LOOP_STREAM_NARRATION_CONTRACT v1");
     expect(mainSource).toContain("BRAIN_PERSONALITY_MANIFEST v1");
+    expect(mainSource).toContain("voice=Sound like a present, capable desktop agent");
+    expect(brainMemorySource).toContain("voice=Sound like a present, capable desktop agent");
+    expect(brainMemorySource).toContain('parsed.trust !== "user_confirmed"');
     expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");
     expect(mainSource).toContain("function brainPersonalityContextManifest");
     expect(mainSource).toContain("personalityManifest");
