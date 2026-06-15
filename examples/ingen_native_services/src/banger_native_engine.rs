@@ -272,6 +272,7 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub screen_coverage_hash: String,
     pub water_pipeline_hash: String,
     pub water_pipeline_manifest: BangerNativeWaterPipelineManifest,
+    pub water_indirect_draw_proof: BangerNativeWaterIndirectDrawProof,
     pub mesh_vertex_count: u32,
     pub mesh_triangle_count: u32,
     pub draw_call_count: u32,
@@ -323,6 +324,22 @@ pub struct BangerNativeWaterPipelineManifest {
     pub manifest_hash: String,
     pub proof_hash: String,
     pub promotion_gate: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterIndirectDrawProof {
+    pub schema: &'static str,
+    pub draw_mode: &'static str,
+    pub vertex_count_per_instance: u32,
+    pub visible_instance_count: u32,
+    pub first_vertex: u32,
+    pub first_instance: u32,
+    pub expected_visible_instance_count: u32,
+    pub indirect_arg_words: [u32; 4],
+    pub byte_count: u32,
+    pub args_hash: String,
+    pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2984,16 +3001,17 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
                 render.readback_byte_count,
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
-                render.screen_coverage_hash,
-                render.water_pipeline_hash,
-                render.camera_contract_hash,
+            render.screen_coverage_hash,
+            render.water_pipeline_hash,
+            render.water_indirect_draw_proof.proof_hash,
+            render.camera_contract_hash,
                 render.view_projection_hash,
                 render.frame_witness_hash,
                 render.preview_proof_hash,
@@ -3048,6 +3066,7 @@ impl BangerNativeEngine {
             screen_coverage_hash: render.screen_coverage_hash,
             water_pipeline_hash: render.water_pipeline_hash,
             water_pipeline_manifest: render.water_pipeline_manifest,
+            water_indirect_draw_proof: render.water_indirect_draw_proof,
             mesh_vertex_count: render.mesh_vertex_count,
             mesh_triangle_count: render.mesh_triangle_count,
             draw_call_count: render.draw_call_count,
@@ -21266,6 +21285,7 @@ struct WgpuPresentBootstrap {
     screen_coverage_hash: String,
     water_pipeline_hash: String,
     water_pipeline_manifest: BangerNativeWaterPipelineManifest,
+    water_indirect_draw_proof: BangerNativeWaterIndirectDrawProof,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -21485,7 +21505,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let water_meshlet_indirect_args = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("banger-native-present-water-meshlet-indirect-args"),
         size: 16,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     queue.write_buffer(
@@ -22019,6 +22042,13 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
+    let indirect_args_readback_byte_count = 16u64;
+    let indirect_args_readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-indirect-args-readback"),
+        size: indirect_args_readback_byte_count,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-present-bootstrap-encoder"),
     });
@@ -22130,6 +22160,13 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             depth_or_array_layers: 1,
         },
     );
+    encoder.copy_buffer_to_buffer(
+        &water_meshlet_indirect_args,
+        0,
+        &indirect_args_readback_buffer,
+        0,
+        indirect_args_readback_byte_count,
+    );
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -22174,6 +22211,23 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         depth_unpadded_bytes_per_row,
         depth_padded_bytes_per_row,
     );
+    let indirect_args_readback_slice = indirect_args_readback_buffer.slice(..);
+    let (indirect_sender, indirect_receiver) = mpsc::channel();
+    indirect_args_readback_slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = indirect_sender.send(result);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| format!("Banger present loop indirect args readback poll failed: {error}"))?;
+    indirect_receiver
+        .recv()
+        .map_err(|err| format!("Banger present loop indirect args readback callback failed: {err}"))?
+        .map_err(|err| format!("Banger present loop indirect args readback map failed: {err}"))?;
+    let indirect_args_readback_view = indirect_args_readback_slice.get_mapped_range();
+    let water_indirect_draw_proof = present_loop_water_indirect_draw_proof(
+        &indirect_args_readback_view,
+        water_pipeline_manifest.near_field_mesh.visible_meshlet_count,
+    )?;
     let frame_witness_samples = present_loop_frame_witness_samples(
         &readback_view,
         &depth_readback_view,
@@ -22211,6 +22265,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &preview_rgba_hash,
         &frame_witness_hash,
     );
+    drop(indirect_args_readback_view);
+    indirect_args_readback_buffer.unmap();
     drop(depth_readback_view);
     depth_readback_buffer.unmap();
     drop(readback_view);
@@ -22255,6 +22311,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &frame_witness_hash,
         &preview_proof_hash,
         &water_pipeline_hash,
+        &water_indirect_draw_proof.proof_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -22291,6 +22348,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         screen_coverage_hash,
         water_pipeline_hash,
         water_pipeline_manifest,
+        water_indirect_draw_proof,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -22341,6 +22399,60 @@ struct PresentLoopDepthReadbackMetrics {
     coverage_bounds: [u32; 4],
     coverage_ratio: f32,
     proof_hash: String,
+}
+
+fn present_loop_water_indirect_draw_proof(
+    bytes: &[u8],
+    expected_visible_instance_count: u32,
+) -> Result<BangerNativeWaterIndirectDrawProof, String> {
+    if bytes.len() < 16 {
+        return Err("Banger water indirect args readback was shorter than 16 bytes".to_string());
+    }
+    let mut words = [0u32; 4];
+    for (index, word) in words.iter_mut().enumerate() {
+        let start = index * 4;
+        *word = u32::from_le_bytes([
+            bytes[start],
+            bytes[start + 1],
+            bytes[start + 2],
+            bytes[start + 3],
+        ]);
+    }
+    let args_hash = present_loop_water_indirect_args_hash(words);
+    let proof_hash = hash_text_hex(
+        "forge.banger.water.indirect_draw_proof.v1",
+        &format!(
+            "{}:{}:{}:{}:{}:{}",
+            words[0],
+            words[1],
+            words[2],
+            words[3],
+            expected_visible_instance_count,
+            args_hash
+        ),
+    );
+    Ok(BangerNativeWaterIndirectDrawProof {
+        schema: "forge.banger.water_indirect_draw_proof.v1",
+        draw_mode: "wgpu_draw_indirect_nonindexed_visible_meshlet_instances",
+        vertex_count_per_instance: words[0],
+        visible_instance_count: words[1],
+        first_vertex: words[2],
+        first_instance: words[3],
+        expected_visible_instance_count,
+        indirect_arg_words: words,
+        byte_count: 16,
+        args_hash,
+        proof_hash,
+    })
+}
+
+fn present_loop_water_indirect_args_hash(words: [u32; 4]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.water.indirect_draw_args_readback.v1\0");
+    for word in words {
+        h.update(word.to_le_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 struct PresentLoopCoverageAccumulator {
@@ -24030,6 +24142,7 @@ fn present_loop_scene3d_proof_hash(
     frame_witness_hash: &str,
     preview_proof_hash: &str,
     water_pipeline_hash: &str,
+    water_indirect_draw_proof_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -24048,6 +24161,7 @@ fn present_loop_scene3d_proof_hash(
     h.update(frame_witness_hash.as_bytes());
     h.update(preview_proof_hash.as_bytes());
     h.update(water_pipeline_hash.as_bytes());
+    h.update(water_indirect_draw_proof_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -25044,6 +25158,33 @@ mod tests {
             response.water_pipeline_hash
         );
         assert_eq!(response.water_pipeline_manifest.proof_hash.len(), 64);
+        assert_eq!(
+            response.water_indirect_draw_proof.schema,
+            "forge.banger.water_indirect_draw_proof.v1"
+        );
+        assert_eq!(
+            response.water_indirect_draw_proof.draw_mode,
+            "wgpu_draw_indirect_nonindexed_visible_meshlet_instances"
+        );
+        assert_eq!(response.water_indirect_draw_proof.vertex_count_per_instance, 6);
+        assert_eq!(
+            response.water_indirect_draw_proof.visible_instance_count,
+            response.water_pipeline_manifest.near_field_mesh.visible_meshlet_count
+        );
+        assert_eq!(response.water_indirect_draw_proof.first_vertex, 3);
+        assert_eq!(response.water_indirect_draw_proof.first_instance, 0);
+        assert_eq!(
+            response.water_indirect_draw_proof.indirect_arg_words,
+            [
+                6,
+                response.water_pipeline_manifest.near_field_mesh.visible_meshlet_count,
+                3,
+                0
+            ]
+        );
+        assert_eq!(response.water_indirect_draw_proof.byte_count, 16);
+        assert_eq!(response.water_indirect_draw_proof.args_hash.len(), 64);
+        assert_eq!(response.water_indirect_draw_proof.proof_hash.len(), 64);
         assert_eq!(response.mesh_vertex_count, 55299);
         assert_eq!(response.mesh_triangle_count, 18433);
         assert_eq!(response.draw_call_count, 2);
