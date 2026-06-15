@@ -8912,7 +8912,7 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
-  inset: 50% auto auto 58%;
+  inset: 50% auto auto 59%;
   width: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px);
   height: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px);
   overflow: visible;

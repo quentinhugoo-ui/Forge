@@ -95,7 +95,7 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain("right: var(--transcript-media-right-gap)");
     expect(stylesSource).toContain("overflow: visible");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame");
-    expect(stylesSource).toContain("inset: 50% auto auto 58%");
+    expect(stylesSource).toContain("inset: 50% auto auto 59%");
     expect(stylesSource).toContain("width: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px)");
     expect(stylesSource).toContain("height: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px)");
     expect(stylesSource).toContain("transform: translate3d(-50%, -50%, 0)");
