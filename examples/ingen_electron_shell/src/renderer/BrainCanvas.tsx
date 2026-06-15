@@ -122,6 +122,15 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
       </svg>
     );
   }
+  if (kind === "lesson-book") {
+    return (
+      <svg {...base}>
+        <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22z" />
+        <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22z" />
+        <path d="m7.5 11 1.25 1.25L11 10" />
+      </svg>
+    );
+  }
   if (kind === "masks") {
     return (
       <svg {...base} viewBox="0 0 24 25" strokeWidth="1.5">
@@ -308,8 +317,8 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   {
     id: "lesson",
     label: "Lessons",
-    title: "Lessons turn mistakes and experience into reusable rules and skills.",
-    glyph: "shield-check",
+    title: "The agent reviews mistakes and useful outcomes, then turns them into durable rules and skills it can reuse in future sessions.",
+    glyph: "lesson-book",
     placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
   {
@@ -883,17 +892,17 @@ function BrainLearningRegistry() {
   };
 
   return (
-    <section className="brainLearningRegistry" aria-label="Durable learning memory" role="listitem">
+    <section className="brainLearningRegistry" aria-label="Durable lessons" role="listitem">
       <div className="brainLearningRegistry__head">
         <span className="brainRow__icon">
-          <Glyph kind="database" size={17} />
+          <Glyph kind="lesson-book" size={17} />
         </span>
         <span>
-          <strong>Learning memory</strong>
-          <span>Lessons, skills and tasks that should survive future sessions.</span>
+          <strong>Lessons</strong>
+          <span>The agent turns errors, fixes and repeated wins into reusable rules and skills for future sessions.</span>
         </span>
       </div>
-      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Learning memory categories">
+      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Lesson categories">
         {BRAIN_LEARNING_MEMORY_CATEGORIES.map((item) => (
           <button
             type="button"
@@ -944,7 +953,7 @@ function BrainLearningRegistry() {
             <footer>
               <BrainEntrySourceBadge source={entry.source} />
               <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
-              <button type="button" aria-label="Remove learning memory entry" onClick={() => deleteEntry(entry.id)}>
+              <button type="button" aria-label="Remove lesson entry" onClick={() => deleteEntry(entry.id)}>
                 <Glyph kind="minus" size={12} />
               </button>
             </footer>
