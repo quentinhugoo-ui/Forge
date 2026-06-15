@@ -3581,12 +3581,14 @@ function AnimatedAssistantText({
   agentName,
   message,
   onAnimationComplete,
+  onWritingChange,
   onUseMathInCompute,
   parallelSessionIndex
 }: {
   agentName: string;
   message: TranscriptMessage;
   onAnimationComplete?: (messageId: string) => void;
+  onWritingChange?: (active: boolean) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   parallelSessionIndex: number;
 }) {
@@ -3605,6 +3607,11 @@ function AnimatedAssistantText({
   const lineGrowthStartHeightRef = useRef<number | null>(null);
   const lineGrowthFrameRef = useRef<number | null>(null);
   const lineGrowthTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onWritingChange?.(true);
+    return () => onWritingChange?.(false);
+  }, [message.id, onWritingChange]);
 
   const clearLineGrowthTransition = useCallback(() => {
     if (lineGrowthFrameRef.current !== null) {
@@ -3875,6 +3882,7 @@ function TranscriptCanvas({
   parallelSessionIndex = 0,
   className = "chatCanvas",
   assistantBusy = false,
+  onAssistantWritingChange,
   onEditImage,
   onUseMathInCompute,
   stopAnimationSignal = 0
@@ -3885,6 +3893,7 @@ function TranscriptCanvas({
   parallelSessionIndex?: number;
   className?: string;
   assistantBusy?: boolean;
+  onAssistantWritingChange?: (active: boolean) => void;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   stopAnimationSignal?: number;
@@ -4194,6 +4203,7 @@ function TranscriptCanvas({
                           agentName={agentName}
                           message={renderedMessage}
                           onAnimationComplete={completeAssistantAnimation}
+                          onWritingChange={onAssistantWritingChange}
                           onUseMathInCompute={onUseMathInCompute}
                           parallelSessionIndex={parallelSessionIndex}
                         />
@@ -4259,6 +4269,7 @@ function WidgetTranscriptPanel({
   stopAnimationSignal,
   onEditImage,
   onUseMathInCompute,
+  onAssistantWritingChange,
   onReduce,
   collapsing = false
 }: {
@@ -4270,6 +4281,7 @@ function WidgetTranscriptPanel({
   stopAnimationSignal: number;
   onEditImage: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute: AssistantMathUseHandler;
+  onAssistantWritingChange?: (active: boolean) => void;
   onReduce: () => void;
   collapsing?: boolean;
 }) {
@@ -4311,6 +4323,7 @@ function WidgetTranscriptPanel({
           className="chatCanvas chatCanvas--widgetPanel"
           assistantBusy={assistantBusy}
           stopAnimationSignal={stopAnimationSignal}
+          onAssistantWritingChange={onAssistantWritingChange}
           onEditImage={onEditImage}
           onUseMathInCompute={onUseMathInCompute}
         />
@@ -4340,11 +4353,13 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
 function WidgetSessionTabs({
   sessions,
   activeSessionId,
+  activeSessionLive,
   onOpenSession,
   onNewSession
 }: {
   sessions: SidebarSessionItem[];
   activeSessionId: string;
+  activeSessionLive: boolean;
   onOpenSession?: (sessionId: string, section: NativeSection) => void;
   onNewSession?: () => void;
 }) {
@@ -4357,13 +4372,20 @@ function WidgetSessionTabs({
         {sessions.map((session) => {
           const selected = session.sessionId !== "" && session.sessionId === activeSessionId;
           const label = session.label.trim() || "New session";
+          const working = session.working || (selected && activeSessionLive);
+          const tabStateClass = working ? "widgetSessionTabs__tab--working" : "widgetSessionTabs__tab--complete";
           return (
             <button
               type="button"
-              className={selected ? "widgetSessionTabs__tab widgetSessionTabs__tab--active" : "widgetSessionTabs__tab"}
+              className={[
+                "widgetSessionTabs__tab",
+                selected ? "widgetSessionTabs__tab--active" : "",
+                tabStateClass
+              ].filter(Boolean).join(" ")}
               role="tab"
               aria-selected={selected}
-              aria-label={`Open session: ${label}`}
+              aria-busy={working || undefined}
+              aria-label={`Open session: ${label}${working ? ", working" : ", complete"}`}
               title={label}
               key={session.sessionId}
               onClick={() => onOpenSession?.(session.sessionId, session.section)}
@@ -4613,6 +4635,7 @@ export function PanelsChatBottomSlice({
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
   const [widgetTranscriptCollapsed, setWidgetTranscriptCollapsed] = useState(false);
   const [widgetTranscriptCollapsing, setWidgetTranscriptCollapsing] = useState(false);
+  const [widgetAssistantWriting, setWidgetAssistantWriting] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -4820,6 +4843,14 @@ export function PanelsChatBottomSlice({
     [canvasMessages]
   );
   const widgetTranscriptHasConversation = widgetTranscriptMessages.length > 0;
+  const widgetTranscriptHasPendingAssistant = canvasMessages.some(
+    (message) => message.role === "assistant" && message.id.startsWith("assistant-pending-")
+  );
+  const widgetActiveSessionLive = Boolean(
+    snapshot.composer.assistantBusy ||
+    widgetAssistantWriting ||
+    widgetTranscriptHasPendingAssistant
+  );
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
@@ -5008,8 +5039,12 @@ export function PanelsChatBottomSlice({
       clearWidgetTranscriptCollapseTimer();
       setWidgetTranscriptCollapsed(false);
       setWidgetTranscriptCollapsing(false);
+      setWidgetAssistantWriting(false);
     }
   }, [clearWidgetTranscriptCollapseTimer, widgetMode]);
+  useEffect(() => {
+    setWidgetAssistantWriting(false);
+  }, [snapshot.activeSessionId]);
   useEffect(() => {
     if (widgetMode && widgetTranscriptHasConversation) {
       clearWidgetTranscriptCollapseTimer();
@@ -5343,6 +5378,7 @@ export function PanelsChatBottomSlice({
         <WidgetSessionTabs
           sessions={widgetRecentSessions}
           activeSessionId={activeSessionId || snapshot.activeSessionId}
+          activeSessionLive={widgetActiveSessionLive}
           onOpenSession={onWidgetSessionOpen}
           onNewSession={onWidgetNewSession}
         />
@@ -5357,6 +5393,7 @@ export function PanelsChatBottomSlice({
           stopAnimationSignal={assistantStopSignal}
           onEditImage={stageImageForEdit}
           onUseMathInCompute={useMathInCompute}
+          onAssistantWritingChange={setWidgetAssistantWriting}
           onReduce={reduceWidgetTranscript}
           collapsing={widgetTranscriptCollapsing}
         />

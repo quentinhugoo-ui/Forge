@@ -4301,6 +4301,9 @@ button {
 }
 
 .widgetSessionTabs__tab {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   flex: 1 1 0;
   justify-content: start;
   padding: 0 9px;
@@ -4310,7 +4313,30 @@ button {
   line-height: 1;
 }
 
+.widgetSessionTabs__tab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-115%);
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 30%,
+      rgba(255, 255, 255, 0.13) 46%,
+      rgba(255, 255, 255, 0.23) 52%,
+      rgba(255, 255, 255, 0.09) 59%,
+      transparent 73%,
+      transparent 100%
+    );
+}
+
 .widgetSessionTabs__tab span {
+  position: relative;
+  z-index: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4347,6 +4373,40 @@ button {
 .widgetSessionTabs__new:focus-visible {
   outline: 2px solid rgba(125, 190, 255, 0.58);
   outline-offset: 2px;
+}
+
+.widgetSessionTabs__tab--working {
+  color: color-mix(in oklab, #ffffff, var(--forge-chat-text) 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 3%);
+  border-color: color-mix(in oklab, var(--forge-line), #ffffff 14%);
+  box-shadow:
+    0 -4px 13px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.widgetSessionTabs__tab--working::before {
+  opacity: 1;
+  animation: widgetSessionTabSheen 1450ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.widgetSessionTabs__tab--complete {
+  color: color-mix(in oklab, var(--forge-chat-text), #b5fff1 20%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #2b8f82 18%);
+  border-color: color-mix(in oklab, var(--forge-line), #4ac2b1 22%);
+  box-shadow:
+    0 -3px 10px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(159, 255, 239, 0.08);
+}
+
+.widgetSessionTabs__tab--active.widgetSessionTabs__tab--complete,
+.widgetSessionTabs__tab--complete:hover,
+.widgetSessionTabs__tab--complete:focus-visible {
+  color: color-mix(in oklab, #ffffff, #9fffee 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #2f9b8d 24%);
+  border-color: color-mix(in oklab, var(--forge-line), #70dcca 34%);
+  box-shadow:
+    0 -4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(181, 255, 241, 0.12);
 }
 
 .widgetTranscriptTab {
@@ -7579,6 +7639,16 @@ ol.assistantText__list li::before {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+@keyframes widgetSessionTabSheen {
+  0% {
+    transform: translateX(-115%);
+  }
+  54%,
+  100% {
+    transform: translateX(115%);
   }
 }
 
@@ -13960,9 +14030,15 @@ ol.assistantText__list li::before {
   .widgetTranscriptTab,
   .widgetSessionTabs,
   .widgetSessionTabs__tab,
+  .widgetSessionTabs__tab::before,
   .widgetSessionTabs__new {
     animation: none;
     transition: none;
+  }
+
+  .widgetSessionTabs__tab--working::before {
+    opacity: 0.24;
+    transform: translateX(0);
   }
 
 }
