@@ -9846,7 +9846,7 @@ ol.assistantText__list li::before {
   margin: 0 0 12px;
   padding: 8px 10px;
   border-color: color-mix(in oklab, #ffbf48, transparent 58%);
-  background: transparent;
+  background: var(--forge-sidebar-bg);
 }
 
 .brainCustomCodeActs {
@@ -10024,9 +10024,9 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__composer {
   min-height: 112px;
-  padding: 8px 78px 32px 10px;
-  border: 1px solid color-mix(in oklab, #ffbf48, transparent 70%);
-  background: color-mix(in oklab, #ffbf48, transparent 96%);
+  padding: 8px 78px 32px 0;
+  border: 0;
+  background: transparent;
 }
 
 .brainLearningRegistry__composer textarea,
