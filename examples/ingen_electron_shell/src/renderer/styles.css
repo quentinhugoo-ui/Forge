@@ -5589,6 +5589,119 @@ button {
   gap: 14px;
 }
 
+.assistantText__learningInterrupt {
+  --learning-accent: #f5c542;
+  --learning-accent-soft: color-mix(in oklab, var(--learning-accent), transparent 72%);
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  margin: 2px 0;
+  padding: 10px 0 10px 10px;
+  border: 1px solid color-mix(in oklab, var(--assistant-mark-line), var(--learning-accent) 16%);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--learning-accent), transparent 90%), transparent 42%),
+    color-mix(in oklab, var(--forge-panel), transparent 20%);
+}
+
+.assistantText__learningInterrupt--working_pattern,
+.assistantText__learningInterrupt--skill_candidate {
+  --learning-accent: #5eead4;
+}
+
+.assistantText__learningInterrupt--anti_pattern {
+  --learning-accent: #f59e0b;
+}
+
+.assistantText__learningInterrupt--codeact_candidate {
+  --learning-accent: #93c5fd;
+}
+
+.assistantText__learningRail {
+  width: 3px;
+  border-radius: 999px !important;
+  background: linear-gradient(180deg, var(--learning-accent), var(--learning-accent-soft));
+}
+
+.assistantText__learningBody {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 10px;
+}
+
+.assistantText__learningHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  color: color-mix(in oklab, var(--forge-text), white 6%);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.assistantText__learningIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid color-mix(in oklab, var(--learning-accent), transparent 34%);
+  border-radius: 999px !important;
+  color: color-mix(in oklab, var(--learning-accent), white 12%);
+  background: color-mix(in oklab, var(--learning-accent), transparent 88%);
+}
+
+.assistantText__learningMeta {
+  color: var(--assistant-mark-label);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.assistantText__learningBody p {
+  margin: 0;
+  color: var(--assistant-mark-text);
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
+.assistantText__learningActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.assistantText__learningAction {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in oklab, var(--learning-accent), transparent 44%);
+  border-radius: 999px !important;
+  background: color-mix(in oklab, var(--learning-accent), transparent 91%);
+  color: color-mix(in oklab, var(--forge-text), var(--learning-accent) 22%);
+  font: 600 12px/1 "Geist", ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.assistantText__learningAction:hover,
+.assistantText__learningAction:focus-visible {
+  border-color: color-mix(in oklab, var(--learning-accent), white 10%);
+  background: color-mix(in oklab, var(--learning-accent), transparent 82%);
+}
+
+.assistantText__learningAction:active {
+  transform: translateY(1px);
+}
+
+.assistantText__learningSubmitted {
+  color: var(--assistant-mark-label);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
 .assistantText__paragraph {
   margin: 0;
 }

@@ -4711,6 +4711,9 @@ function brainBootManifest(): string {
     `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
+    "learning_interrupt_markup=[[learn type=anti_pattern|working_pattern|user_preference|domain_rule|skill_candidate|codeact_candidate|research_candidate scope=session|project|domain confidence=0.00..1.00 promote=remember,rule,skill,task,codeact,research]]short candidate observation[[/learn]]",
+    "learning_interrupt_rule=During loop stream work, if a repeated avoidable error, stable correction, reusable solution, user preference, domain rule, skill candidate, CodeAct candidate or worthwhile research branch appears, emit exactly one compact [[learn ...]]...[[/learn]] candidate line near the relevant paragraph.",
+    "learning_interrupt_guard=Learning interrupts are proposals only: never claim the Brain has persisted them until a user action or verified Brain/CodeAct promotion accepts them. Prefer at most one learning interrupt per turn unless the user asks for more.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
   ].filter(Boolean).join("\n");
 }

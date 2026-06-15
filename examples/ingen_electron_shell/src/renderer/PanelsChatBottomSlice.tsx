@@ -52,6 +52,14 @@ import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-b
 import { ProviderLogo } from "./ProviderLogo";
 import { MODULE_DRAG_ZONE_EVENT, type ModuleDragZoneDetail, type SidebarModuleId } from "./SidebarSlice";
 import { assistantGeoEntityLabel } from "./assistant-geo-entities";
+import {
+  brainLearningPromotionLabel,
+  brainLearningPromotionPrompt,
+  brainLearningTypeLabel,
+  parseBrainLearningInterruptLine,
+  stripBrainLearningInterruptMarkup,
+  type BrainLearningInterrupt
+} from "./assistant-learning-interrupts";
 import { ModuleLogo } from "./module-logos";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
@@ -1205,6 +1213,7 @@ type AssistantMarkdownBlock =
   | { kind: "callout"; tone: AssistantCalloutTone; title: string; body: string }
   | { kind: "facts"; items: AssistantFactItem[] }
   | { kind: "divider" }
+  | { kind: "learning_interrupt"; interrupt: BrainLearningInterrupt }
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
@@ -1627,6 +1636,13 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       skippingCodeActMetadata = false;
       lastEvent = null;
     }
+    const learningInterrupt = parseBrainLearningInterruptLine(rawLine);
+    if (learningInterrupt) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "learning_interrupt", interrupt: learningInterrupt });
+      continue;
+    }
     const fence = markdownFenceInfo(line);
     if (fence) {
       flushParagraph();
@@ -1818,6 +1834,10 @@ function assistantRenderableText(text: string): string {
     .replace(/(^|\n)\s*\/(["'`])[^"'`\r\n]{0,120}(?:\2(?:_renamechat_?)?|_renamechat_?)?\s*$/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function assistantAccessibleText(text: string): string {
+  return stripBrainLearningInterruptMarkup(text);
 }
 
 function assistantVisibleAnimationSource(text: string): string {
@@ -3022,18 +3042,79 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
   );
 }
 
+function AssistantLearningInterruptCard({
+  interrupt,
+  messageId,
+  blockIndex,
+  parallelSessionIndex
+}: {
+  interrupt: BrainLearningInterrupt;
+  messageId: string;
+  blockIndex: number;
+  parallelSessionIndex: number;
+}) {
+  const [submittedAction, setSubmittedAction] = useState<BrainLearningInterrupt["promote"][number] | null>(null);
+  const confidenceLabel = interrupt.confidence === null ? "confidence unknown" : `${Math.round(interrupt.confidence * 100)}% confidence`;
+  const typeLabel = brainLearningTypeLabel(interrupt.type);
+  const cardId = `${messageId}-learning-${blockIndex}`;
+  const TypeIcon = interrupt.type === "anti_pattern" ? ShieldAlert : interrupt.type === "working_pattern" ? ShieldCheck : Sparkles;
+
+  const requestPromotion = (action: BrainLearningInterrupt["promote"][number]) => {
+    setSubmittedAction(action);
+    void panelsChatBottomStore.dispatch({
+      kind: "send_chat",
+      value: brainLearningPromotionPrompt(interrupt, action),
+      parallelSessionIndex: parallelSessionIndex > 0 ? parallelSessionIndex : undefined
+    });
+  };
+
+  return (
+    <aside className={`assistantText__learningInterrupt assistantText__learningInterrupt--${interrupt.type}`} aria-labelledby={`${cardId}-title`} role="note">
+      <div className="assistantText__learningRail" aria-hidden="true" />
+      <div className="assistantText__learningBody">
+        <div className="assistantText__learningHeader">
+          <span className="assistantText__learningIcon" aria-hidden="true">
+            <TypeIcon size={14} strokeWidth={1.85} />
+          </span>
+          <strong id={`${cardId}-title`}>Learning interrupt</strong>
+          <span className="assistantText__learningMeta">{typeLabel}</span>
+          <span className="assistantText__learningMeta">{confidenceLabel}</span>
+        </div>
+        <p>{assistantInlineNodes(interrupt.text, `${messageId}-learning-${blockIndex}`, undefined, false)}</p>
+        <div className="assistantText__learningActions" aria-label="Learning promotion actions">
+          {interrupt.promote.map((action) => (
+            <button
+              type="button"
+              className="assistantText__learningAction"
+              key={action}
+              aria-label={`Promote learning interrupt as ${brainLearningPromotionLabel(action)}`}
+              title={`Promote as ${brainLearningPromotionLabel(action)}`}
+              onClick={() => requestPromotion(action)}
+            >
+              {brainLearningPromotionLabel(action)}
+            </button>
+          ))}
+          {submittedAction ? <span className="assistantText__learningSubmitted">Queued {brainLearningPromotionLabel(submittedAction)}</span> : null}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function AssistantMarkdownText({
   agentName,
   text,
   messageId,
   writing,
-  onUseMathInCompute
+  onUseMathInCompute,
+  parallelSessionIndex
 }: {
   agentName: string;
   text: string;
   messageId: string;
   writing: boolean;
   onUseMathInCompute?: AssistantMathUseHandler;
+  parallelSessionIndex: number;
 }) {
   const blocks = assistantMarkdownBlocks(text);
   return (
@@ -3044,6 +3125,17 @@ function AssistantMarkdownText({
         }
         if (block.kind === "event") {
           return <TranscriptCodeActEventLine agentName={agentName} event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} writing={writing} />;
+        }
+        if (block.kind === "learning_interrupt") {
+          return (
+            <AssistantLearningInterruptCard
+              blockIndex={index}
+              interrupt={block.interrupt}
+              key={`${messageId}-learning-${index}`}
+              messageId={messageId}
+              parallelSessionIndex={parallelSessionIndex}
+            />
+          );
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";
@@ -3168,11 +3260,29 @@ function AssistantMarkdownText({
   );
 }
 
-function StaticAssistantText({ agentName, message, onUseMathInCompute }: { agentName: string; message: TranscriptMessage; onUseMathInCompute?: AssistantMathUseHandler }) {
+function StaticAssistantText({
+  agentName,
+  message,
+  onUseMathInCompute,
+  parallelSessionIndex
+}: {
+  agentName: string;
+  message: TranscriptMessage;
+  onUseMathInCompute?: AssistantMathUseHandler;
+  parallelSessionIndex: number;
+}) {
   const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
+  const accessibleText = useMemo(() => assistantAccessibleText(renderableText), [renderableText]);
   return (
-    <div className="assistantText" aria-label={renderableText}>
-      <AssistantMarkdownText agentName={agentName} messageId={message.id} text={renderableText} writing={false} onUseMathInCompute={onUseMathInCompute} />
+    <div className="assistantText" aria-label={accessibleText}>
+      <AssistantMarkdownText
+        agentName={agentName}
+        messageId={message.id}
+        onUseMathInCompute={onUseMathInCompute}
+        parallelSessionIndex={parallelSessionIndex}
+        text={renderableText}
+        writing={false}
+      />
     </div>
   );
 }
@@ -3181,15 +3291,19 @@ function AnimatedAssistantText({
   agentName,
   message,
   onAnimationComplete,
-  onUseMathInCompute
+  onUseMathInCompute,
+  parallelSessionIndex
 }: {
   agentName: string;
   message: TranscriptMessage;
   onAnimationComplete?: (messageId: string) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
+  parallelSessionIndex: number;
 }) {
   const textRef = useRef<HTMLDivElement>(null);
   const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
+  const accessibleText = useMemo(() => assistantAccessibleText(renderableText), [renderableText]);
+  const containsLearningInterrupt = renderableText.includes("[[learn");
   const animationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);
   const revealBreakpoints = useMemo(() => assistantRevealBreakpoints(animationSource), [animationSource]);
   const totalCharacters = animationSource.length;
@@ -3207,7 +3321,7 @@ function AnimatedAssistantText({
   }, [message.id]);
 
   useEffect(() => {
-    if (totalCharacters === 0 || totalRevealSteps === 0 || prefersReducedMotion()) {
+    if (containsLearningInterrupt || totalCharacters === 0 || totalRevealSteps === 0 || prefersReducedMotion()) {
       visibleCharactersRef.current = totalCharacters;
       setVisibleCharacters(totalCharacters);
       setAnimationSettled(true);
@@ -3251,7 +3365,7 @@ function AnimatedAssistantText({
     setAnimationSettled(false);
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [animationSource, message.id, revealBreakpoints, totalCharacters, totalRevealSteps]);
+  }, [animationSource, containsLearningInterrupt, message.id, revealBreakpoints, totalCharacters, totalRevealSteps]);
 
   useEffect(() => {
     if (completionReportedRef.current || totalCharacters === 0 || !animationSettled || visibleCharacters < totalCharacters) {
@@ -3271,8 +3385,15 @@ function AnimatedAssistantText({
   const visibleText = animationSource.slice(0, visibleCharacters);
 
   return (
-    <div className="assistantText" aria-label={renderableText} ref={textRef}>
-      <AssistantMarkdownText agentName={agentName} messageId={message.id} text={visibleText} writing={writing} onUseMathInCompute={onUseMathInCompute} />
+    <div className="assistantText" aria-label={accessibleText} ref={textRef}>
+      <AssistantMarkdownText
+        agentName={agentName}
+        messageId={message.id}
+        onUseMathInCompute={onUseMathInCompute}
+        parallelSessionIndex={parallelSessionIndex}
+        text={visibleText}
+        writing={writing}
+      />
     </div>
   );
 }
@@ -3674,9 +3795,20 @@ function TranscriptCanvas({
                     ) : assistantError ? (
                       <AssistantErrorText message={renderedMessage} />
                     ) : assistantShouldAnimate ? (
-                      <AnimatedAssistantText agentName={agentName} message={renderedMessage} onAnimationComplete={completeAssistantAnimation} onUseMathInCompute={onUseMathInCompute} />
+                      <AnimatedAssistantText
+                        agentName={agentName}
+                        message={renderedMessage}
+                        onAnimationComplete={completeAssistantAnimation}
+                        onUseMathInCompute={onUseMathInCompute}
+                        parallelSessionIndex={parallelSessionIndex}
+                      />
                     ) : (
-                      <StaticAssistantText agentName={agentName} message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
+                      <StaticAssistantText
+                        agentName={agentName}
+                        message={renderedMessage}
+                        onUseMathInCompute={onUseMathInCompute}
+                        parallelSessionIndex={parallelSessionIndex}
+                      />
                     )}
                   </div>
                   {assistantCanShowWorkingStatus ? (
