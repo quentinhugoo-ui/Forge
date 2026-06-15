@@ -99,8 +99,13 @@ button {
   border-radius: 6px !important;
 }
 
+.shell .widgetTranscriptPanel__header,
 .shell .widgetTranscriptTab {
   border-radius: 6px 6px 0 0 !important;
+}
+
+.shell .widgetTranscriptPanel__body {
+  border-radius: 6px !important;
 }
 
 .shell .globalTooltip {
@@ -3979,75 +3984,127 @@ button {
 }
 
 .widgetTranscriptPanel {
-  grid-template-rows: auto minmax(0, 1fr);
+  --widget-transcript-tab-height: 22px;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  animation: widgetTranscriptPanelEnter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: bottom center;
   will-change: transform, opacity;
   transition:
     left var(--sidebar-motion),
     width var(--sidebar-motion),
     bottom var(--sidebar-motion),
     opacity 180ms ease-out,
-    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .widgetTranscriptPanel--collapsing {
   opacity: 0.96;
   pointer-events: none;
-  transform: translate3d(0, calc(100% - 28px), 0);
+  transform: translate3d(0, calc(100% - var(--widget-transcript-tab-height)), 0);
 }
 
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__header,
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__body {
   opacity: 0;
-  transition: opacity 120ms ease-out;
+  transition: opacity 140ms ease-out;
 }
 
 .widgetTranscriptPanel__header {
+  position: absolute;
+  right: 16px;
+  top: calc(-1 * var(--widget-transcript-tab-height) + 1px);
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  align-items: center;
   gap: 8px;
-  min-height: 16px;
-  padding: 0 2px 3px;
-  transition: opacity 120ms ease-out;
+  width: min(214px, calc(100% - 32px));
+  height: var(--widget-transcript-tab-height);
+  min-height: var(--widget-transcript-tab-height);
+  padding: 0 3px 0 9px;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 16%);
+  box-shadow:
+    0 -4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition:
+    opacity 140ms ease-out,
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 180ms ease;
 }
 
 .widgetTranscriptPanel__title {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 26%);
+  letter-spacing: 0;
+  line-height: 1;
+  color: currentColor;
 }
 
 .composerQuestionnaire .widgetTranscriptPanel__reduce {
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
-  width: 20px;
-  min-width: 20px;
-  height: 20px;
-  min-height: 20px;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
   padding: 0;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 34%);
-  transition: color 120ms ease-out, background 120ms ease-out;
+  color: currentColor;
+  background: transparent;
+  border: 0;
+  transition: color 120ms ease-out, background 120ms ease-out, transform 120ms ease-out;
+}
+
+.widgetTranscriptPanel__header:hover,
+.widgetTranscriptPanel__header:focus-within {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
+  border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
+  box-shadow:
+    0 -5px 14px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
 }
 
 .composerQuestionnaire .widgetTranscriptPanel__reduce:hover,
 .composerQuestionnaire .widgetTranscriptPanel__reduce:focus-visible {
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 8%);
+  color: #ffffff;
   background: color-mix(in oklab, var(--forge-chat-text), transparent 90%);
 }
 
+.composerQuestionnaire .widgetTranscriptPanel__reduce:active {
+  transform: translateY(1px);
+}
+
 .widgetTranscriptPanel__reduce svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 .widgetTranscriptPanel__body {
   min-height: 0;
   overflow: hidden;
-  transition: opacity 120ms ease-out;
+  background: var(--forge-canvas-bg, #0d0d0f);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-top-color: color-mix(in oklab, var(--forge-line), transparent 4%);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transition: opacity 140ms ease-out;
 }
 
 .widgetTranscriptPanel .chatCanvas--widgetPanel {
@@ -4062,6 +4119,7 @@ button {
   min-width: 0;
   min-height: 0;
   gap: 0;
+  background: var(--forge-canvas-bg, #0d0d0f);
   pointer-events: auto;
   transition: none;
 }
@@ -4083,6 +4141,10 @@ button {
   --transcript-media-top-offset: 36px;
   --transcript-media-right-gap: 12px;
   --transcript-media-left-gap: 12px;
+  background: var(--forge-canvas-bg, #0d0d0f);
+  scrollbar-color: color-mix(in oklab, var(--forge-chat-bg), #ffffff 6%) transparent;
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 16px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 16px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
 .widgetTranscriptPanel .transcriptItem {
@@ -4175,12 +4237,14 @@ button {
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) - 1px);
   z-index: 31;
   display: inline-grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 6px;
   width: auto;
-  min-width: 48px;
-  height: 17px;
-  min-height: 17px;
-  padding: 0 8px;
+  min-width: 58px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 6px 0 9px;
   overflow: hidden;
   color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
   background: var(--forge-sidebar-bg);
@@ -4202,6 +4266,11 @@ button {
     background 160ms ease,
     box-shadow 160ms ease,
     transform 180ms ease;
+}
+
+.widgetTranscriptTab svg {
+  width: 13px;
+  height: 13px;
 }
 
 .widgetTranscriptTab__name {
@@ -7381,6 +7450,17 @@ ol.assistantText__list li::before {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes widgetTranscriptPanelEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scaleY(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleY(1);
   }
 }
 
@@ -13754,7 +13834,13 @@ ol.assistantText__list li::before {
   .sidebarPoolCard,
   .sidebarPoolCard__logo,
   .sidebarModule,
-  .sidebarModule__logo {
+  .sidebarModule__logo,
+  .widgetTranscriptPanel,
+  .widgetTranscriptPanel__header,
+  .widgetTranscriptPanel__body,
+  .widgetTranscriptPanel__reduce,
+  .widgetTranscriptTab {
+    animation: none;
     transition: none;
   }
 

@@ -4328,6 +4328,9 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
       onClick={onOpen}
     >
       <span className="widgetTranscriptTab__name">{label}</span>
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M4 9.5 8 6l4 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </button>
   );
 }
@@ -4929,7 +4932,7 @@ export function PanelsChatBottomSlice({
       widgetTranscriptCollapseTimerRef.current = null;
       setWidgetTranscriptCollapsed(true);
       setWidgetTranscriptCollapsing(false);
-    }, 260);
+    }, 320);
   }, [clearWidgetTranscriptCollapseTimer]);
   const expandWidgetTranscript = useCallback(() => {
     clearWidgetTranscriptCollapseTimer();
