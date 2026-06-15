@@ -171,6 +171,7 @@ function manifestFrom(internals: StoreInternals): SidebarShadowManifest {
     availableActions: [
       "navigate",
       "open_session",
+      "rename_session",
       "open_profile_canvas",
       "archive_session",
       "activate_control",
@@ -202,7 +203,7 @@ function publicState(internals: StoreInternals): SidebarShadowState {
 }
 
 function sessionMatches(item: SidebarSessionItem, sessionId: string): boolean {
-  return item.sessionId === sessionId || (!item.sessionId && item.label === sessionId);
+  return item.sessionId === sessionId || item.parallelGroupId === sessionId || (!item.sessionId && item.label === sessionId);
 }
 
 function localPreviewSnapshot(snapshot: SidebarSnapshot, command: SidebarCommand): SidebarSnapshot {
@@ -232,6 +233,15 @@ function localPreviewSnapshot(snapshot: SidebarSnapshot, command: SidebarCommand
       candidateDate: candidate?.date ?? "2026-06-09",
       candidateSection: candidate?.section ?? "forge"
     };
+  } else if (command.kind === "rename_session") {
+    const label = command.label.replace(/\s+/g, " ").trim();
+    if (label) {
+      next.recentItems = next.recentItems.map((item) => (sessionMatches(item, command.sessionId) ? { ...item, label } : item));
+      next.archivedItems = next.archivedItems.map((item) => (sessionMatches(item, command.sessionId) ? { ...item, label } : item));
+      if (next.archiveConfirm.candidateId === command.sessionId) {
+        next.archiveConfirm = { ...next.archiveConfirm, candidateLabel: label };
+      }
+    }
   } else if (command.kind === "confirm_archive") {
     const archivedId = next.archiveConfirm.candidateId;
     const archived = next.recentItems.find((item) => sessionMatches(item, archivedId));

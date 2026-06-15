@@ -1815,6 +1815,11 @@ export function isSidebarCommand(value: unknown): value is SidebarCommand {
         typeof (candidate as { sessionId?: unknown }).sessionId === "string" &&
         isNativeSection((candidate as { section?: unknown }).section)
       );
+    case "rename_session":
+      return (
+        typeof (candidate as { sessionId?: unknown }).sessionId === "string" &&
+        typeof (candidate as { label?: unknown }).label === "string"
+      );
     case "open_profile_canvas":
       return isProfileCanvas((candidate as { canvas?: unknown }).canvas);
     case "archive_session":

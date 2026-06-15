@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "3aab4ad859658934c94a4e05baef25a866cf662506432d3c14eb79c5a67807b5"
+    "ipc_manifest_hash": "f76462c2add6e8d7ad87ab29de4a0579e1b9a1157988da9347d6cf8cb77c63fb"
   },
   "checks": [
     {
@@ -87,7 +87,6 @@
         "rendererFiles": [
           "agent-action-events.ts",
           "App.tsx",
-          "assets",
           "assistant-geo-entities.ts",
           "brain-blob-cache.ts",
           "brain-blob.tsx",
@@ -99,7 +98,6 @@
           "event-text-lab.css",
           "event-text-lab.tsx",
           "forge-api.d.ts",
-          "generated",
           "header-shadow-store.ts",
           "header-surface-store.ts",
           "HeaderSurfaceRouter.tsx",
@@ -149,5 +147,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "4e59f3377df6d53151459668af2fb82d6be958d5923f8c7b1a0cd88ac1854c35"
+  "proof_hash": "25b5c69f3d09f66b7a9942f1cde0ee3005f0a5932e01f6ee21724ed7bf468ac6"
 }

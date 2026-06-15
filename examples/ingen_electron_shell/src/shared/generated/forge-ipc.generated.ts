@@ -152,10 +152,11 @@ export const HEADER_COMMAND_KIND = [
   "window_close",
 ] as const;
 
-export type SidebarCommandKind = "navigate" | "open_session" | "open_profile_canvas" | "archive_session" | "activate_control" | "switch_sessions_mode" | "toggle_profile_menu" | "set_active_drawer" | "hide_tool" | "restore_tool" | "pin_session" | "confirm_archive" | "cancel_archive";
+export type SidebarCommandKind = "navigate" | "open_session" | "rename_session" | "open_profile_canvas" | "archive_session" | "activate_control" | "switch_sessions_mode" | "toggle_profile_menu" | "set_active_drawer" | "hide_tool" | "restore_tool" | "pin_session" | "confirm_archive" | "cancel_archive";
 export const SIDEBAR_COMMAND_KIND = [
   "navigate",
   "open_session",
+  "rename_session",
   "open_profile_canvas",
   "archive_session",
   "activate_control",
@@ -700,6 +701,7 @@ export type HeaderCommand =
 export type SidebarCommand =
   | (SidebarCommandBase & { kind: "navigate"; section: NativeSection })
   | (SidebarCommandBase & { kind: "open_session"; sessionId: string; section: NativeSection })
+  | (SidebarCommandBase & { kind: "rename_session"; sessionId: string; label: string })
   | (SidebarCommandBase & { kind: "open_profile_canvas"; canvas: ProfileCanvas })
   | (SidebarCommandBase & { kind: "archive_session"; sessionId: string })
   | (SidebarCommandBase & { kind: "activate_control"; label: string })

@@ -1,4 +1,4 @@
-﻿import { Fragment, useEffect, useState } from "react";
+﻿import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   closestCenter,
@@ -416,7 +416,8 @@ function SessionRow({
   parallelBirthAnimationKey,
   parallelBirthAnimationSessionId,
   onOpen,
-  onArchive
+  onArchive,
+  onRename
 }: {
   item: SidebarSessionItem;
   selected: boolean;
@@ -424,19 +425,69 @@ function SessionRow({
   parallelBirthAnimationSessionId: string;
   onOpen: () => void;
   onArchive: () => void;
+  onRename: (label: string) => void;
 }) {
   const [archiving, setArchiving] = useState(false);
-
-  if (!item.rowVisible) return null;
+  const [renaming, setRenaming] = useState(false);
+  const [draftLabel, setDraftLabel] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const laneCount = parallelSessionCount(item);
   const parallel = laneCount > 1;
   const sessionLabel = parallel ? cleanParallelSessionLabel(item.label) : item.label;
   const birth = parallelBirthAnimationKey > 0 && item.sessionId !== "" && item.sessionId === parallelBirthAnimationSessionId;
 
+  useEffect(() => {
+    if (!renaming) {
+      setDraftLabel(sessionLabel);
+    }
+  }, [renaming, sessionLabel]);
+
+  useEffect(() => {
+    if (!renaming) return;
+    const frame = window.requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [renaming]);
+
+  if (!item.rowVisible) return null;
+
   const archive = () => {
     if (archiving) return;
     setArchiving(true);
     window.setTimeout(onArchive, 220);
+  };
+
+  const beginRename = () => {
+    if (archiving) return;
+    setDraftLabel(sessionLabel);
+    setRenaming(true);
+  };
+
+  const commitRename = () => {
+    const nextLabel = draftLabel.replace(/\s+/g, " ").trim();
+    setRenaming(false);
+    if (!nextLabel || nextLabel === sessionLabel) {
+      setDraftLabel(sessionLabel);
+      return;
+    }
+    onRename(nextLabel);
+  };
+
+  const cancelRename = () => {
+    setDraftLabel(sessionLabel);
+    setRenaming(false);
+  };
+
+  const handleRenameKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      cancelRename();
+    }
   };
 
   return (
@@ -445,31 +496,51 @@ function SessionRow({
       selected ? "sessionRow--selected" : "",
       item.working ? "sessionRow--working" : "",
       parallel ? "sessionRow--parallel" : "",
+      renaming ? "sessionRow--renaming" : "",
       archiving ? "sessionRow--archiving" : ""
     ].filter(Boolean).join(" ")} role="listitem">
       {parallel ? (
         <ParallelSessionIcon
-          key={birth ? `parallel-icon-birth-${parallelBirthAnimationKey}` : "parallel-icon"}
+          key={birth ? "parallel-icon-birth-" + parallelBirthAnimationKey : "parallel-icon"}
           count={laneCount}
           birth={birth}
           birthAnimationKey={parallelBirthAnimationKey}
         />
       ) : null}
-      <button
-        type="button"
-        className="sessionRow__main"
-        onClick={onOpen}
-        aria-label={[
-          "Open",
-          parallel ? `parallel session group with ${laneCount} sessions` : "session",
-          sessionLabel,
-          item.working ? "working" : ""
-        ].filter(Boolean).join(", ")}
-      >
-        <span className="sessionRow__label">{sessionLabel}</span>
-      </button>
+      {renaming ? (
+        <input
+          ref={renameInputRef}
+          className="sessionRow__renameInput"
+          value={draftLabel}
+          aria-label={"Rename " + sessionLabel}
+          onBlur={commitRename}
+          onChange={(event) => setDraftLabel(event.currentTarget.value)}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={handleRenameKeyDown}
+        />
+      ) : (
+        <button
+          type="button"
+          className="sessionRow__main"
+          onClick={onOpen}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            beginRename();
+          }}
+          aria-label={[
+            "Open",
+            parallel ? "parallel session group with " + laneCount + " sessions" : "session",
+            sessionLabel,
+            item.working ? "working" : ""
+          ].filter(Boolean).join(", ")}
+        >
+          <span className="sessionRow__label">{sessionLabel}</span>
+        </button>
+      )}
       {item.working ? (
-        <span className="sessionRow__workStatus" aria-label={`${sessionLabel} is working`} role="status">
+        <span className="sessionRow__workStatus" aria-label={sessionLabel + " is working"} role="status">
           <span className="sessionRow__loaderViewbox" aria-hidden="true">
             <span className="loader" />
           </span>
@@ -478,7 +549,7 @@ function SessionRow({
         <button
           type="button"
           className="sessionRow__archive"
-          aria-label={`Archive ${sessionLabel}`}
+          aria-label={"Archive " + sessionLabel}
           data-tooltip="Archive session"
           onClick={archive}
         >
@@ -1701,6 +1772,14 @@ export function SidebarSlice({
                         onArchive={() => {
                           const id = sessionArchiveId(item);
                           void sidebarShadowStore.archiveSession(id, `archive-${id}`);
+                        }}
+                        onRename={(label) => {
+                          const id = sessionArchiveId(item);
+                          void dispatchSidebarCommand(
+                            sidebarShadowStore.command({ kind: "rename_session", sessionId: id, label }),
+                            "rename-" + id,
+                            true
+                          );
                         }}
                       />
                     ))}

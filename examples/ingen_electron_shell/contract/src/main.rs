@@ -152,6 +152,7 @@ const SIDEBAR_COMMAND_KIND: EnumSpec = EnumSpec {
     variants: &[
         "navigate",
         "open_session",
+        "rename_session",
         "open_profile_canvas",
         "archive_session",
         "activate_control",
@@ -1018,7 +1019,7 @@ fn render_typescript() -> String {
         "export type HeaderCommand =\n  | (HeaderCommandBase & { kind: Exclude<HeaderCommandKind, \"navigate_workspace\"> })\n  | (HeaderCommandBase & { kind: \"navigate_workspace\"; section: NativeSection });\n",
     );
     out.push_str(
-        "\nexport type SidebarCommand =\n  | (SidebarCommandBase & { kind: \"navigate\"; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"open_session\"; sessionId: string; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"open_profile_canvas\"; canvas: ProfileCanvas })\n  | (SidebarCommandBase & { kind: \"archive_session\"; sessionId: string })\n  | (SidebarCommandBase & { kind: \"activate_control\"; label: string })\n  | (SidebarCommandBase & { kind: \"switch_sessions_mode\"; mode: SessionsMenuMode })\n  | (SidebarCommandBase & { kind: \"toggle_profile_menu\" })\n  | (SidebarCommandBase & { kind: \"set_active_drawer\"; drawer: string })\n  | (SidebarCommandBase & { kind: \"hide_tool\"; toolId: string })\n  | (SidebarCommandBase & { kind: \"restore_tool\"; toolId: string })\n  | (SidebarCommandBase & { kind: \"pin_session\"; sessionId: string; label: string; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"confirm_archive\" })\n  | (SidebarCommandBase & { kind: \"cancel_archive\" });\n",
+        "\nexport type SidebarCommand =\n  | (SidebarCommandBase & { kind: \"navigate\"; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"open_session\"; sessionId: string; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"rename_session\"; sessionId: string; label: string })\n  | (SidebarCommandBase & { kind: \"open_profile_canvas\"; canvas: ProfileCanvas })\n  | (SidebarCommandBase & { kind: \"archive_session\"; sessionId: string })\n  | (SidebarCommandBase & { kind: \"activate_control\"; label: string })\n  | (SidebarCommandBase & { kind: \"switch_sessions_mode\"; mode: SessionsMenuMode })\n  | (SidebarCommandBase & { kind: \"toggle_profile_menu\" })\n  | (SidebarCommandBase & { kind: \"set_active_drawer\"; drawer: string })\n  | (SidebarCommandBase & { kind: \"hide_tool\"; toolId: string })\n  | (SidebarCommandBase & { kind: \"restore_tool\"; toolId: string })\n  | (SidebarCommandBase & { kind: \"pin_session\"; sessionId: string; label: string; section: NativeSection })\n  | (SidebarCommandBase & { kind: \"confirm_archive\" })\n  | (SidebarCommandBase & { kind: \"cancel_archive\" });\n",
     );
     out.push_str(
         "\nexport type PanelsChatBottomCommand = PanelsChatBottomCommandBase & {\n  kind: PanelsChatBottomCommandKind;\n  value?: string;\n  provider?: \"openai\" | \"anthropic\" | \"openrouter\";\n  direction?: number;\n  attachmentIds?: string[];\n  filePaths?: string[];\n  moduleId?: string;\n  parallelSessionIndex?: number;\n  parallelDrafts?: ParallelChatDraft[];\n  internalPrompt?: boolean;\n  replaceAssistantMessageId?: string;\n  userFirstName?: string;\n  agentFirstName?: string;\n  userHomeLocation?: string;\n};\n",

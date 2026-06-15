@@ -1693,6 +1693,7 @@ button {
 }
 
 .sessionRow--selected,
+.sessionRow--renaming,
 .sessionRow:hover {
   background: var(--forge-surface-soft);
 }
@@ -1709,6 +1710,7 @@ button {
 }
 
 .sessionRow__main,
+.sessionRow__renameInput,
 .sessionRow__archive {
   min-width: 22px;
   height: 24px;
@@ -1726,6 +1728,29 @@ button {
   padding-left: 8px;
   padding-right: 8px;
   text-align: left;
+}
+
+.sessionRow__renameInput {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding-left: 7px;
+  padding-right: 7px;
+  color: var(--forge-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 460;
+  line-height: 1.2;
+  background: transparent;
+  border: 1px solid var(--forge-line);
+  border-radius: 4px;
+  outline: none;
+  cursor: text;
+}
+
+.sessionRow__renameInput::selection {
+  color: var(--forge-bg);
+  background: var(--forge-text);
 }
 
 .sessionRow--parallel .sessionRow__main {

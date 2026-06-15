@@ -13317,6 +13317,10 @@ function sessionById(sessionId: string): SidebarSessionItem | undefined {
   return localChatSessions.find((session) => session.sessionId === sessionId);
 }
 
+function sidebarSessionCommandMatches(item: SidebarSessionItem, sessionId: string): boolean {
+  return item.sessionId === sessionId || item.parallelGroupId === sessionId || (!item.sessionId && item.label === sessionId);
+}
+
 function parallelGroupItems(groupId: string): SidebarSessionItem[] {
   return localChatSessions
     .filter((session) => session.parallelGroupId === groupId)
@@ -13913,17 +13917,54 @@ function archiveTranscriptMessage(session: SidebarSessionItem, message: Transcri
   persistChatArchiveSoon();
 }
 
+function renameArchiveSessionTitle(sessionId: string, request: RenameSessionCodeActRequest, date = todayIsoDate()): boolean {
+  const archiveSession = chatArchiveSessions.get(sessionId);
+  if (!archiveSession) return false;
+  archiveSession.title = request.title;
+  archiveSession.date = date;
+  archiveSession.updatedAt = new Date().toISOString();
+  archiveSession.proofHash = archiveSessionProofHash(archiveSession);
+  persistChatArchiveSoon();
+  return true;
+}
+
 function renameChatSession(session: SidebarSessionItem, request: RenameSessionCodeActRequest): void {
   session.label = request.title;
   session.date = todayIsoDate();
-  const archiveSession = chatArchiveSessions.get(session.sessionId);
-  if (archiveSession) {
-    archiveSession.title = request.title;
-    archiveSession.date = session.date;
-    archiveSession.updatedAt = new Date().toISOString();
-    archiveSession.proofHash = archiveSessionProofHash(archiveSession);
-    persistChatArchiveSoon();
+  renameArchiveSessionTitle(session.sessionId, request, session.date);
+}
+
+function sidebarRenameRequest(label: string): RenameSessionCodeActRequest | undefined {
+  const title = normalizeSessionTitle(label);
+  if (!title) return undefined;
+  const reason = "manual sidebar rename";
+  return {
+    schema: "forge.brain.rename_session.request.v1",
+    command: BRAIN_RENAME_SESSION_COMMAND,
+    title,
+    reason,
+    proofHash: stableSearchArchiveHash({ command: BRAIN_RENAME_SESSION_COMMAND, title, reason })
+  };
+}
+
+function renameSidebarSession(sessionId: string, label: string): boolean {
+  const request = sidebarRenameRequest(label);
+  if (!request) return false;
+  let changed = false;
+  for (const session of localChatSessions.filter((item) => sidebarSessionCommandMatches(item, sessionId))) {
+    renameChatSession(session, request);
+    changed = true;
   }
+  for (const session of seededSessions.filter((item) => sidebarSessionCommandMatches(item, sessionId))) {
+    session.label = request.title;
+    session.date = todayIsoDate();
+    changed = true;
+  }
+  changed = renameArchiveSessionTitle(sessionId, request) || changed;
+  if (sidebarState.archiveConfirm.candidateId === sessionId) {
+    sidebarState.archiveConfirm = { ...sidebarState.archiveConfirm, candidateLabel: request.title };
+  }
+  return changed;
 }
 
 function sidebarSessionFromArchive(session: ChatArchiveSession): SidebarSessionItem {
@@ -14683,6 +14724,12 @@ async function applySidebarCommand(command: SidebarCommand): Promise<void> {
       sidebarState.recentSessionId = command.sessionId;
       if (!restoreChatSessionToCanvas(command.sessionId)) {
         clearPanelsChatSessionForId(command.sessionId);
+      }
+      break;
+    case "rename_session":
+      await loadChatArchive();
+      if (renameSidebarSession(command.sessionId, command.label)) {
+        sidebarState.lastControl = "rename session";
       }
       break;
     case "open_profile_canvas":
