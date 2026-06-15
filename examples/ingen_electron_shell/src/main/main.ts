@@ -181,6 +181,11 @@ import {
   renderAirbnbCodeActResult,
   type AirbnbCodeActRequest
 } from "./airbnb-codeact.js";
+import {
+  extractScrapersCodeAct,
+  renderScrapersCodeActResult
+} from "./scrapers-codeact.js";
+import { runScrapersMcpBridge } from "./scrapers-mcp-bridge.js";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -4911,6 +4916,7 @@ function shouldContinueAfterBrainCodeAct(params: {
         command === BRAIN_NEWOBJECT_COMMAND ||
         command === BRAIN_FRONTDESIGN_COMMAND ||
         command === BRAIN_GOOGLE_AGENDA_COMMAND ||
+        command === BRAIN_SCRAPERS_COMMAND ||
         command === BRAIN_BRAIN_COMMAND ||
         command === BRAIN_NEWMODULE_COMMAND ||
         command === BRAIN_RUST_PORT_ADAPTER_COMMAND ||
@@ -14407,6 +14413,27 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
   };
 }
 
+async function executeAssistantScrapersCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (message.role !== "assistant" || message.text.includes("SCRAPERS_RESULT")) {
+    return message;
+  }
+  const request = extractScrapersCodeAct(message.text);
+  if (!request) {
+    return message;
+  }
+  const result = await runScrapersMcpBridge(request);
+  const executionText = renderScrapersCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: request,
+      scrapersResult: result
+    })
+  };
+}
+
 function removeRenameSessionChatter(text: string): string {
   const renameSentence = /(?:^|[\r\n]\s*|(?<=[.!?]\s))(?:je\s+)?(?:renomme|renommage|j['’]ai\s+renomme|titre\s+de\s+session|sujet\s*:)[^.!?\r\n]*(?:session|titre|sujet|renomm)[^.!?\r\n]*[.!?]?\s*/giu;
   return text
@@ -14625,6 +14652,7 @@ async function executeAssistantModuleCodeActs(
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
   }
   let next = executeAssistantGoogleWebCodeAct(message, parallelSessionIndex);
+  next = await executeAssistantScrapersCodeAct(next);
   const shouldOpenAirbnbAfterMaps =
     next.text.includes(BRAIN_MAPS_COMMAND) &&
     next.text.includes(BRAIN_AIRBNB_COMMAND) &&
