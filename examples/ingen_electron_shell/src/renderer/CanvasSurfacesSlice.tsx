@@ -285,10 +285,16 @@ function BangerMapsCesiumViewport({
         }, 5000);
         const Cesium = await import("cesium");
         if (disposed || !hostRef.current) return;
-        const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
-        if (googleMapsEndpoint) {
-          Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
-          Cesium.GoogleMaps.defaultApiKey = GOOGLE_MAPS_PROXY_KEY_ALIAS;
+        const cesiumIonAccessToken = await resolveCesiumIonAccessToken(config);
+        const usingCesiumIon = Boolean(cesiumIonAccessToken);
+        if (cesiumIonAccessToken) {
+          Cesium.Ion.defaultAccessToken = cesiumIonAccessToken;
+        } else {
+          const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
+          if (googleMapsEndpoint) {
+            Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
+            Cesium.GoogleMaps.defaultApiKey = GOOGLE_MAPS_PROXY_KEY_ALIAS;
+          }
         }
         viewer = new Cesium.Viewer(hostRef.current, {
           animation: false,
@@ -317,7 +323,9 @@ function BangerMapsCesiumViewport({
         }
         viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT;
         onStatus("Cesium loading Google photorealistic 3D Tiles");
-        const tileset = await Cesium.createGooglePhotorealistic3DTileset({
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset(usingCesiumIon ? {
+          onlyUsingWithGoogleGeocoder: true
+        } : {
           key: GOOGLE_MAPS_PROXY_KEY_ALIAS,
           onlyUsingWithGoogleGeocoder: true
         }, {
@@ -379,6 +387,27 @@ function redactedTilesetEndpoint(value?: string): string {
 }
 
 const GOOGLE_MAPS_PROXY_KEY_ALIAS = "render-proxy";
+
+async function resolveCesiumIonAccessToken(config: BangerGoogleTilesConfigResult): Promise<string | undefined> {
+  const embedded = config.cesiumIonAccessToken?.trim();
+  if (embedded) {
+    return embedded;
+  }
+  if (!config.cesiumIonAccessTokenUrl) {
+    return undefined;
+  }
+  try {
+    const response = await fetch(config.cesiumIonAccessTokenUrl, { cache: "no-store" });
+    if (!response.ok) {
+      return undefined;
+    }
+    const payload = await response.json() as { accepted?: unknown; token?: unknown };
+    const token = typeof payload.token === "string" ? payload.token.trim() : "";
+    return payload.accepted === true && token ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function googleMapsEndpointFromRootTilesetUrl(value: string): string | undefined {
   try {

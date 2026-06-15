@@ -16950,7 +16950,8 @@ function installIpc(): void {
       const result = {
         ...base,
         accepted: true,
-        rootTilesetUrl: `${renderBaseUrl}/api/banger/google-tiles/root.json`
+        rootTilesetUrl: `${renderBaseUrl}/api/banger/google-tiles/root.json`,
+        cesiumIonAccessTokenUrl: `${renderBaseUrl}/api/banger/cesium-ion-token`
       };
       return {
         ...result,
@@ -16971,6 +16972,7 @@ function installIpc(): void {
       };
     }
     const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
+    const cesiumIonAccessToken = (process.env.CESIUM_ACCESS_TOKEN ?? process.env.VITE_CESIUM_ACCESS_TOKEN ?? "").trim();
     if (!apiKey) {
       return {
         ...base,
@@ -16987,7 +16989,8 @@ function installIpc(): void {
       ...base,
       source: "electron-main-env" as const,
       accepted: true,
-      rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`
+      rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`,
+      cesiumIonAccessToken: cesiumIonAccessToken || undefined
     };
     return {
       ...result,

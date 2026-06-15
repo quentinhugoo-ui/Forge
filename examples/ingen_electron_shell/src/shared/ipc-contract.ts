@@ -1756,6 +1756,8 @@ export interface BangerGoogleTilesConfigResult {
   rendererModel: "cesium_for_unreal_style_3d_tileset";
   source: "render-resolver-proxy" | "electron-main-env";
   rootTilesetUrl: string;
+  cesiumIonAccessTokenUrl?: string;
+  cesiumIonAccessToken?: string;
   directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
   requestBudget: number;
   rootRequestTtlHours: 3;

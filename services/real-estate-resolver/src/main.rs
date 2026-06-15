@@ -9,6 +9,7 @@ use std::time::Duration;
 const DEFAULT_RENDER_KEEPALIVE_SECONDS: u64 = 10 * 60;
 const MIN_RENDER_KEEPALIVE_SECONDS: u64 = 60;
 const BANGER_GOOGLE_TILES_PROXY_PREFIX: &str = "/api/banger/google-tiles/";
+const BANGER_CESIUM_ION_TOKEN_PATH: &str = "/api/banger/cesium-ion-token";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +155,12 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
     }
 
     if let Some(target) = request_target(&request_line) {
+        if request_line.starts_with("GET ") && target == BANGER_CESIUM_ION_TOKEN_PATH {
+            return write_banger_cesium_ion_token(&mut stream);
+        }
+        if request_line.starts_with("OPTIONS ") && target == BANGER_CESIUM_ION_TOKEN_PATH {
+            return write_empty_response(&mut stream, 204);
+        }
         if request_line.starts_with("GET ") && target.starts_with(BANGER_GOOGLE_TILES_PROXY_PREFIX) {
             return proxy_banger_google_tiles(&mut stream, target);
         }
@@ -452,6 +459,44 @@ fn google_map_tiles_api_key() -> Option<String> {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     })
+}
+
+fn cesium_ion_access_token() -> Option<String> {
+    [
+        "FORGE_CESIUM_ACCESS_TOKEN",
+        "CESIUM_ACCESS_TOKEN",
+        "VITE_CESIUM_ACCESS_TOKEN",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn write_banger_cesium_ion_token(stream: &mut TcpStream) -> Result<(), String> {
+    let Some(token) = cesium_ion_access_token() else {
+        return write_json_response(
+            stream,
+            503,
+            &json!({
+                "accepted": false,
+                "schema": "forge.banger.cesium_ion_token.v1",
+                "error": "cesium_ion_token_missing"
+            }),
+        );
+    };
+    write_json_response(
+        stream,
+        200,
+        &json!({
+            "accepted": true,
+            "schema": "forge.banger.cesium_ion_token.v1",
+            "token": token
+        }),
+    )
 }
 
 fn proxy_banger_google_tiles(stream: &mut TcpStream, target: &str) -> Result<(), String> {
