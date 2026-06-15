@@ -1,9 +1,9 @@
 import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync } from "node:fs";
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { cpus } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -223,6 +223,9 @@ const shellRoot = join(currentDir, "..", "..");
 const repoRoot = join(shellRoot, "..", "..");
 const rendererDist = join(shellRoot, "dist", "renderer");
 const eventTextLabMode = process.argv.includes("--event-text-lab") || process.env.INGEN_EVENT_TEXT_LAB === "1";
+const INGEN_CANONICAL_USER_DATA_DIR_NAME = eventTextLabMode ? "InGenEventTextLabRuntime" : "InGenRuntime";
+const INGEN_LEGACY_USER_DATA_DIR_NAME = "InGen";
+const INGEN_MEMORY_ROOT_DIR_NAME = "brain";
 const CHATGPT_HOME_URL = "https://chatgpt.com/";
 const CHATGPT_LOGIN_URL = "https://chatgpt.com/auth/login?next=%2F";
 const CHATGPT_USER_AGENT =
@@ -402,6 +405,13 @@ function installMainProcessConsoleGuard(): void {
 installMainProcessConsoleGuard();
 
 app.setName(eventTextLabMode ? "InGen Event Text Lab" : "InGen");
+const canonicalUserDataDir = process.env.INGEN_ELECTRON_USER_DATA_DIR?.trim()
+  || join(app.getPath("appData"), INGEN_CANONICAL_USER_DATA_DIR_NAME);
+mkdirSync(canonicalUserDataDir, { recursive: true });
+mkdirSync(join(canonicalUserDataDir, INGEN_MEMORY_ROOT_DIR_NAME), { recursive: true });
+mkdirSync(join(canonicalUserDataDir, "session-data"), { recursive: true });
+app.setPath("userData", canonicalUserDataDir);
+app.setPath("sessionData", join(canonicalUserDataDir, "session-data"));
 if (process.platform === "win32") {
   app.setAppUserModelId(eventTextLabMode ? "com.forge.ingen.event-text-lab" : "com.forge.ingen");
 }
@@ -4066,8 +4076,74 @@ const brainIdentityContext: BrainIdentityContext = {
   durableMemoryManifest: ""
 };
 
+function memoryRootPath(): string {
+  return join(app.getPath("userData"), INGEN_MEMORY_ROOT_DIR_NAME);
+}
+
 function brainIdentityStorePath(): string {
-  return join(app.getPath("userData"), "brain", "identity-memory.json");
+  return join(memoryRootPath(), "identity-memory.json");
+}
+
+function memoryBackupDir(): string {
+  return join(memoryRootPath(), "backups");
+}
+
+function safeMemoryFileToken(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 120) || "memory";
+}
+
+function memoryBackupPathFor(filePath: string, reason: string): string {
+  const base = safeMemoryFileToken(basename(filePath));
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(memoryBackupDir(), `${base}.${safeMemoryFileToken(reason)}.${stamp}.bak`);
+}
+
+async function backupMemoryFile(filePath: string, reason: string): Promise<void> {
+  if (!existsSync(filePath)) return;
+  try {
+    await mkdir(memoryBackupDir(), { recursive: true });
+    await copyFile(filePath, memoryBackupPathFor(filePath, reason));
+  } catch (error) {
+    console.error(`Failed to backup memory file ${filePath}.`, error);
+  }
+}
+
+async function atomicWriteJsonFile(filePath: string, value: unknown, reason: string): Promise<void> {
+  const json = JSON.stringify(value, null, 2);
+  JSON.parse(json);
+  await mkdir(dirname(filePath), { recursive: true });
+  await backupMemoryFile(filePath, reason);
+  const tempPath = `${filePath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  const handle = await open(tempPath, "w");
+  try {
+    await handle.writeFile(json, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(tempPath, filePath);
+}
+
+function legacyUserDataDirs(): string[] {
+  const candidates = [
+    process.env.INGEN_ELECTRON_LEGACY_USER_DATA_DIR,
+    join(app.getPath("appData"), INGEN_LEGACY_USER_DATA_DIR_NAME),
+    join(app.getPath("appData"), "Electron")
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  const canonical = app.getPath("userData").toLowerCase();
+  return Array.from(new Set(candidates.map((value) => resolve(value)))).filter((value) => value.toLowerCase() !== canonical);
+}
+
+function memoryLegacyRootDirs(): string[] {
+  return legacyUserDataDirs().map((root) => join(root, INGEN_MEMORY_ROOT_DIR_NAME));
+}
+
+function memoryFileMtimeMs(filePath: string): number {
+  try {
+    return statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 function normalizeBrainIdentityName(value: unknown): string {
@@ -4114,15 +4190,75 @@ function normalizeBrainPersonalityManifest(value: unknown): string {
   return compact;
 }
 
+interface BrainIdentityFileSnapshot {
+  context: BrainIdentityContext;
+  mtimeMs: number;
+}
+
+async function readBrainIdentityContextFromFile(filePath: string): Promise<BrainIdentityFileSnapshot | null> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<BrainIdentityContext>;
+    const fileStat = await stat(filePath);
+    return {
+      mtimeMs: fileStat.mtimeMs,
+      context: {
+        userFirstName: normalizeBrainIdentityName(parsed.userFirstName),
+        agentFirstName: normalizeBrainIdentityName(parsed.agentFirstName),
+        userHomeLocation: normalizeBrainHomeLocation(parsed.userHomeLocation),
+        personalityManifest: normalizeBrainPersonalityManifest(parsed.personalityManifest),
+        durableMemoryManifest: normalizeBrainDurableMemoryManifest(parsed.durableMemoryManifest)
+      }
+    };
+  } catch (error) {
+    if (existsSync(filePath)) {
+      await backupMemoryFile(filePath, "corrupt-brain-identity");
+      console.error(`Failed to read Brain identity file ${filePath}; preserved a backup before recovery.`, error);
+    }
+    return null;
+  }
+}
+
+function mergeBrainIdentitySnapshots(snapshots: BrainIdentityFileSnapshot[]): BrainIdentityContext {
+  const merged: BrainIdentityContext = {
+    userFirstName: "",
+    agentFirstName: "",
+    userHomeLocation: "",
+    personalityManifest: defaultBrainPersonalityManifest(),
+    durableMemoryManifest: ""
+  };
+  for (const snapshot of snapshots.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
+    if (snapshot.context.userFirstName) merged.userFirstName = snapshot.context.userFirstName;
+    if (snapshot.context.agentFirstName) merged.agentFirstName = snapshot.context.agentFirstName;
+    if (snapshot.context.userHomeLocation) merged.userHomeLocation = snapshot.context.userHomeLocation;
+    if (snapshot.context.personalityManifest) merged.personalityManifest = snapshot.context.personalityManifest;
+    if (snapshot.context.durableMemoryManifest) merged.durableMemoryManifest = snapshot.context.durableMemoryManifest;
+  }
+  return merged;
+}
+
+function brainIdentityContextsEqual(left: BrainIdentityContext, right: BrainIdentityContext): boolean {
+  return (
+    left.userFirstName === right.userFirstName &&
+    left.agentFirstName === right.agentFirstName &&
+    left.userHomeLocation === right.userHomeLocation &&
+    left.personalityManifest === right.personalityManifest &&
+    left.durableMemoryManifest === right.durableMemoryManifest
+  );
+}
+
 async function restoreBrainIdentityContextFromDisk(): Promise<void> {
   try {
-    const raw = await readFile(brainIdentityStorePath(), "utf8");
-    const parsed = JSON.parse(raw) as Partial<BrainIdentityContext>;
-    brainIdentityContext.userFirstName = normalizeBrainIdentityName(parsed.userFirstName);
-    brainIdentityContext.agentFirstName = normalizeBrainIdentityName(parsed.agentFirstName);
-    brainIdentityContext.userHomeLocation = normalizeBrainHomeLocation(parsed.userHomeLocation);
-    brainIdentityContext.personalityManifest = normalizeBrainPersonalityManifest(parsed.personalityManifest);
-    brainIdentityContext.durableMemoryManifest = normalizeBrainDurableMemoryManifest(parsed.durableMemoryManifest);
+    const snapshot = await readBrainIdentityContextFromFile(brainIdentityStorePath());
+    if (!snapshot) {
+      brainIdentityContext.personalityManifest = defaultBrainPersonalityManifest();
+      return;
+    }
+    brainIdentityContext.userFirstName = snapshot.context.userFirstName;
+    brainIdentityContext.agentFirstName = snapshot.context.agentFirstName;
+    brainIdentityContext.userHomeLocation = snapshot.context.userHomeLocation;
+    brainIdentityContext.personalityManifest = snapshot.context.personalityManifest;
+    brainIdentityContext.durableMemoryManifest = snapshot.context.durableMemoryManifest;
   } catch {
     // No persisted identity yet; keep first-install fields blank.
     brainIdentityContext.personalityManifest = defaultBrainPersonalityManifest();
@@ -4131,9 +4267,7 @@ async function restoreBrainIdentityContextFromDisk(): Promise<void> {
 
 async function persistBrainIdentityContext(): Promise<void> {
   try {
-    const path = brainIdentityStorePath();
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(brainIdentityContext), "utf8");
+    await atomicWriteJsonFile(brainIdentityStorePath(), brainIdentityContext, "brain-identity");
   } catch (error) {
     console.error("Failed to persist Brain identity memory.", error);
   }
@@ -14462,7 +14596,7 @@ function enforceQuestionnaireLoopPause(message: TranscriptMessage): TranscriptMe
 }
 
 function chatArchiveStorePath(): string {
-  return join(app.getPath("userData"), "brain", "chat-session-archive.json");
+  return join(memoryRootPath(), "chat-session-archive.json");
 }
 
 function isChatArchiveSession(value: unknown): value is ChatArchiveSession {
@@ -14483,6 +14617,261 @@ function isChatArchiveSession(value: unknown): value is ChatArchiveSession {
   );
 }
 
+function canonicalSessionAssetPath(attachment: Pick<ChatArchiveAttachment, "id" | "name" | "kind">, sourcePath: string): string {
+  const extension = extname(sourcePath || attachment.name).toLowerCase();
+  const name = safeMemoryFileToken(basename(attachment.name || sourcePath || "attachment"));
+  const fingerprint = createHash("sha256")
+    .update(`${attachment.id}\0${attachment.name}\0${sourcePath}`)
+    .digest("hex")
+    .slice(0, 16);
+  const fileName = `${fingerprint}-${name}${name.toLowerCase().endsWith(extension) ? "" : extension}`;
+  return join(memoryRootPath(), "session-assets", safeMemoryFileToken(attachment.id), safeMemoryFileToken(fileName));
+}
+
+function pathInsideMemoryRoot(filePath: string): boolean {
+  const root = resolve(memoryRootPath()).toLowerCase();
+  const resolvedPath = resolve(filePath).toLowerCase();
+  return resolvedPath === root || resolvedPath.startsWith(`${root}\\`) || resolvedPath.startsWith(`${root}/`);
+}
+
+function persistArchiveAttachmentLocalCopy<T extends ChatArchiveAttachment>(
+  attachment: T,
+  sourcePath: string,
+  mimeType?: string
+): T {
+  if (!sourcePath || !existsSync(sourcePath)) {
+    return attachment;
+  }
+  if (pathInsideMemoryRoot(sourcePath)) {
+    return {
+      ...attachment,
+      localPath: sourcePath,
+      ...(mimeType ? { mimeType } : {})
+    };
+  }
+  try {
+    const targetPath = canonicalSessionAssetPath(attachment, sourcePath);
+    mkdirSync(dirname(targetPath), { recursive: true });
+    if (!existsSync(targetPath)) {
+      copyFileSync(sourcePath, targetPath);
+    }
+    return {
+      ...attachment,
+      localPath: targetPath,
+      ...(mimeType ? { mimeType } : {})
+    };
+  } catch (error) {
+    console.error(`Failed to copy archive attachment ${attachment.name} into canonical memory store.`, error);
+    return {
+      ...attachment,
+      localPath: sourcePath,
+      ...(mimeType ? { mimeType } : {})
+    };
+  }
+}
+
+function normalizeArchiveSessionAssets(session: ChatArchiveSession): ChatArchiveSession {
+  return {
+    ...session,
+    messages: session.messages.map((message) => ({
+      ...message,
+      attachments: (message.attachments ?? []).map((attachment) =>
+        attachment.localPath
+          ? persistArchiveAttachmentLocalCopy(attachment, attachment.localPath, attachment.mimeType)
+          : attachment
+      )
+    }))
+  };
+}
+
+function chatArchiveSessionUpdatedAt(session: ChatArchiveSession): string {
+  return session.updatedAt || session.createdAt || "1970-01-01T00:00:00.000Z";
+}
+
+function mergeArchiveMessages(left: ChatArchiveMessage[], right: ChatArchiveMessage[]): ChatArchiveMessage[] {
+  const messages = new Map<string, ChatArchiveMessage>();
+  for (const message of [...left, ...right]) {
+    const key = message.turnId || stableSearchArchiveHash(message);
+    const existing = messages.get(key);
+    if (!existing || (message.createdAt || "") >= (existing.createdAt || "")) {
+      messages.set(key, message);
+    }
+  }
+  return Array.from(messages.values())
+    .filter((message) => !isInternalTranscriptMessage(message))
+    .sort((leftMessage, rightMessage) => (leftMessage.createdAt || "").localeCompare(rightMessage.createdAt || ""));
+}
+
+function mergeArchiveSession(left: ChatArchiveSession, right: ChatArchiveSession): ChatArchiveSession {
+  const latest = chatArchiveSessionUpdatedAt(right) >= chatArchiveSessionUpdatedAt(left) ? right : left;
+  const messages = mergeArchiveMessages(left.messages, right.messages);
+  const merged: ChatArchiveSession = {
+    ...left,
+    ...latest,
+    messages,
+    createdAt: [left.createdAt, right.createdAt].filter(Boolean).sort()[0] ?? latest.createdAt,
+    updatedAt: [left.updatedAt, right.updatedAt].filter(Boolean).sort().at(-1) ?? latest.updatedAt,
+    archived: left.archived && right.archived
+      ? true
+      : latest.archived,
+    proofHash: ""
+  };
+  merged.proofHash = archiveSessionProofHash(merged);
+  return normalizeArchiveSessionAssets(merged);
+}
+
+function mergeArchiveSessionLists(lists: ChatArchiveSession[][]): ChatArchiveSession[] {
+  const sessions = new Map<string, ChatArchiveSession>();
+  for (const list of lists) {
+    for (const session of list) {
+      const existing = sessions.get(session.sessionId);
+      sessions.set(session.sessionId, existing ? mergeArchiveSession(existing, session) : normalizeArchiveSessionAssets(session));
+    }
+  }
+  return Array.from(sessions.values()).sort((left, right) => chatArchiveSessionUpdatedAt(right).localeCompare(chatArchiveSessionUpdatedAt(left)));
+}
+
+async function readChatArchiveSessionsFromFile(filePath: string, backupReason = "corrupt-chat-archive"): Promise<ChatArchiveSession[] | null> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    const sessions = parsed && typeof parsed === "object" && Array.isArray((parsed as { sessions?: unknown }).sessions)
+      ? (parsed as { sessions: unknown[] }).sessions
+      : [];
+    return sessions
+      .filter(isChatArchiveSession)
+      .map((session) => ({
+        ...session,
+        messages: session.messages.filter((message) => !isInternalTranscriptMessage(message))
+      }));
+  } catch (error) {
+    if (existsSync(filePath)) {
+      await backupMemoryFile(filePath, backupReason);
+      console.error(`Failed to read chat archive ${filePath}; preserved a backup before recovery.`, error);
+    }
+    return null;
+  }
+}
+
+async function sortedMemoryBackupFiles(fileName: string): Promise<string[]> {
+  try {
+    const entries = await readdir(memoryBackupDir(), { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(`${safeMemoryFileToken(fileName)}.`))
+      .map((entry) => join(memoryBackupDir(), entry.name))
+      .sort((left, right) => memoryFileMtimeMs(right) - memoryFileMtimeMs(left));
+  } catch {
+    return [];
+  }
+}
+
+async function recoverChatArchiveSessions(): Promise<ChatArchiveSession[]> {
+  const primaryPath = chatArchiveStorePath();
+  const primary = await readChatArchiveSessionsFromFile(primaryPath);
+  if (primary) {
+    return primary;
+  }
+  for (const backupPath of await sortedMemoryBackupFiles(basename(primaryPath))) {
+    const recovered = await readChatArchiveSessionsFromFile(backupPath, "corrupt-chat-archive-backup");
+    if (recovered && recovered.length > 0) {
+      return recovered;
+    }
+  }
+  const legacyLists: ChatArchiveSession[][] = [];
+  for (const legacyRoot of memoryLegacyRootDirs()) {
+    const legacy = await readChatArchiveSessionsFromFile(join(legacyRoot, basename(primaryPath)), "corrupt-legacy-chat-archive");
+    if (legacy?.length) {
+      legacyLists.push(legacy);
+    }
+  }
+  return mergeArchiveSessionLists(legacyLists);
+}
+
+async function persistMergedChatArchive(sessions: ChatArchiveSession[], reason: string): Promise<void> {
+  const selected = sessions
+    .sort((left, right) => chatArchiveSessionUpdatedAt(right).localeCompare(chatArchiveSessionUpdatedAt(left)));
+  const envelope = {
+    schema: "forge.brain.chat_archive_store.v1",
+    updatedAt: new Date().toISOString(),
+    memorySource: "canonical-userData/brain",
+    sessions: selected,
+    proofHash: stableSearchArchiveHash(selected.map((session) => session.proofHash))
+  };
+  await atomicWriteJsonFile(chatArchiveStorePath(), envelope, reason);
+}
+
+async function reconcileCanonicalBrainIdentityStore(): Promise<void> {
+  const snapshots: BrainIdentityFileSnapshot[] = [];
+  const canonical = await readBrainIdentityContextFromFile(brainIdentityStorePath());
+  if (canonical) {
+    snapshots.push(canonical);
+  }
+  for (const legacyRoot of memoryLegacyRootDirs()) {
+    const legacy = await readBrainIdentityContextFromFile(join(legacyRoot, basename(brainIdentityStorePath())));
+    if (legacy) {
+      snapshots.push(legacy);
+    }
+  }
+  if (snapshots.length === 0) {
+    return;
+  }
+  const merged = mergeBrainIdentitySnapshots(snapshots);
+  if (!canonical || !brainIdentityContextsEqual(canonical.context, merged)) {
+    await atomicWriteJsonFile(brainIdentityStorePath(), merged, "startup-brain-identity-merge");
+  }
+}
+
+async function reconcileCanonicalChatArchiveStore(): Promise<void> {
+  const primaryPath = chatArchiveStorePath();
+  const archiveLists: ChatArchiveSession[][] = [];
+  const canonical = await readChatArchiveSessionsFromFile(primaryPath);
+  if (canonical) {
+    archiveLists.push(canonical);
+  }
+  for (const legacyRoot of memoryLegacyRootDirs()) {
+    const legacy = await readChatArchiveSessionsFromFile(join(legacyRoot, basename(primaryPath)), "corrupt-legacy-chat-archive");
+    if (legacy?.length) {
+      archiveLists.push(legacy);
+    }
+  }
+  if (archiveLists.length === 0) {
+    return;
+  }
+  const merged = mergeArchiveSessionLists(archiveLists);
+  if (!canonical || merged.length !== canonical.length || archiveLists.length > 1) {
+    await persistMergedChatArchive(merged, "startup-chat-archive-merge");
+  }
+}
+
+async function writeCanonicalMemoryManifest(): Promise<void> {
+  const manifest = {
+    schema: "ingen.memory.canonical_store.v1",
+    updatedAt: new Date().toISOString(),
+    sourceOfTruth: memoryRootPath(),
+    policy: "All durable sessions, Brain identity, Brain rules, learning memory manifests and session assets live under this single brain root. Legacy roots are migration inputs only.",
+    migratedLegacyRoots: memoryLegacyRootDirs().filter((root) => existsSync(root)),
+    chatArchivePath: chatArchiveStorePath(),
+    brainIdentityPath: brainIdentityStorePath(),
+    sessionAssetsPath: join(memoryRootPath(), "session-assets"),
+    backupPath: memoryBackupDir(),
+    proofHash: stableSearchArchiveHash({
+      sourceOfTruth: memoryRootPath(),
+      chatArchivePath: chatArchiveStorePath(),
+      brainIdentityPath: brainIdentityStorePath()
+    })
+  };
+  await atomicWriteJsonFile(join(memoryRootPath(), "memory-source.json"), manifest, "memory-source");
+}
+
+async function reconcileCanonicalMemoryStore(): Promise<void> {
+  await mkdir(memoryRootPath(), { recursive: true });
+  await mkdir(memoryBackupDir(), { recursive: true });
+  await mkdir(join(memoryRootPath(), "session-assets"), { recursive: true });
+  await reconcileCanonicalBrainIdentityStore();
+  await reconcileCanonicalChatArchiveStore();
+  await writeCanonicalMemoryManifest();
+}
+
 async function loadChatArchive(): Promise<void> {
   if (chatArchiveLoaded) return;
   if (chatArchiveLoadPromise) {
@@ -14491,21 +14880,14 @@ async function loadChatArchive(): Promise<void> {
   }
   chatArchiveLoadPromise = (async () => {
     try {
-      const raw = await readFile(chatArchiveStorePath(), "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      const sessions = parsed && typeof parsed === "object" && Array.isArray((parsed as { sessions?: unknown }).sessions)
-        ? (parsed as { sessions: unknown[] }).sessions
-        : [];
+      const sessions = await recoverChatArchiveSessions();
       chatArchiveSessions.clear();
       for (const session of sessions) {
-        if (isChatArchiveSession(session)) {
-          session.messages = session.messages.filter((message) => !isInternalTranscriptMessage(message));
-          chatArchiveSessions.set(session.sessionId, session);
-        }
+        chatArchiveSessions.set(session.sessionId, session);
       }
       syncLocalChatSessionsFromArchive();
-    } catch {
-      chatArchiveSessions.clear();
+    } catch (error) {
+      console.error("Failed to load canonical chat archive; preserving existing in-memory sessions.", error);
     } finally {
       chatArchiveLoaded = true;
       chatArchiveLoadPromise = undefined;
@@ -14518,18 +14900,7 @@ function persistChatArchiveSoon(): void {
   chatArchiveWriteQueue = chatArchiveWriteQueue
     .catch(() => undefined)
     .then(async () => {
-      const sessions = Array.from(chatArchiveSessions.values())
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 200);
-      const envelope = {
-        schema: "forge.brain.chat_archive_store.v1",
-        updatedAt: new Date().toISOString(),
-        sessions,
-        proofHash: stableSearchArchiveHash(sessions.map((session) => session.proofHash))
-      };
-      const path = chatArchiveStorePath();
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, JSON.stringify(envelope, null, 2), "utf8");
+      await persistMergedChatArchive(Array.from(chatArchiveSessions.values()), "chat-archive");
     })
     .catch((error: unknown) => {
       console.error("Failed to persist chat archive.", error);
@@ -14550,11 +14921,12 @@ function archiveMetaForSession(session: SidebarSessionItem): ChatArchiveSessionM
 
 function archiveAttachmentPreview(attachment: ComposerUploadPreview): ChatArchiveAttachment {
   const cached = composerUploadPreviewItems.get(attachment.id);
-  return {
+  const preview: ChatArchiveAttachment = {
     ...attachment,
     url: cached ? uploadPreviewUrl(attachment.id, attachment.name) : attachment.url,
     ...(cached ? { localPath: cached.path, mimeType: cached.mimeType } : {})
   };
+  return cached ? persistArchiveAttachmentLocalCopy(preview, cached.path, cached.mimeType) : preview;
 }
 
 function publicArchiveAttachmentPreview(attachment: ChatArchiveAttachment): ComposerUploadPreview {
@@ -17669,6 +18041,7 @@ app.whenReady().then(async () => {
     })
   ]);
   await restoreProviderRuntimeFromDisk();
+  await reconcileCanonicalMemoryStore();
   await restoreBrainIdentityContextFromDisk();
   await restoreWorkspaceDirFromDisk();
   if (!eventTextLabMode) {

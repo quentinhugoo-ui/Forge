@@ -177,7 +177,7 @@ describe("LLM multimodal attachments", () => {
   it("boots every LLM session with Brain access before provider execution", () => {
     expect(mainSource).toContain("BRAIN_BOOT_MANIFEST v1");
     expect(mainSource).toContain("BRAIN_IDENTITY_MEMORY v1");
-    expect(mainSource).toContain('return join(app.getPath("userData"), "brain", "identity-memory.json")');
+    expect(mainSource).toContain('return join(memoryRootPath(), "identity-memory.json")');
     expect(mainSource).toContain("restoreBrainIdentityContextFromDisk()");
     expect(mainSource).toContain("persistBrainIdentityContext()");
     expect(mainSource).toContain('if (!user && !assistant && !homeLocation) return "";');
@@ -187,9 +187,12 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).not.toContain("source=Brain Memory > Identity editor; these fields are durable user-confirmed Brain memory.");
     expect(mainSource).not.toContain("When the user asks your name, what you are called, comment tu t'appelles");
     expect(mainSource).toContain("brainIdentityMemoryManifest()");
-    expect(mainSource).toContain("updateBrainIdentityContext(command);\n  const parallelSessionIndex");
-    expect(mainSource).toContain("updateBrainIdentityContext(command);\n  const lane = ensureParallelChatLane");
-    expect(storeSource).toContain('import { readBrainAgentMemory, readBrainUserLocationMemory, readBrainUserMemory } from "./brain-user-memory-store";');
+    expect(mainSource).toContain("updateBrainIdentityContext(command);");
+    expect(mainSource).toContain("const parallelSessionIndex =");
+    expect(mainSource).toContain("const lane = ensureParallelChatLane");
+    expect(storeSource).toContain("readBrainAgentMemory");
+    expect(storeSource).toContain("readBrainUserLocationMemory");
+    expect(storeSource).toContain("readBrainUserMemory");
     expect(storeSource).toContain('if (command.kind === "send_chat" || command.kind === "send_parallel_chat_batch")');
     expect(storeSource).toContain("userFirstName: userMemory.preferredFirstName");
     expect(storeSource).toContain("agentFirstName: agentMemory.preferredFirstName");
