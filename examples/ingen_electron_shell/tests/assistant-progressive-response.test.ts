@@ -160,6 +160,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("LOCAL_ACTION_ATLAS_BOOT v1");
     expect(mainSource).toContain("full local action atlas is injected at session boot and after conversation compaction only");
     expect(mainSource).toContain("boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction");
+    expect(mainSource).toContain("codeact_loop_rule=Use Brain CodeActs as loop-stream events");
+    expect(mainSource).toContain("codeact_loop_rule=For non-trivial work, Brain CodeActs are loop-stream events");
+    expect(mainSource).toContain("function brainCodeActLoopRulesManifest");
+    expect(mainSource).toContain("brainCodeActLoopRulesManifest()");
     expect(mainSource).toContain("capabilities_codeact=");
     expect(mainSource).toContain("manifest.runtime.manifestHash");
     expect(mainSource).toContain("manifest.runtime.atlasHash");
@@ -180,6 +184,22 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).not.toContain("return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
     expect(mainSource).toContain(": \"\"");
     expect(mainSource).toContain("agentActionContextManifest(userText, transcript)");
+  });
+
+  it("keeps Brain CodeActs inside the agentic loop instead of final chatbot prose", () => {
+    expect(mainSource).toContain("const BRAIN_CODEACT_COMMANDS_BY_LENGTH");
+    expect(mainSource).toContain("function brainCodeActCommandsFromAssistantText");
+    expect(mainSource).toContain("function isBrainCodeActUserPauseCommand");
+    expect(mainSource).toContain("function isBrainCodeActSurfaceCommand");
+    expect(mainSource).toContain("function shouldContinueAfterBrainCodeAct");
+    expect(mainSource).toContain("function brainCodeActLoopContinuationUserText");
+    expect(mainSource).toContain("BRAIN_CODEACT_LOOP_CONTINUATION v1");
+    expect(mainSource).toContain("Le ou les CodeActs Brain precedents sont des evenements de loop stream");
+    expect(mainSource).toContain("previous_visible_progress=");
+    expect(mainSource).toContain("assistant-response-${Date.now()}-brain-codeact");
+    expect(mainSource).toContain("shouldContinueAfterBrainCodeAct({");
+    expect(mainSource).toContain("continuationMessage = await executeAssistantAgentActionLoop({");
+    expect(mainSource).toContain("archiveTranscriptMessage(session, continuationMessage)");
   });
 
   it("keeps loop continuation results compact before reinjection", () => {

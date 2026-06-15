@@ -193,6 +193,8 @@ Acceptance:
 
 Status: implemented for the planned scope. The normal path now carries `AgentActionLoopState`, explicit terminal outcomes, result observations, retry/approval accounting, proof hashes and mandatory English final summaries after tool-using tasks. The runtime no longer stops on a fixed local-action step ceiling; it continues until the model reaches the objective, reports a real block/approval/failure condition, or the user stops the active run. Deterministic desktop organization is quarantined behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1` as compatibility behavior, while normal mutation follow-up stays inside the universal loop and blocks with a final status when the model stops without the required next action.
 
+Update 2026-06-15: Brain CodeActs are now treated as loop-stream event boundaries, not merely visible prompt text. General, Science and Coding Brain prompts tell the model to use CodeActs as progress events for non-trivial work. After a non-terminal Brain CodeAct on an actionable request, the host can automatically issue a hidden `BRAIN_CODEACT_LOOP_CONTINUATION` turn so the next concrete CodeAct or `AGENT_ACTION_JSON` action happens inside the same agentic flow instead of ending as a normal chatbot answer. User-pause CodeActs such as questionnaire/workspace/image and surface-opening CodeActs remain allowed to stop cleanly while waiting for user or UI state.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.
