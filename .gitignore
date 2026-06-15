@@ -7,10 +7,14 @@ target-fuzz-local/
 .codex-tools/
 .chrome-debug/
 .codex/
+.codex-schema/
+.codex-*.mjs
 .gemini/
 .claude/
 *.swp
 *.bak
+debug.log
+**/debug.log
 
 .forge-store/
 **/.forge-store/

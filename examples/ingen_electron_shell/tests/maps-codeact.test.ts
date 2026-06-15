@@ -75,6 +75,11 @@ describe("Maps CodeAct", () => {
     expect(rendered).toContain("forge.webexplorer.maps.result.v1");
     expect(rendered).toContain("latitude=");
     expect(rendered).toContain("longitude=");
+    expect(rendered).toContain('route="banger://maps-sphere"');
+    expect(rendered).toContain("visual_target=banger_native_maps_sphere");
+    expect(rendered).toContain("tileset_provider=google_photorealistic_3d_tiles");
+    expect(rendered).toContain("renderer_contract=forge.banger.google_photorealistic_tiles_config.v1");
+    expect(rendered).not.toContain("earth.google.com");
     expect(rendered).not.toContain("current_location");
   });
 });

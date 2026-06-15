@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "f76462c2add6e8d7ad87ab29de4a0579e1b9a1157988da9347d6cf8cb77c63fb"
+    "ipc_manifest_hash": "789d095d887542a3d6804a4e573b7e61268cee7d713841ede5b0beb2cd004f21"
   },
   "checks": [
     {
@@ -88,6 +88,7 @@
           "agent-action-events.ts",
           "App.tsx",
           "assistant-geo-entities.ts",
+          "assistant-learning-interrupts.ts",
           "brain-blob-cache.ts",
           "brain-blob.tsx",
           "brain-user-memory-store.ts",
@@ -113,7 +114,8 @@
           "SidebarSlice.tsx",
           "styles.css",
           "vite-env.d.ts",
-          "welcome-message-store.ts"
+          "welcome-message-store.ts",
+          "WidgetSystemTray.tsx"
         ]
       }
     },
@@ -147,5 +149,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "25b5c69f3d09f66b7a9942f1cde0ee3005f0a5932e01f6ee21724ed7bf468ac6"
+  "proof_hash": "133a79d28e383e10b8c58fc366a01cd8b013477d79e34bd66a31e4f949604ce1"
 }

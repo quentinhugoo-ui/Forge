@@ -9,6 +9,7 @@ use std::time::Duration;
 const DEFAULT_RENDER_KEEPALIVE_SECONDS: u64 = 10 * 60;
 const MIN_RENDER_KEEPALIVE_SECONDS: u64 = 60;
 const BANGER_GOOGLE_TILES_PROXY_PREFIX: &str = "/api/banger/google-tiles/";
+const BANGER_CESIUM_ION_TOKEN_PATH: &str = "/api/banger/cesium-ion-token";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +155,12 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
     }
 
     if let Some(target) = request_target(&request_line) {
+        if request_line.starts_with("GET ") && target == BANGER_CESIUM_ION_TOKEN_PATH {
+            return write_banger_cesium_ion_token(&mut stream);
+        }
+        if request_line.starts_with("OPTIONS ") && target == BANGER_CESIUM_ION_TOKEN_PATH {
+            return write_empty_response(&mut stream, 204);
+        }
         if request_line.starts_with("GET ") && target.starts_with(BANGER_GOOGLE_TILES_PROXY_PREFIX) {
             return proxy_banger_google_tiles(&mut stream, target);
         }
@@ -454,6 +461,44 @@ fn google_map_tiles_api_key() -> Option<String> {
     })
 }
 
+fn cesium_ion_access_token() -> Option<String> {
+    [
+        "FORGE_CESIUM_ACCESS_TOKEN",
+        "CESIUM_ACCESS_TOKEN",
+        "VITE_CESIUM_ACCESS_TOKEN",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn write_banger_cesium_ion_token(stream: &mut TcpStream) -> Result<(), String> {
+    let Some(token) = cesium_ion_access_token() else {
+        return write_json_response(
+            stream,
+            503,
+            &json!({
+                "accepted": false,
+                "schema": "forge.banger.cesium_ion_token.v1",
+                "error": "cesium_ion_token_missing"
+            }),
+        );
+    };
+    write_json_response(
+        stream,
+        200,
+        &json!({
+            "accepted": true,
+            "schema": "forge.banger.cesium_ion_token.v1",
+            "token": token
+        }),
+    )
+}
+
 fn proxy_banger_google_tiles(stream: &mut TcpStream, target: &str) -> Result<(), String> {
     let Some(api_key) = google_map_tiles_api_key() else {
         return write_json_response(
@@ -469,7 +514,8 @@ fn proxy_banger_google_tiles(stream: &mut TcpStream, target: &str) -> Result<(),
         .strip_prefix(BANGER_GOOGLE_TILES_PROXY_PREFIX)
         .unwrap_or("root.json");
     let (tile_path, query) = relative.split_once('?').unwrap_or((relative, ""));
-    let tile_path = if tile_path.trim().is_empty() { "root.json" } else { tile_path };
+    let tile_path = normalize_google_tiles_proxy_path(tile_path);
+    let query = sanitize_google_tiles_query(query);
     let query_prefix = if query.trim().is_empty() {
         "?".to_string()
     } else {
@@ -496,7 +542,75 @@ fn proxy_banger_google_tiles(stream: &mut TcpStream, target: &str) -> Result<(),
     let bytes = response
         .bytes()
         .map_err(|err| format!("google tiles body: {err}"))?;
-    write_binary_response(stream, status, &content_type, bytes.as_ref())
+    let rewritten_json;
+    let body = if content_type.contains("json") {
+        rewritten_json = rewrite_google_tiles_json(bytes.as_ref(), BANGER_GOOGLE_TILES_PROXY_PREFIX);
+        rewritten_json.as_deref().unwrap_or(bytes.as_ref())
+    } else {
+        bytes.as_ref()
+    };
+    write_binary_response(stream, status, &content_type, body)
+}
+
+fn rewrite_google_tiles_json(bytes: &[u8], proxy_prefix: &str) -> Option<Vec<u8>> {
+    let mut value: Value = serde_json::from_slice(bytes).ok()?;
+    rewrite_google_tiles_value(&mut value, proxy_prefix);
+    serde_json::to_vec(&value).ok()
+}
+
+fn normalize_google_tiles_proxy_path(tile_path: &str) -> String {
+    let trimmed = tile_path.trim().trim_start_matches('/');
+    let without_api_prefix = trimmed.strip_prefix("v1/3dtiles/").unwrap_or(trimmed);
+    if without_api_prefix.is_empty() {
+        "root.json".to_string()
+    } else {
+        without_api_prefix.to_string()
+    }
+}
+
+fn sanitize_google_tiles_query(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|part| {
+            let key = part.split_once('=').map(|(key, _)| key).unwrap_or(part);
+            !key.eq_ignore_ascii_case("key")
+        })
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn rewrite_google_tiles_value(value: &mut Value, proxy_prefix: &str) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(uri)) = map.get_mut("uri") {
+                if let Some(rewritten) = rewrite_google_tiles_uri(uri, proxy_prefix) {
+                    *uri = rewritten;
+                }
+            }
+            for child in map.values_mut() {
+                rewrite_google_tiles_value(child, proxy_prefix);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                rewrite_google_tiles_value(child, proxy_prefix);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_google_tiles_uri(uri: &str, proxy_prefix: &str) -> Option<String> {
+    let google_prefix = "https://tile.googleapis.com/v1/3dtiles/";
+    let rest = uri.strip_prefix(google_prefix)?;
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let query = sanitize_google_tiles_query(query);
+    if query.is_empty() {
+        Some(format!("{proxy_prefix}{path}"))
+    } else {
+        Some(format!("{proxy_prefix}{path}?{query}"))
+    }
 }
 
 fn google_places_text_search_contact(

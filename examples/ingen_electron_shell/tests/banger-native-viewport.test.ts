@@ -6,6 +6,7 @@ const appSource = readFileSync("src/renderer/App.tsx", "utf8");
 const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
+const mainSource = readFileSync("src/main/main.ts", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
@@ -27,14 +28,23 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).not.toContain("native raster frame loading");
   });
 
-  it("does not mount a browser WebGL globe inside the Banger surface", () => {
+  it("keeps the Banger page native while allowing Cesium only in the Maps viewer", () => {
     expect(routerSource).not.toContain('from "cesium"');
     expect(routerSource).not.toContain('import("cesium")');
     expect(routerSource).not.toContain("new Cesium.Viewer");
     expect(routerSource).not.toContain("getBangerGoogleTilesConfig");
-    expect(routerSource).not.toContain("bangerCesiumViewport");
-    expect(stylesSource).not.toContain("bangerCesiumViewport");
-    expect(stylesSource).not.toContain("cesium-widget");
+    expect(canvasSurfacesSource).toContain('import("cesium")');
+    expect(canvasSurfacesSource).toContain("new Cesium.Viewer");
+    expect(canvasSurfacesSource).toContain("Cesium.GoogleMaps.mapTilesApiEndpoint");
+    expect(canvasSurfacesSource).toContain("Cesium.createGooglePhotorealistic3DTileset");
+    expect(canvasSurfacesSource).toContain("onlyUsingWithGoogleGeocoder");
+    expect(canvasSurfacesSource).toContain("GOOGLE_MAPS_PROXY_KEY_ALIAS");
+    expect(canvasSurfacesSource).toContain("resolveCesiumIonAccessToken");
+    expect(canvasSurfacesSource).toContain("Cesium.Ion.defaultAccessToken");
+    expect(canvasSurfacesSource).toContain("showCreditsOnScreen");
+    expect(canvasSurfacesSource).toContain("Banger Maps Cesium tileset failed; falling back to native sphere.");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport .cesium-widget-credits");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
     expect(stylesSource).toContain("content: none");
@@ -75,14 +85,52 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("BangerNativeFrameTarget");
     expect(nativeBridgeSource).toContain("create_banger_frame_target");
     expect(nativeBridgeSource).toContain("persistent_resize_tracked_depth_target_v1");
+    expect(nativeBridgeSource).toContain("forge.banger.maps_photorealistic_3d_tiles_contract.v1");
+    expect(nativeBridgeSource).toContain("google_photorealistic_3d_tiles");
+    expect(nativeBridgeSource).toContain("Cesium3DTileset_style_native_streamer");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_streamer.v1");
+    expect(nativeBridgeSource).toContain("--banger-maps-root-ingest");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_root_ingest.v1");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_ROOT_URL");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_TILE_CACHE_DIR");
+    expect(nativeBridgeSource).toContain("BangerMapsRootIngestProjection");
+    expect(nativeBridgeSource).toContain("BangerMapsTraversalSeed");
+    expect(nativeBridgeSource).toContain("BangerMapsTraversalTile");
+    expect(nativeBridgeSource).toContain("reqwest::blocking::Client");
+    expect(nativeBridgeSource).toContain("traversal_seed_hash");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_traversal_seed.v1");
+    expect(nativeBridgeSource).toContain("parent_first_screen_space_error_seed");
+    expect(nativeBridgeSource).toContain("FORGE_BANGER_MAPS_TRAVERSAL_MAX_TILES");
+    expect(nativeBridgeSource).toContain("3d_tiles_root_json_manifest_ingestion");
+    expect(nativeBridgeSource).toContain("b3dm_glb_gltf_mesh_material_texture_decode");
+    expect(nativeBridgeSource).toContain("wgs84_ecef_to_enu_floating_origin");
+    expect(nativeBridgeSource).toContain("native_gltf_material_texture_submission_not_promoted");
+    expect(nativeBridgeSource).toContain("CesiumGeoreference_style_floating_origin");
+    expect(nativeBridgeSource).toContain("screen_space_error");
+    expect(nativeBridgeSource).toContain("visible_on_screen");
   });
 
-  it("paints the Maps sphere from the Banger preview frame returned by IPC", () => {
+  it("paints Maps from Cesium Google tiles first and falls back to the Banger preview frame", () => {
     expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
     expect(canvasSurfacesSource).toContain("getBangerPreviewFrame");
+    expect(canvasSurfacesSource).toContain("getBangerGoogleTilesConfig");
+    expect(canvasSurfacesSource).toContain("BangerMapsCesiumViewport");
+    expect(canvasSurfacesSource).toContain("Cesium photorealistic tiles bootstrap");
+    expect(canvasSurfacesSource).toContain("Cesium Google photorealistic 3D Tiles live");
+    expect(canvasSurfacesSource).toContain("googleMapsEndpointFromRootTilesetUrl");
+    expect(canvasSurfacesSource).toContain("data-tileset-provider");
+    expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
+    expect(canvasSurfacesSource).toContain("data-tileset-georeference");
+    expect(canvasSurfacesSource).toContain("data-tileset-lod");
+    expect(canvasSurfacesSource).toContain("data-native-streamer");
+    expect(canvasSurfacesSource).toContain("data-native-streamer-status");
+    expect(canvasSurfacesSource).toContain("data-native-streamer-blocker");
+    expect(canvasSurfacesSource).toContain("redactedTilesetEndpoint");
     expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
     expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
+    expect(canvasSurfacesSource).toContain("target?.latitude");
+    expect(canvasSurfacesSource).toContain("target?.longitude");
     expect(canvasSurfacesSource).toContain('aria-label={`${label} - ${status}`}');
     expect(canvasSurfacesSource).not.toContain('<span className="webExplorerNativeStatus">{label} - {status}</span>');
     expect(stylesSource).toContain(".bangerSphereNativeFrame__preview");
@@ -95,19 +143,25 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain("right: var(--transcript-media-right-gap)");
     expect(stylesSource).toContain("overflow: visible");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame");
-    expect(stylesSource).toContain("width: min(58vw, 72vh, 760px)");
-    expect(stylesSource).toContain("height: min(58vw, 72vh, 760px)");
+    expect(stylesSource).toContain("inset: 50% auto auto 59%");
+    expect(stylesSource).toContain("width: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px)");
+    expect(stylesSource).toContain("height: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px)");
     expect(stylesSource).toContain("transform: translate3d(-50%, -50%, 0)");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__preview");
     expect(stylesSource).toContain("object-fit: contain");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallback");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .parallelCanvasClose");
     expect(stylesSource).toContain("display: none");
+    expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .webExplorerClose");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere");
-    expect(stylesSource).toContain("width: min(100%, 760px)");
+    expect(stylesSource).toContain("width: min(100%, 1139.0766445892043px)");
     expect(appSource).toContain("canvasMapsClosing");
     expect(appSource).toContain("canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing");
     expect(appSource).toContain("closeCanvasMaps();");
+    expect(appSource).toContain("mapsViewportTarget");
+    expect(appSource).toContain("setMapsViewportTarget");
+    expect(appSource).toContain("latitude: typeof event.latitude === \"number\" ? event.latitude : undefined");
+    expect(appSource).toContain("mapsTarget={mapsViewportTarget}");
     expect(canvasSurfacesSource).toContain('mapsClosing ? "canvasSurfaces--mapsClosing" : ""');
     expect(stylesSource).toContain(".navIconButton--selected .shellIcon--nav-web");
     expect(stylesSource).toContain(".canvasSurfaces--mapsClosing .mapsCanvasGrid--earthActive .mapsCanvasPane");
@@ -116,6 +170,17 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).toContain(".shell--maps-canvas-open .transcriptTextFrame");
     expect(stylesSource).toContain("var(--transcript-media-avoidance-width)");
     expect(stylesSource).toContain("object-fit: cover");
+    expect(mainSource).toContain("provider: \"google_photorealistic_3d_tiles\"");
+    expect(mainSource).toContain("rendererModel: \"cesium_for_unreal_style_3d_tileset\"");
+    expect(mainSource).toContain("directRootTilesetEndpoint: \"https://tile.googleapis.com/v1/3dtiles/root.json\"");
+    expect(mainSource).toContain("cesiumIonAccessTokenUrl");
+    expect(mainSource).toContain("/api/banger/cesium-ion-token");
+    expect(mainSource).toContain("rootRequestTtlHours: 3");
+    expect(mainSource).toContain("showCreditsOnScreen: true");
+    expect(mainSource).toContain("policy: \"screen_space_error\"");
+    expect(mainSource).toContain("authority: \"banger_tileset_residency_cache\"");
+    expect(mainSource).toContain("nativeStreamer");
+    expect(mainSource).toContain("meshlet_or_indexed_mesh_upload_pending");
   });
 
   it("rebuilds stale Electron renderer assets before reusing the desktop fast path", () => {

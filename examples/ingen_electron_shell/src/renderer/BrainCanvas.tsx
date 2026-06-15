@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_CODEDOCS_COMMAND,
@@ -43,7 +43,7 @@ import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon, ScraplingIcon } from "./mo
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
-type BrainSpace = "codeacts" | "memory" | "hardware" | "godel" | "personality";
+export type BrainSpace = "codeacts" | "memory" | "hardware" | "godel" | "personality";
 
 async function fallbackPhotonCitySuggestionLabels(query: string): Promise<string[]> {
   const url = new URL("https://photon.komoot.io/api/");
@@ -123,6 +123,15 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
       <svg {...base}>
         <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
         <path d="m9 12 2 2 4-4" />
+      </svg>
+    );
+  }
+  if (kind === "lesson-book") {
+    return (
+      <svg {...base}>
+        <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22z" />
+        <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22z" />
+        <path d="m7.5 11 1.25 1.25L11 10" />
       </svg>
     );
   }
@@ -260,7 +269,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   return <Glyph kind={stroke[command] ?? "terminal"} />;
 }
 
-const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
+export const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
   { id: "memory", label: "Memory", glyph: "database" },
   { id: "codeacts", label: "CodeActs", glyph: "codeact" },
   { id: "hardware", label: "Hardware", glyph: "gauge" },
@@ -303,55 +312,36 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
 ];
 
 const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
-  id: BrainLearningMemoryCategory | "anti_pattern" | "conduct_rule";
+  id: BrainLearningMemoryCategory;
   label: string;
   title: string;
   glyph: string;
   placeholder: string;
 }> = [
   {
-    id: "anti_pattern",
-    label: "Erreurs",
-    title: "Erreurs à ne plus répéter",
-    glyph: "shield-check",
-    placeholder: "Ex: Ne plus valider une campagne sans audience, douleur, mécanisme et résultat mesurable."
-  },
-  {
-    id: "conduct_rule",
-    label: "Règles",
-    title: "Règles de conduite",
-    glyph: "database",
-    placeholder: "Ex: Avant de proposer une campagne, vérifier l'offre, le canal, la preuve et l'objection principale."
+    id: "lesson",
+    label: "Lessons",
+    title: "The agent reviews mistakes and useful outcomes, then turns them into durable rules and skills it can reuse in future sessions.",
+    glyph: "lesson-book",
+    placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
   {
     id: "skill",
     label: "Skills",
     title: "Skills",
     glyph: "zap",
-    placeholder: "Ex: Critiquer une accroche marketing avec le cadre audience / douleur / mécanisme / preuve."
+    placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
   },
   {
     id: "task",
     label: "Tasks",
     title: "Tasks",
     glyph: "terminal",
-    placeholder: "Ex: Revoir les 5 dernières variantes et extraire les erreurs récurrentes."
+    placeholder: "Ex: Review the last 5 variants and extract recurring errors."
   }
-].map((item) => item.id === "anti_pattern" ? {
-  ...item,
-  id: "lesson",
-  label: "Lessons",
-  title: "Lessons: observed error -> replacement rule",
-  placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
-} : item)
-  .filter((item) => item.id !== "conduct_rule") as Array<{
-    id: BrainLearningMemoryCategory;
-    label: string;
-    title: string;
-    glyph: string;
-    placeholder: string;
-  }>;
+];
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
+const BRAIN_LEARNING_MACRO_PREFIX = "• ";
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
@@ -778,12 +768,87 @@ function BrainEntrySourceBadge({ source }: { source: BrainLearningMemoryEntry["s
   return <span className="brainLearningRegistry__source">{label}</span>;
 }
 
+export function BrainWorkspaceChrome({
+  space,
+  onSpaceChange,
+  onClose
+}: {
+  space: BrainSpace;
+  onSpaceChange: (space: BrainSpace) => void;
+  onClose?: () => void;
+}) {
+  return (
+    <div className="brainWorkspaceChrome">
+      <div className="brainWorkspaceChrome__titlebar">
+        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+          <span aria-hidden="true" />
+        </button>
+        <span className="brainCanvas__mark brainWorkspaceChrome__mark"><Glyph kind="brain" size={26} /></span>
+        <strong>Brain</strong>
+      </div>
+      <div className="brainCanvas__tabs brainWorkspaceChrome__tabs" role="tablist" aria-label="Brain spaces">
+        {BRAIN_SPACES.map(({ id, label, glyph }) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={space === id}
+            key={id}
+            onClick={() => onSpaceChange(id)}
+          >
+            <Glyph kind={glyph} size={20} />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getBrainLearningMacroLineText(line: string) {
+  return line.replace(/^\s*[•*-]\s*/, "").trim();
+}
+
+function hasBrainLearningMacroContent(value: string) {
+  return value.split(/\r?\n/).some((line) => getBrainLearningMacroLineText(line).length > 0);
+}
+
+function normalizeBrainLearningMacroDraft(value: string) {
+  const normalized = value.replace(/\r\n/g, "\n");
+  if (!normalized.trim()) {
+    return "";
+  }
+  return normalized
+    .split("\n")
+    .map((line) => {
+      const text = getBrainLearningMacroLineText(line);
+      return text ? `${BRAIN_LEARNING_MACRO_PREFIX}${text}` : BRAIN_LEARNING_MACRO_PREFIX;
+    })
+    .join("\n");
+}
+
+function normalizeBrainLearningMacroEntry(value: string) {
+  return normalizeBrainLearningMacroDraft(value)
+    .split("\n")
+    .filter((line) => getBrainLearningMacroLineText(line).length > 0)
+    .join("\n");
+}
+
 function BrainLearningRegistry() {
   const [entries, setEntries] = useState(() => readBrainLearningMemoryEntries());
   const [activeCategory, setActiveCategory] = useState<BrainLearningMemoryCategory>("lesson");
   const [draft, setDraft] = useState("");
+  const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const category = BRAIN_LEARNING_MEMORY_CATEGORIES.find((item) => item.id === activeCategory) ?? DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY;
   const categoryEntries = entries.filter((entry) => entry.category === activeCategory);
+
+  const syncDraftTextareaHeight = () => {
+    const textarea = draftTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 62)}px`;
+  };
 
   useEffect(() => {
     const syncEntries = () => setEntries(readBrainLearningMemoryEntries());
@@ -791,10 +856,18 @@ function BrainLearningRegistry() {
     return () => window.removeEventListener(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, syncEntries);
   }, []);
 
+  useLayoutEffect(() => {
+    syncDraftTextareaHeight();
+  }, [activeCategory, draft]);
+
   const addEntry = () => {
+    const text = normalizeBrainLearningMacroEntry(draft);
+    if (!text) {
+      return;
+    }
     const next = appendBrainLearningMemoryEntry({
       category: activeCategory,
-      text: draft,
+      text,
       source: "manual",
       trust: "user_confirmed",
       evidence: "brain_learning_registry:manual_editor"
@@ -803,22 +876,37 @@ function BrainLearningRegistry() {
     setDraft("");
   };
 
+  const insertMacroPunctuation = (textarea: HTMLTextAreaElement) => {
+    const selectionStart = textarea.selectionStart ?? draft.length;
+    const selectionEnd = textarea.selectionEnd ?? selectionStart;
+    const before = draft.slice(0, selectionStart);
+    const after = draft.slice(selectionEnd);
+    const insert = before.length > 0 ? `\n${BRAIN_LEARNING_MACRO_PREFIX}` : BRAIN_LEARNING_MACRO_PREFIX;
+    const nextDraft = `${before}${insert}${after}`;
+    const nextCursor = before.length + insert.length;
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      textarea.setSelectionRange(nextCursor, nextCursor);
+      syncDraftTextareaHeight();
+    });
+  };
+
   const deleteEntry = (entryId: string) => {
     setEntries(removeBrainLearningMemoryEntry(entryId));
   };
 
   return (
-    <section className="brainLearningRegistry" aria-label="Durable learning memory" role="listitem">
+    <section className="brainLearningRegistry" aria-label="Durable lessons" role="listitem">
       <div className="brainLearningRegistry__head">
         <span className="brainRow__icon">
-          <Glyph kind="database" size={17} />
+          <Glyph kind="lesson-book" size={17} />
         </span>
         <span>
-          <strong>Learning memory</strong>
-          <span>Lessons, skills and tasks that should survive future sessions.</span>
+          <strong>Lessons</strong>
+          <span>The agent turns errors, fixes and repeated wins into reusable rules and skills for future sessions.</span>
         </span>
       </div>
-      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Learning memory categories">
+      <div className="brainLearningRegistry__tabs" role="tablist" aria-label="Lesson categories">
         {BRAIN_LEARNING_MEMORY_CATEGORIES.map((item) => (
           <button
             type="button"
@@ -833,32 +921,43 @@ function BrainLearningRegistry() {
           </button>
         ))}
       </div>
-      <label className="brainLearningRegistry__composer">
-        <span>{category.title}</span>
+      <div className="brainLearningRegistry__composer">
+        <span className="brainLearningRegistry__composerLabel">{category.title}</span>
         <textarea
+          ref={draftTextareaRef}
           value={draft}
-          placeholder={category.placeholder}
+          aria-label={category.title}
+          placeholder={`${BRAIN_LEARNING_MACRO_PREFIX}${category.placeholder}`}
           rows={3}
           spellCheck={false}
-          onChange={(event) => setDraft(event.currentTarget.value)}
+          onChange={(event) => {
+            const textarea = event.currentTarget;
+            const nextDraft = normalizeBrainLearningMacroDraft(textarea.value);
+            setDraft(nextDraft);
+            window.requestAnimationFrame(syncDraftTextareaHeight);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") {
+              return;
+            }
+            event.preventDefault();
+            insertMacroPunctuation(event.currentTarget);
+          }}
         />
-      </label>
-      <div className="brainLearningRegistry__actions">
-        <button type="button" disabled={!draft.trim()} onClick={addEntry}>
-          <Glyph kind="plus" size={13} />
-          Add to Brain
-        </button>
+        <div className="brainLearningRegistry__actions">
+          <button type="button" disabled={!hasBrainLearningMacroContent(draft)} onClick={addEntry}>
+            Save
+          </button>
+        </div>
       </div>
-      <div className="brainLearningRegistry__entries" role="list" aria-label={category.title}>
-        {categoryEntries.length === 0 ? (
-          <p className="brainLearningRegistry__empty">No entries in this category yet.</p>
-        ) : categoryEntries.map((entry) => (
-          <article className="brainLearningRegistry__entry" key={entry.id} role="listitem">
+      <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.title} macros`}>
+        {categoryEntries.map((entry) => (
+          <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
             <p>{entry.text}</p>
             <footer>
               <BrainEntrySourceBadge source={entry.source} />
               <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
-              <button type="button" aria-label="Remove learning memory entry" onClick={() => deleteEntry(entry.id)}>
+              <button type="button" aria-label="Remove lesson entry" onClick={() => deleteEntry(entry.id)}>
                 <Glyph kind="minus" size={12} />
               </button>
             </footer>
@@ -1723,6 +1822,8 @@ function PersonalitySpace() {
 type BrainPersonalityMacroRow = {
   key: string;
   value: string;
+};
+
 type BrainPersonalityPreset = {
   id: string;
   label: string;
@@ -1793,8 +1894,6 @@ const BRAIN_PERSONALITY_PRESETS: BrainPersonalityPreset[] = [
     ]
   }
 ];
-
-};
 
 function personalityManifestToMacroRows(manifest: string): BrainPersonalityMacroRow[] {
   return manifest
@@ -1880,10 +1979,10 @@ function PersonalityManifestSpace() {
   const commitPersonalityRow = (rowIndex: number, value: string) => {
     const nextRows = personalityRows.map((row, index) => index === rowIndex ? { ...row, value } : row);
     commitPersonality(personalityMacroRowsToManifest(nextRows));
-  const applyPersonalityPreset = (preset: BrainPersonalityPreset) => {
-    commitPersonality(personalityMacroRowsToManifest(preset.rows));
   };
 
+  const applyPersonalityPreset = (preset: BrainPersonalityPreset) => {
+    commitPersonality(personalityMacroRowsToManifest(preset.rows));
   };
 
   return (
@@ -1902,9 +2001,9 @@ function PersonalityManifestSpace() {
             </span>
           </p>
           <label className="brainPersonalityManifestField">
-            <span className="brainMemoryIdentityField__label">Loop-stream voice contract</span>
+            <span className="brainMemoryIdentityField__label">Agent voice</span>
             <span className="brainPersonalityManifestField__hint">
-              Injected with the Brain manifest, after context compaction, and on Brain switches.
+              Choose the tone, reasoning style and work habits the agent should use with you.
             </span>
             <span className="brainPersonalityMacroList" aria-label="Editable Brain personality macros">
               {personalityRows.map((row, index) => (
@@ -1920,6 +2019,8 @@ function PersonalityManifestSpace() {
                   />
                 </span>
               ))}
+            </span>
+          </label>
           <div className="brainPersonalityPresetStack" aria-label="Personality methodology presets">
             {BRAIN_PERSONALITY_PRESETS.map((preset) => (
               <button
@@ -1933,8 +2034,6 @@ function PersonalityManifestSpace() {
               </button>
             ))}
           </div>
-            </span>
-          </label>
           <div className="brainPersonalityEditor__actions">
             <button type="button" onClick={resetPersonality}>
               <Glyph kind="reuse" size={13} />
@@ -1950,32 +2049,10 @@ function PersonalityManifestSpace() {
   );
 }
 
-export function BrainCanvas({ onClose }: { onClose?: () => void }) {
-  const [space, setSpace] = useState<BrainSpace>("memory");
+export function BrainCanvas({ space }: { space: BrainSpace }) {
   return (
     <section className="profileCanvas brainCanvas" aria-label="Brain canvas">
       <BrainBlob />
-      <header className="brainCanvas__head">
-        <button type="button" className="brainCanvas__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
-          <span aria-hidden="true" />
-        </button>
-        <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
-        <h1>Brain</h1>
-      </header>
-      <div className="brainCanvas__tabs" role="tablist" aria-label="Brain spaces">
-        {BRAIN_SPACES.map(({ id, label, glyph }) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={space === id}
-            key={id}
-            onClick={() => setSpace(id)}
-          >
-            <Glyph kind={glyph} size={20} />
-            {label}
-          </button>
-        ))}
-      </div>
       {space === "codeacts" ? <CodeActsSpace /> : null}
       {space === "memory" ? <MemorySpace /> : null}
       {space === "hardware" ? <HardwareSpace /> : null}

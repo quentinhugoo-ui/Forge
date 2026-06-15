@@ -8,10 +8,12 @@ const brainCanvasSource = readFileSync(join(process.cwd(), "src", "renderer", "B
 const canvasSource = readFileSync(join(process.cwd(), "src", "renderer", "CanvasSurfacesSlice.tsx"), "utf8");
 const composerBurstSource = readFileSync(join(process.cwd(), "src", "renderer", "ComposerSendBurst.tsx"), "utf8");
 const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const rightPanelSource = readFileSync(join(process.cwd(), "src", "renderer", "RightPanelSlice.tsx"), "utf8");
 const moduleLogosSource = readFileSync(join(process.cwd(), "src", "renderer", "module-logos.tsx"), "utf8");
 const storeSource = readFileSync(join(process.cwd(), "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const sidebarSource = readFileSync(join(process.cwd(), "src", "renderer", "SidebarSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(process.cwd(), "src", "renderer", "styles.css"), "utf8");
+const generatedIpcSource = readFileSync(join(process.cwd(), "src", "shared", "generated", "forge-ipc.generated.ts"), "utf8");
 const preloadCjsSource = readFileSync(join(process.cwd(), "preload.cjs"), "utf8");
 const brainSource = readFileSync(join(process.cwd(), "..", "..", "src", "brain.rs"), "utf8");
 const contractSource = readFileSync(join(process.cwd(), "contract", "src", "main.rs"), "utf8");
@@ -285,6 +287,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('[BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"]');
     expect(rendererSource).toContain("function parseQuestionnaireFromMessage");
     expect(rendererSource).toContain("function ComposerQuestionnaire");
+    expect(rendererSource).toContain("function parseQuestionnaireAnswerTable");
+    expect(rendererSource).toContain("function QuestionnaireAnswerTable");
+    expect(rendererSource).toContain("questionnaireAnswerRows.length > 0");
     expect(rendererSource).toContain("const promptId = useId()");
     expect(rendererSource).toContain("function questionnaireOptionCopy");
     expect(rendererSource).toContain("const QUESTIONNAIRE_TAGS");
@@ -340,6 +345,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : ""');
     expect(rendererSource).toContain('permissionMode === "self-directed" ? "permissionModeTrigger--selfDirected" : ""');
     expect(stylesSource).toContain(".composerQuestionnaire");
+    expect(stylesSource).toContain(".questionnaireAnswerTable");
+    expect(stylesSource).toContain(".questionnaireAnswerTable__row");
+    expect(stylesSource).toContain(".questionnaireAnswerTable__answer");
     expect(stylesSource).toContain("--questionnaire-width: min(756px, calc(var(--chat-width) - 8px))");
     expect(stylesSource).toContain(".panelsChatBottom--questionnaireOpen");
     expect(stylesSource).toContain("z-index: 31");
@@ -403,6 +411,26 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".permissionModeTrigger--selfDirected > svg:first-child");
     expect(stylesSource).toContain("animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite");
     expect(stylesSource).toContain("animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite");
+  });
+
+  it("registers /plan_ as a visible action-plan CodeAct", () => {
+    expect(brainSource).toContain('pub const BRAIN_PLAN_COMMAND: &str = "/plan_";');
+    expect(brainSource).toContain("brain_plan_codeact_template()");
+    expect(brainSource).toContain("Use /plan_ when a non-trivial task needs a visible multi-step action plan");
+    expect(brainSource).toContain("Use /plan_ when the coding task needs a visible multi-step action plan");
+    expect(contractSource).toContain('"BRAIN_PLAN_COMMAND"');
+    expect(contractSource).toContain('("BRAIN_PLAN_COMMAND", "BRAIN_PLAN_COMMAND_DESCRIPTION")');
+    expect(generatedIpcSource).toContain("BRAIN_PLAN_COMMAND,");
+    expect(appSource).toContain("BRAIN_PLAN_COMMAND");
+    expect(appSource).toContain('dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" })');
+    expect(appSource).toContain("planSourceText={latestAssistantText}");
+    expect(rendererSource).toContain('[BRAIN_PLAN_COMMAND, "Plan panel opened"]');
+    expect(rendererSource).toContain("is shaping the action plan");
+    expect(rightPanelSource).toContain("latestPlanCodeActLine");
+    expect(rightPanelSource).toContain("is shaping the action plan");
+    expect(rightPanelSource).toContain("No active plan yet.");
+    expect(stylesSource).toContain(".rightPanelWorkingEvent");
+    expect(stylesSource).toContain(".rightPanelPlanSteps");
   });
 
   it("lets Self-Directed visibly author bounded follow-up prompts in the composer", () => {
@@ -751,17 +779,28 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).not.toContain("Fill the blob so no straight letterbox edge cuts through the feathered mask.");
   });
 
-  it("keeps the composer send button as the base arrow while a send is pending", () => {
+  it("spins the composer send button from Enter until the sent message echoes into the transcript", () => {
     expect(rendererSource).toContain("composerSendBusy");
     expect(rendererSource).toContain("beginComposerSendBusy");
     expect(rendererSource).toContain("dispatchTrackedComposerSend");
     expect(rendererSource).toContain('aria-label={composerSendBusy ? "Sending message" : "Send message"}');
     expect(rendererSource).toContain('aria-busy={composerSendBusy}');
+    // Busy -> spinner, idle -> base arrow glyph.
+    expect(rendererSource).toContain('<span className="composer__sendSpinner" aria-hidden="true" />');
     expect(rendererSource).toContain('<svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">');
+    // The spinner stops on the transcript echo, not on wave-drain or dispatch resolve.
+    expect(rendererSource).toContain("sendEchoBaselineRef");
+    expect(rendererSource).toContain("transcriptUserMessageCount");
+    expect(rendererSource).toContain("void dispatch(command).catch(endComposerSendBusy)");
+    expect(rendererSource).toContain("burst.fire(composerRef.current, commit)");
     expect(rendererSource).not.toContain('<span className="loader" aria-hidden="true" />');
     expect(rendererSource).not.toContain("sendPixelLoader");
     expect(rendererSource).not.toContain("sendPixelLoader__pixel");
     expect(rendererSource).not.toContain("composer__send--loading");
+    // The custom spinner keyframe must not reuse the Uiverse snippet names.
+    expect(stylesSource).toContain(".composer__sendSpinner");
+    expect(stylesSource).toContain("animation: composerSendSpin 1s linear infinite;");
+    expect(stylesSource).toContain("@keyframes composerSendSpin");
     expect(stylesSource).not.toContain(".composer__send--loading");
     expect(stylesSource).not.toContain("/* From Uiverse.io by Fernando-sv */");
     expect(stylesSource).not.toContain("animation: spin89345 1s linear infinite;");
@@ -770,7 +809,6 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).not.toContain("sendPixelTrace");
     expect(composerBurstSource).toContain("onComplete?: () => void");
     expect(composerBurstSource).toContain("onComplete?.()");
-    expect(rendererSource).toContain("burst.fire(composerRef.current, () => commit(false), endComposerSendBusy)");
   });
 
   it("renders loop-stream assistant work like compact Codex command separators", () => {
@@ -938,7 +976,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__divider");
     expect(stylesSource).toContain(".assistantText strong");
     expect(stylesSource).toContain(".assistantText code");
-    expect(stylesSource).toContain("border: 1px solid var(--assistant-mark-line-soft)");
+    expect(stylesSource).toContain("background: var(--forge-sidebar-bg)");
+    expect(stylesSource).toContain("border-radius: 4px !important");
+    expect(stylesSource).toContain("color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 10%)");
     expect(stylesSource).toContain(".assistantText__mathToken");
     expect(stylesSource).toContain(".assistantText__mathPill");
     expect(stylesSource).toContain("box-shadow: none");

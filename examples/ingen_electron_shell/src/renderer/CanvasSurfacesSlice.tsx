@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -7,7 +8,8 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { BangerPresentLoopBootstrapResult, BangerPreviewFrameResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
+import "cesium/Build/Cesium/Widgets/widgets.css";
+import type { BangerGoogleTilesConfigResult, BangerPresentLoopBootstrapResult, BangerPreviewFrameResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
@@ -35,20 +37,67 @@ interface PaneTabsProps {
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
+interface MapsViewportTarget {
+  target?: string;
+  latitude?: number;
+  longitude?: number;
+}
 export interface CodingLivePreviewTarget {
   path: string;
   kind: "html" | "react" | "vite" | "unknown";
   revision: number;
 }
 
-function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | null }) {
+function BangerSphereNativeViewport({ searchQuery, target }: { searchQuery?: string | null; target?: MapsViewportTarget | null }) {
   const slotRef = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef("");
   const [status, setStatus] = useState("Banger sphere viewport pending");
   const [frameDataUrl, setFrameDataUrl] = useState("");
-  const label = searchQuery?.replace(/\s+/g, " ").trim() || "Map";
+  const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
+  const [tilesConfigLoaded, setTilesConfigLoaded] = useState(false);
+  const [cesiumFailed, setCesiumFailed] = useState(false);
+  const handleCesiumFatal = useCallback(() => setCesiumFailed(true), []);
+  const label = searchQuery?.replace(/\s+/g, " ").trim() || target?.target?.replace(/\s+/g, " ").trim() || "Map";
+
+  useEffect(() => {
+    const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig as
+      | (() => Promise<BangerGoogleTilesConfigResult>)
+      | undefined;
+    if (!getTilesConfig) {
+      setTilesConfigLoaded(true);
+      return undefined;
+    }
+    let active = true;
+    void getTilesConfig()
+      .then((result) => {
+        if (active) {
+          setTilesConfig(result);
+          setTilesConfigLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setTilesConfig(null);
+          setTilesConfigLoaded(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setCesiumFailed(false);
+  }, [tilesConfig?.rootTilesetUrl]);
 
   useLayoutEffect(() => {
+    if (!tilesConfigLoaded) {
+      return undefined;
+    }
+    if (tilesConfig?.accepted && tilesConfig.rootTilesetUrl && !cesiumFailed) {
+      setStatus("Cesium photorealistic tiles loading");
+      return undefined;
+    }
     const getPreview = globalThis.window?.forgeShell?.getBangerPreviewFrame as
       | (() => Promise<BangerPreviewFrameResult>)
       | undefined;
@@ -159,11 +208,43 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
       observer.disconnect();
       window.removeEventListener("resize", scheduleSync);
     };
-  }, []);
+  }, [cesiumFailed, tilesConfig?.accepted, tilesConfig?.rootTilesetUrl, tilesConfigLoaded]);
+
+  const tilesetEndpoint = redactedTilesetEndpoint(tilesConfig?.rootTilesetUrl);
+  const georeference = tilesConfig
+    ? `${tilesConfig.georeference.ellipsoid}:${tilesConfig.georeference.originLatitude.toFixed(5)}:${tilesConfig.georeference.originLongitude.toFixed(5)}`
+    : "WGS84:pending";
 
   return (
-    <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label={`${label} - ${status}`}>
-      {frameDataUrl ? (
+    <div
+      ref={slotRef}
+      className="googleEarthDomFrame bangerSphereNativeFrame"
+      aria-label={`${label} - ${status}`}
+      data-tileset-schema={tilesConfig?.schema ?? "forge.banger.google_photorealistic_tiles_config.v1"}
+      data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
+      data-tileset-renderer-model={tilesConfig?.rendererModel ?? "cesium_for_unreal_style_3d_tileset"}
+      data-tileset-endpoint={tilesetEndpoint}
+      data-tileset-georeference={georeference}
+      data-tileset-lod={tilesConfig ? `${tilesConfig.lod.policy}:${tilesConfig.lod.maxScreenSpaceError}` : "screen_space_error:pending"}
+      data-tileset-attribution={tilesConfig?.attribution.mode ?? "visible_on_screen"}
+      data-tileset-cache={tilesConfig?.cache.authority ?? "banger_tileset_residency_cache"}
+      data-native-streamer={tilesConfig?.nativeStreamer.schema ?? "forge.banger.native_3d_tiles_streamer.v1"}
+      data-native-streamer-status={tilesConfig?.nativeStreamer.status ?? "pending"}
+      data-native-streamer-blocker={tilesConfig?.nativeStreamer.blocker ?? "pending"}
+    >
+      {tilesConfig?.accepted && tilesConfig.rootTilesetUrl && !cesiumFailed ? (
+        <>
+          <div className="bangerSphereNativeFrame__fallback bangerSphereNativeFrame__fallback--underlay" aria-hidden="true">
+            <span className="bangerSphereNativeFrame__fallbackSphere" />
+          </div>
+          <BangerMapsCesiumViewport
+            config={tilesConfig}
+            target={target}
+            onStatus={setStatus}
+            onFatal={handleCesiumFatal}
+          />
+        </>
+      ) : frameDataUrl ? (
         <img className="bangerSphereNativeFrame__preview" src={frameDataUrl} alt="" draggable={false} />
       ) : (
         <div className="bangerSphereNativeFrame__fallback" aria-hidden="true">
@@ -172,6 +253,184 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
       )}
     </div>
   );
+}
+
+function BangerMapsCesiumViewport({
+  config,
+  target,
+  onStatus,
+  onFatal
+}: {
+  config: BangerGoogleTilesConfigResult;
+  target?: MapsViewportTarget | null;
+  onStatus: (status: string) => void;
+  onFatal: () => void;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !config.accepted || !config.rootTilesetUrl) {
+      return undefined;
+    }
+    let disposed = false;
+    let readyTimer = 0;
+    let viewer: import("cesium").Viewer | null = null;
+    setReady(false);
+    void (async () => {
+      try {
+        onStatus("Cesium photorealistic tiles bootstrap");
+        readyTimer = window.setTimeout(() => {
+          if (!disposed) {
+            onStatus("Cesium tiles still loading; Banger fallback kept visible");
+          }
+        }, 5000);
+        const Cesium = await import("cesium");
+        if (disposed || !hostRef.current) return;
+        const cesiumIonAccessToken = await resolveCesiumIonAccessToken(config);
+        const usingCesiumIon = true;
+        if (cesiumIonAccessToken) {
+          Cesium.Ion.defaultAccessToken = cesiumIonAccessToken;
+        }
+        if (!cesiumIonAccessToken) {
+          onStatus("Cesium ion default token loading Google photorealistic 3D Tiles");
+        }
+        if (!usingCesiumIon) {
+          const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
+          if (googleMapsEndpoint) {
+            Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
+            Cesium.GoogleMaps.defaultApiKey = GOOGLE_MAPS_PROXY_KEY_ALIAS;
+          }
+        }
+        viewer = new Cesium.Viewer(hostRef.current, {
+          animation: false,
+          baseLayerPicker: false,
+          fullscreenButton: false,
+          geocoder: Cesium.IonGeocodeProviderType.GOOGLE,
+          globe: false,
+          homeButton: false,
+          infoBox: false,
+          navigationHelpButton: false,
+          requestRenderMode: true,
+          sceneModePicker: false,
+          selectionIndicator: false,
+          timeline: false,
+          vrButton: false,
+          shouldAnimate: true
+        });
+        if (viewer.scene.globe) {
+          viewer.scene.globe.show = false;
+        }
+        if (viewer.scene.skyAtmosphere) {
+          viewer.scene.skyAtmosphere.show = false;
+        }
+        if (viewer.scene.skyBox) {
+          viewer.scene.skyBox.show = false;
+        }
+        viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT;
+        onStatus("Cesium loading Google photorealistic 3D Tiles");
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset(usingCesiumIon ? {
+          onlyUsingWithGoogleGeocoder: true
+        } : {
+          key: GOOGLE_MAPS_PROXY_KEY_ALIAS,
+          onlyUsingWithGoogleGeocoder: true
+        }, {
+          maximumScreenSpaceError: config.lod.maxScreenSpaceError,
+          skipLevelOfDetail: config.lod.skipLevelOfDetail,
+          showCreditsOnScreen: config.showCreditsOnScreen
+        });
+        if (disposed || !viewer || viewer.isDestroyed()) return;
+        viewer.scene.primitives.add(tileset);
+        const longitude = typeof target?.longitude === "number" ? target.longitude : config.initialView.longitude;
+        const latitude = typeof target?.latitude === "number" ? target.latitude : config.initialView.latitude;
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, config.initialView.heightMeters),
+          orientation: {
+            heading: Cesium.Math.toRadians(config.initialView.headingDegrees),
+            pitch: Cesium.Math.toRadians(config.initialView.pitchDegrees),
+            roll: Cesium.Math.toRadians(config.initialView.rollDegrees)
+          }
+        });
+        void viewer.zoomTo(tileset);
+        viewer.scene.requestRender();
+        setReady(true);
+        onStatus("Cesium Google photorealistic 3D Tiles live");
+      } catch (error) {
+        console.warn("Banger Maps Cesium tileset failed; falling back to native sphere.", error);
+        if (!disposed) {
+          onStatus(error instanceof Error ? error.message : "Cesium photorealistic tiles unavailable");
+          onFatal();
+        }
+      }
+    })();
+    return () => {
+      disposed = true;
+      if (readyTimer !== 0) {
+        window.clearTimeout(readyTimer);
+      }
+      if (viewer && !viewer.isDestroyed()) {
+        viewer.destroy();
+      }
+    };
+  }, [config, onFatal, onStatus, target?.latitude, target?.longitude]);
+
+  return <div ref={hostRef} className={ready ? "bangerMapsCesiumViewport bangerMapsCesiumViewport--ready" : "bangerMapsCesiumViewport"} aria-hidden="true" />;
+}
+
+function redactedTilesetEndpoint(value?: string): string {
+  if (!value) {
+    return "pending";
+  }
+  try {
+    const url = new URL(value);
+    if (url.searchParams.has("key")) {
+      url.search = "?key=redacted";
+    }
+    return url.toString();
+  } catch {
+    return "configured";
+  }
+}
+
+const GOOGLE_MAPS_PROXY_KEY_ALIAS = "render-proxy";
+
+async function resolveCesiumIonAccessToken(config: BangerGoogleTilesConfigResult): Promise<string | undefined> {
+  const embedded = config.cesiumIonAccessToken?.trim();
+  if (embedded) {
+    return embedded;
+  }
+  if (!config.cesiumIonAccessTokenUrl) {
+    return undefined;
+  }
+  try {
+    const response = await fetch(config.cesiumIonAccessTokenUrl, { cache: "no-store" });
+    if (!response.ok) {
+      return undefined;
+    }
+    const payload = await response.json() as { accepted?: unknown; token?: unknown };
+    const token = typeof payload.token === "string" ? payload.token.trim() : "";
+    return payload.accepted === true && token ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function googleMapsEndpointFromRootTilesetUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname
+      .replace(/\/v1\/3dtiles\/root\.json$/i, "/")
+      .replace(/\/root\.json$/i, "/");
+    if (!url.pathname.endsWith("/")) {
+      url.pathname = `${url.pathname}/`;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 interface CanvasSessionFilesTab {
@@ -942,6 +1201,7 @@ export function CanvasSurfacesSlice({
   mapsOpen,
   mapsClosing = false,
   mapsParallelIndex = 0,
+  mapsTarget = null,
   mapsSearchQuery,
   codingLivePreview,
   leftPanelOpen,
@@ -976,6 +1236,7 @@ export function CanvasSurfacesSlice({
   mapsClosing?: boolean;
   mapsParallelIndex?: number;
   mapsUrl?: string;
+  mapsTarget?: MapsViewportTarget | null;
   mapsSearchQuery?: string;
   codingLivePreview?: CodingLivePreviewTarget | null;
   leftPanelOpen: boolean;
@@ -1270,7 +1531,7 @@ export function CanvasSurfacesSlice({
                         <span aria-hidden="true" />
                       </button>
                       {hostsMaps && nativeBrowserPage === "maps" ? (
-                        <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
+                        <BangerSphereNativeViewport searchQuery={mapsSearchQuery} target={mapsTarget} />
                       ) : (
                         <div
                           ref={nativeWebExplorerSlotRef}
@@ -1292,7 +1553,7 @@ export function CanvasSurfacesSlice({
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                         <span aria-hidden="true" />
                       </button>
-                      <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
+                      <BangerSphereNativeViewport searchQuery={mapsSearchQuery} target={mapsTarget} />
                     </>
                   ) : null}
                 </section>
@@ -1324,7 +1585,7 @@ export function CanvasSurfacesSlice({
                 <span aria-hidden="true" />
               </button>
               {nativeBrowserPage === "maps" ? (
-                <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
+                <BangerSphereNativeViewport searchQuery={mapsSearchQuery} target={mapsTarget} />
               ) : (
                 <div
                   ref={nativeWebExplorerSlotRef}
@@ -1369,7 +1630,7 @@ export function CanvasSurfacesSlice({
               <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                 <span aria-hidden="true" />
               </button>
-              <BangerSphereNativeViewport searchQuery={mapsSearchQuery} />
+              <BangerSphereNativeViewport searchQuery={mapsSearchQuery} target={mapsTarget} />
             </section>
           </div>
         ) : null}

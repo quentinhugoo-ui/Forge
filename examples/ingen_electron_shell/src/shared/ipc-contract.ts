@@ -14,6 +14,8 @@ import {
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_QUESTIONNAIRE_RESULT_SCHEMA,
+  BRAIN_PLAN_COMMAND,
+  BRAIN_PLAN_RESULT_SCHEMA,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
   BRAIN_CAPABILITIES_COMMAND,
@@ -123,6 +125,9 @@ export {
   BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_QUESTIONNAIRE_COMMAND_DESCRIPTION,
   BRAIN_QUESTIONNAIRE_RESULT_SCHEMA,
+  BRAIN_PLAN_COMMAND,
+  BRAIN_PLAN_COMMAND_DESCRIPTION,
+  BRAIN_PLAN_RESULT_SCHEMA,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_SCIENCE_COMMAND_DESCRIPTION,
   BRAIN_CODING_COMMAND,
@@ -1759,6 +1764,29 @@ export interface BangerPresentLoopBootstrapResult {
   sceneMeshHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
+  mapsTilesetContract?: {
+    schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1";
+    provider: "google_photorealistic_3d_tiles";
+    rendererContract: "Cesium3DTileset_style_native_streamer";
+    rootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
+    rootRequestTtlHours: 3;
+    nativeStreamer?: {
+      schema: "forge.banger.native_3d_tiles_streamer.v1";
+      authority: "banger_native_engine";
+      status: string;
+      rootIngestionStage: string;
+      traversalStage: string;
+      contentDecodeStage: string;
+      georeferenceStage: string;
+      gpuSubmissionStage: string;
+      visualFallback: string;
+      blocker: string;
+    };
+    attribution: {
+      required: true;
+      mode: "visible_on_screen";
+    };
+  } | null;
   previewWidth?: number;
   previewHeight?: number;
   previewByteCount?: number;
@@ -1782,10 +1810,54 @@ export interface BangerPresentLoopBootstrapResult {
 export interface BangerGoogleTilesConfigResult {
   accepted: boolean;
   schema: "forge.banger.google_photorealistic_tiles_config.v1";
+  provider: "google_photorealistic_3d_tiles";
+  rendererModel: "cesium_for_unreal_style_3d_tileset";
   source: "render-resolver-proxy" | "electron-main-env";
   rootTilesetUrl: string;
+  cesiumIonAccessTokenUrl?: string;
+  cesiumIonAccessToken?: string;
+  nativeStreamer: {
+    schema: "forge.banger.native_3d_tiles_streamer.v1";
+    authority: "banger_native_engine";
+    status: string;
+    rootIngestionStage: string;
+    traversalStage: string;
+    contentDecodeStage: string;
+    georeferenceStage: string;
+    gpuSubmissionStage: string;
+    visualFallback: string;
+    blocker: string;
+  };
+  directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
   requestBudget: number;
+  rootRequestTtlHours: 3;
   showCreditsOnScreen: true;
+  attribution: {
+    required: true;
+    mode: "visible_on_screen";
+    policy: "google_maps_platform_terms";
+  };
+  georeference: {
+    ellipsoid: "WGS84";
+    originLatitude: number;
+    originLongitude: number;
+    originHeightMeters: number;
+  };
+  lod: {
+    policy: "screen_space_error";
+    maxScreenSpaceError: number;
+    skipLevelOfDetail: boolean;
+    maxSimultaneousTileLoads: number;
+  };
+  cache: {
+    authority: "banger_tileset_residency_cache";
+    maxResidentTileBytes: number;
+  };
+  interopFloor: {
+    cesiumForUnreal: "1.12+";
+    cesiumJs: "1.91+";
+    tileset: "OGC_3D_Tiles";
+  };
   initialView: {
     longitude: number;
     latitude: number;

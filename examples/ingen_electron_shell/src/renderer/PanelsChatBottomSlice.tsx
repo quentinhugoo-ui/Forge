@@ -26,6 +26,7 @@ import {
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
   BRAIN_NEWOBJECT_COMMAND,
+  BRAIN_PLAN_COMMAND,
   BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_RUST_PORT_ADAPTER_COMMAND,
   BRAIN_RUST_STATE_STORE_COMMAND,
@@ -1300,6 +1301,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
   [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],
+  [BRAIN_PLAN_COMMAND, "Plan panel opened"],
   [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
   [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
   [BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"],
@@ -2062,6 +2064,48 @@ interface QuestionnaireAnswer {
   kind: "option" | "other";
   value: string;
   otherText: string;
+}
+
+interface QuestionnaireAnswerTableRow {
+  question: string;
+  answer: string;
+}
+
+function parseQuestionnaireAnswerTable(text: string): QuestionnaireAnswerTableRow[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const answersIndex = lines.findIndex((line) => line.trim().toLowerCase() === "questionnaire answers:");
+  if (answersIndex < 0) {
+    return [];
+  }
+  return lines.slice(answersIndex + 1)
+    .map((line) => /^-\s*(.+?)\s*:\s*(.+)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => Boolean(match))
+    .map((match) => ({
+      question: (match[1] ?? "").trim(),
+      answer: (match[2] ?? "").trim()
+    }))
+    .filter((row) => row.question.length > 0 && row.answer.length > 0);
+}
+
+function QuestionnaireAnswerTable({ rows }: { rows: QuestionnaireAnswerTableRow[] }) {
+  return (
+    <section className="questionnaireAnswerTable" aria-label="Questionnaire answers">
+      <header className="questionnaireAnswerTable__header">
+        <span className="questionnaireAnswerTable__dot" aria-hidden="true" />
+        <strong>Questionnaire answers</strong>
+      </header>
+      <table className="questionnaireAnswerTable__body">
+        <tbody>
+          {rows.map((row, index) => (
+            <tr className="questionnaireAnswerTable__row" key={`${row.question}-${index}`}>
+              <td className="questionnaireAnswerTable__question">{row.question}</td>
+              <td className="questionnaireAnswerTable__answer">{row.answer}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
 }
 
 function unquoteCodeActSlotValue(value: string): string {
@@ -2862,6 +2906,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (isSpecializedBrainActivationCommand(command)) return <BrainSegmentCodeActIcon phase="changed" />;
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
+  if (command === BRAIN_PLAN_COMMAND) return <ListChecks />;
   if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <SearchArchiveCodeActIcon />;
   if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
@@ -2906,6 +2951,9 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   }
   if (event.command === BRAIN_CODING_LIVE_PREVIEW_COMMAND) {
     return "is opening the live preview";
+  }
+  if (event.command === BRAIN_PLAN_COMMAND) {
+    return "is shaping the action plan";
   }
   if (isBrainSegmentCommand(event.command)) {
     return `is continuing in ${brainSegmentName(event.command)}`;
@@ -4058,6 +4106,7 @@ function TranscriptCanvas({
           const pinned = pinnedIds.has(message.id);
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
+          const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
           if (assistantCanAnimate && assistantAnimationRef.current) {
@@ -4181,7 +4230,11 @@ function TranscriptCanvas({
                     <div className="transcriptUserStack">
                       {message.text.trim() ? (
                         <div className="transcriptUserTextFrame">
-                          <p className="transcriptPill transcriptPill--user">{message.text}</p>
+                          {questionnaireAnswerRows.length > 0 ? (
+                            <QuestionnaireAnswerTable rows={questionnaireAnswerRows} />
+                          ) : (
+                            <p className="transcriptPill transcriptPill--user">{message.text}</p>
+                          )}
                           {actions}
                         </div>
                       ) : null}
@@ -4201,6 +4254,7 @@ function TranscriptCanvas({
 
 function WidgetTranscriptPanel({
   activeSessionId,
+  sessionName,
   messages,
   agentName,
   assistantBusy,
@@ -4211,6 +4265,7 @@ function WidgetTranscriptPanel({
   collapsing = false
 }: {
   activeSessionId: string;
+  sessionName: string;
   messages: TranscriptMessage[];
   agentName: string;
   assistantBusy: boolean;
@@ -4221,16 +4276,7 @@ function WidgetTranscriptPanel({
   collapsing?: boolean;
 }) {
   const titleId = useId();
-  /* No stored session title exists, so label the panel with a concise excerpt
-     of the first user message (the thread's subject), like a chat thread name. */
-  const firstUserMessage = messages.find((message) => message.role === "user" && message.text.trim().length > 0);
-  const sessionLabel = (() => {
-    const text = firstUserMessage?.text.trim();
-    if (!text) {
-      return "Conversation";
-    }
-    return text.length > 40 ? `${text.slice(0, 40).trimEnd()}…` : text;
-  })();
+  const sessionLabel = sessionName.trim() || "Conversation";
 
   return (
     <section
@@ -4274,15 +4320,16 @@ function WidgetTranscriptPanel({
   );
 }
 
-function WidgetTranscriptTab({ onOpen }: { onOpen: () => void }) {
+function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => void }) {
   return (
     <button
       type="button"
       className="widgetTranscriptTab"
-      aria-label="Agrandir le panneau de conversation"
+      aria-label={`Agrandir la conversation : ${label}`}
+      title={label}
       onClick={onOpen}
     >
-      Agrandir
+      <span className="widgetTranscriptTab__name">{label}</span>
     </button>
   );
 }
@@ -4294,6 +4341,7 @@ interface PanelsChatBottomSliceProps {
   webExplorerOpen?: boolean;
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
+  sessionName?: string;
   widgetMode?: boolean;
   widgetModeTransitioning?: boolean;
   onWidgetModeChange?: (enabled: boolean) => void;
@@ -4484,6 +4532,7 @@ export function PanelsChatBottomSlice({
   webExplorerOpen = false,
   composerModule = null,
   onComposerModuleChange,
+  sessionName = "",
   widgetMode = false,
   widgetModeTransitioning = false,
   onWidgetModeChange
@@ -5219,6 +5268,7 @@ export function PanelsChatBottomSlice({
       {widgetTranscriptPanelVisible ? (
         <WidgetTranscriptPanel
           activeSessionId={snapshot.activeSessionId}
+          sessionName={sessionName}
           messages={widgetTranscriptMessages}
           agentName={brainAgentName}
           assistantBusy={Boolean(snapshot.composer.assistantBusy)}
@@ -5230,7 +5280,7 @@ export function PanelsChatBottomSlice({
         />
       ) : null}
       {widgetTranscriptTabVisible ? (
-        <WidgetTranscriptTab onOpen={expandWidgetTranscript} />
+        <WidgetTranscriptTab label={sessionName.trim() || "Conversation"} onOpen={expandWidgetTranscript} />
       ) : null}
       <form
         ref={composerRef}

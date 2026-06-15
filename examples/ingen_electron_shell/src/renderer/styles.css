@@ -792,6 +792,83 @@ button {
   pointer-events: auto;
 }
 
+.brainWorkspaceChrome {
+  position: absolute;
+  top: 8px;
+  left: 40px;
+  z-index: 3;
+  display: grid;
+  gap: 4px;
+  max-width: min(760px, calc(100vw - var(--workspace-header-left) - 340px));
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.brainWorkspaceChrome__titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 30px;
+}
+
+.brainWorkspaceChrome__close {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  color: var(--forge-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.brainWorkspaceChrome__close span {
+  display: block;
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+  -webkit-mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+}
+
+.brainWorkspaceChrome__close:hover,
+.brainWorkspaceChrome__close:focus-visible {
+  color: #fff;
+  outline: 0;
+}
+
+.brainWorkspaceChrome__close:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--forge-accent), transparent 30%);
+  outline-offset: 2px;
+}
+
+.brainWorkspaceChrome__mark {
+  flex: 0 0 auto;
+}
+
+.brainWorkspaceChrome__titlebar strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forge-text);
+  font-size: 22px;
+  font-weight: 720;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brainWorkspaceChrome__tabs {
+  gap: 30px;
+  margin-top: 0;
+}
+
+.brainWorkspaceChrome__tabs button {
+  height: 40px;
+}
+
 .workspaceRequiredVeil {
   position: fixed;
   inset: 96px 0 0 var(--workspace-left);
@@ -2582,7 +2659,7 @@ button {
   position: fixed;
   left: var(--left-panel-offset);
   right: 0;
-  top: 96px;
+  top: 132px;
   bottom: 0;
   z-index: 8;
   overflow: hidden auto;
@@ -5616,6 +5693,105 @@ button {
 
 .transcriptUserStack .transcriptPill--user {
   max-width: 100%;
+}
+
+.questionnaireAnswerTable {
+  display: grid;
+  gap: 0;
+  width: min(720px, 100%);
+  overflow: hidden;
+  color: var(--forge-text);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.34),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.026);
+}
+
+.questionnaireAnswerTable__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  color: color-mix(in oklab, var(--forge-text), white 5%);
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+
+.questionnaireAnswerTable__header strong {
+  font-weight: 640;
+}
+
+.questionnaireAnswerTable__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px !important;
+  background: var(--forge-accent);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--forge-accent), transparent 42%);
+}
+
+.questionnaireAnswerTable__body {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.questionnaireAnswerTable__row {
+  min-width: 0;
+}
+
+.questionnaireAnswerTable__row + .questionnaireAnswerTable__row {
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.questionnaireAnswerTable__question,
+.questionnaireAnswerTable__answer {
+  min-width: 0;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.42;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.questionnaireAnswerTable__question {
+  width: 42%;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
+  border-right: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.questionnaireAnswerTable__answer {
+  color: color-mix(in oklab, var(--forge-text), white 3%);
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--forge-accent), transparent 94%), transparent 58%);
+}
+
+@media (max-width: 760px) {
+  .questionnaireAnswerTable__body,
+  .questionnaireAnswerTable__body tbody,
+  .questionnaireAnswerTable__row {
+    display: block;
+  }
+
+  .questionnaireAnswerTable__question,
+  .questionnaireAnswerTable__answer {
+    display: block;
+    width: 100%;
+  }
+
+  .questionnaireAnswerTable__question {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    padding-bottom: 6px;
+  }
+
+  .questionnaireAnswerTable__answer {
+    padding-top: 8px;
+  }
 }
 
 .transcriptAttachmentEvents {
@@ -12936,6 +13112,222 @@ ol.assistantText__list li::before {
   transform: translateX(0);
   transition: transform var(--sidebar-motion), opacity var(--sidebar-motion);
   will-change: transform;
+}
+
+.rightPanel__inner {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 38%),
+    var(--forge-sidebar-bg);
+  color: var(--forge-text);
+}
+
+.rightPanel__header {
+  display: grid;
+  gap: 4px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 12%);
+}
+
+.rightPanel__header strong {
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-text), #fff 8%);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rightPanel__eyebrow {
+  color: var(--forge-muted);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rightPanelPlan,
+.rightPanelEmpty {
+  min-height: 0;
+  padding: 12px 14px 14px;
+}
+
+.rightPanelPlan {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: hidden auto;
+}
+
+.rightPanelWorkingEvent {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.rightPanelWorkingEvent strong {
+  color: color-mix(in oklab, var(--forge-text), #fff 4%);
+  font-weight: 680;
+}
+
+.rightPanelWorkingEvent__loaderViewbox {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.rightPanelWorkingEvent__loaderViewbox .loader {
+  background: var(--forge-accent);
+  box-shadow: 0 0 16px rgba(70, 229, 255, 0.22);
+  transform: translate(-50%, -50%) scale(0.22);
+}
+
+.rightPanelPlan__context,
+.rightPanelPlan__empty {
+  margin: 0;
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rightPanelPlanSteps {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 15%);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.rightPanelPlanStep {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 22%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #fff 2%);
+}
+
+.rightPanelPlanStep:last-child {
+  border-bottom: 0;
+}
+
+.rightPanelPlanStep__index {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--forge-accent), transparent 42%);
+  border-radius: 999px;
+  color: var(--forge-accent);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.rightPanelPlanStep__text {
+  min-width: 0;
+  color: var(--forge-text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.rightPanelPlanMeta {
+  display: grid;
+  gap: 8px;
+}
+
+.rightPanelPlanMeta__item {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 24%);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.rightPanelPlanMeta__item span {
+  color: var(--forge-muted);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rightPanelPlanMeta__item strong {
+  color: var(--forge-text);
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1.35;
+}
+
+.rightPanelEmpty {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  color: var(--forge-muted);
+}
+
+.rightPanelEmpty__icon {
+  position: relative;
+  width: 22px;
+  height: 18px;
+  margin-bottom: 4px;
+}
+
+.rightPanelEmpty__icon::before,
+.rightPanelEmpty__icon::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--forge-muted), transparent 15%);
+  box-shadow: 0 6px 0 color-mix(in oklab, var(--forge-muted), transparent 30%);
+}
+
+.rightPanelEmpty__icon::before {
+  top: 2px;
+}
+
+.rightPanelEmpty__icon::after {
+  top: 14px;
+  width: 58%;
+}
+
+.rightPanelEmpty strong {
+  color: var(--forge-text);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.rightPanelEmpty p {
+  margin: 0;
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rightPanelPlan::-webkit-scrollbar {
+  width: 3px;
+}
+
+.rightPanelPlan::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--forge-line), #fff 8%);
 }
 
 .shell--right-collapsed .rightPanel {

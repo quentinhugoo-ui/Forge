@@ -28,7 +28,7 @@ import type { LlmProviderRuntimeEvent, ProfileCanvas, SidebarSessionItem, Sideba
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 import { headerShadowStore } from "./header-shadow-store";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
-import { BrainCanvas } from "./BrainCanvas";
+import { BrainCanvas, type BrainSpace } from "./BrainCanvas";
 import { ModuleLogo } from "./module-logos";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { ProviderLogo } from "./ProviderLogo";
@@ -1093,12 +1093,18 @@ function LlmProviderTerminal() {
   );
 }
 
-function ProfileCanvasSurface({ canvas, onCloseProfileCanvas }: { canvas: ProfileCanvas; onCloseProfileCanvas?: () => void }) {
+function ProfileCanvasSurface({
+  canvas,
+  brainSpace
+}: {
+  canvas: ProfileCanvas;
+  brainSpace: BrainSpace;
+}) {
   if (canvas === "llm") {
     return <LlmProviderTerminal />;
   }
   if (canvas === "brain") {
-    return <BrainCanvas onClose={onCloseProfileCanvas} />;
+    return <BrainCanvas space={brainSpace} />;
   }
   if (canvas !== "profile") return null;
   return (
@@ -1607,7 +1613,7 @@ export function SidebarSlice({
   onNewSession,
   onModuleSelect,
   onModuleDrop,
-  onCloseProfileCanvas
+  brainSpace
 }: {
   open: boolean;
   activeParallelLaneCount?: number;
@@ -1616,7 +1622,7 @@ export function SidebarSlice({
   onNewSession?: () => void;
   onModuleSelect?: (id: SidebarModuleId) => void;
   onModuleDrop?: (id: SidebarModuleId) => void;
-  onCloseProfileCanvas?: () => void;
+  brainSpace: BrainSpace;
 }) {
   const { snapshot } = useSidebarShadowStore();
   const [pinnedWorkspaceKey, setPinnedWorkspaceKey] = useState(readPinnedWorkspaceKey);
@@ -1884,7 +1890,7 @@ export function SidebarSlice({
       {snapshot.profileCanvas === "sessions" ? (
         <SessionsCanvas items={snapshot.recentItems} archivedItems={snapshot.archivedItems} mode={snapshot.sessionsMenuMode} />
       ) : null}
-      <ProfileCanvasSurface canvas={snapshot.profileCanvas} onCloseProfileCanvas={onCloseProfileCanvas} />
+      <ProfileCanvasSurface canvas={snapshot.profileCanvas} brainSpace={brainSpace} />
     </>
   );
 }

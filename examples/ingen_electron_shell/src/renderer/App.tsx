@@ -5,6 +5,7 @@ import {
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_MAPS_COMMAND,
+  BRAIN_PLAN_COMMAND,
   BRAIN_WORKSPACE_COMMAND,
   type NativeWebExplorerCodeAct,
   type ComposerUploadPreview,
@@ -17,6 +18,7 @@ import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice"
 import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
+import { BrainWorkspaceChrome, type BrainSpace } from "./BrainCanvas";
 import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
 import {
   BRAIN_RESEARCH_PARALLEL_REQUEST_EVENT,
@@ -307,6 +309,7 @@ export function App() {
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [canvasMapsClosing, setCanvasMapsClosing] = useState(false);
   const [codingLivePreview, setCodingLivePreview] = useState<CodingLivePreviewTarget | null>(null);
+  const [brainSpace, setBrainSpace] = useState<BrainSpace>("memory");
   const [widgetMode, setWidgetMode] = useState(false);
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
@@ -1113,6 +1116,9 @@ export function App() {
   useEffect(() => {
     const latestAssistant = latestAssistantText ? { text: latestAssistantText } : undefined;
     const codingPreviewTarget = latestAssistant ? latestCodingLivePreviewTarget(latestAssistant.text) : null;
+    if (latestAssistant?.text.includes(BRAIN_PLAN_COMMAND) && !snapshot.rightPanelOpen) {
+      void headerShadowStore.dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" });
+    }
     if (codingPreviewTarget) {
       openCodingLivePreview(codingPreviewTarget);
       return;
@@ -1139,7 +1145,7 @@ export function App() {
     if (latestAssistant && assistantTextHasMapsSignal(latestAssistant.text)) {
       openCanvasMaps(0);
     }
-  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview]);
+  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview, snapshot.rightPanelOpen]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -1460,84 +1466,90 @@ export function App() {
       <WidgetSystemTray visible={widgetMode && !widgetTaskbarShown} />
 
       <section className="workspaceHeader" aria-label="Workspace header">
-        {isFullPageCanvas && !isBrainCanvas ? (
-          <button
-            type="button"
-            className="workspaceHeader__close"
-            aria-label={isBrainCanvas ? "Close Brain" : "Close LLM Provider"}
-            title={isBrainCanvas ? "Close Brain" : "Close LLM Provider"}
-            onPointerDown={(event) => {
-              if (event.button !== 0) {
-                return;
-              }
-              event.preventDefault();
-              event.stopPropagation();
-              void closeProfileCanvas();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-          >
-            <span className="workspaceHeader__closeIcon" aria-hidden="true" />
-          </button>
+        {isBrainCanvas ? (
+          <BrainWorkspaceChrome space={brainSpace} onSpaceChange={setBrainSpace} onClose={() => void closeProfileCanvas()} />
         ) : (
-          <div className="workspaceHeader__menuHost" ref={workspaceMenuRef}>
-            <button
-              type="button"
-              className="workspaceHeader__markButton"
-              aria-label="Workspace actions"
-              aria-haspopup="menu"
-              aria-expanded={workspaceMenuOpen}
-              onClick={() => {
-                setWorkspaceNotice(null);
-                setWorkspaceMenuOpen((open) => !open);
-              }}
-            >
-              <svg className="workspaceHeader__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-                <path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h4.15l2 2H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25v-9.5Z" />
-              </svg>
-            </button>
-            {workspaceMenuOpen ? (
-              <div className="workspaceMiniMenu" role="menu" aria-label="Workspace actions">
-                <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("show")}>
-                  Show in Explorer
-                </button>
-                <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("copyPath")}>
-                  Copy path
-                </button>
-                <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("copyBranch")}>
-                  Copy branch name
-                </button>
-              </div>
-            ) : null}
-            {workspaceNotice !== null && !workspaceMenuOpen ? (
-              <div className="workspaceMiniNotice" role="status" aria-live="polite">
-                <span className="workspaceMiniNotice__icon" aria-hidden="true">i</span>
-                <span>{workspaceNotice}</span>
-              </div>
-            ) : null}
-          </div>
-        )}
-        <div className="workspaceHeader__crumb">
-          {isFullPageCanvas ? (
-            <strong className="workspaceHeader__group workspaceHeader__group--page">{isBrainCanvas ? "Brain" : "LLM Provider"}</strong>
-          ) : (
-            <>
+          <>
+            {isFullPageCanvas ? (
               <button
                 type="button"
-                className={workspaceGateActive ? "workspaceHeader__group workspaceHeader__group--pick workspaceHeader__group--required" : "workspaceHeader__group workspaceHeader__group--pick"}
-                onClick={() => void chooseWorkspace()}
+                className="workspaceHeader__close"
+                aria-label="Close LLM Provider"
+                title="Close LLM Provider"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void closeProfileCanvas();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
               >
-                {workspaceFolder ?? sectionGroup(snapshot.activeSection)}
+                <span className="workspaceHeader__closeIcon" aria-hidden="true" />
               </button>
-              <span className="workspaceHeader__slash">/</span>
-              <strong className={snapshot.activeSection === "trading" ? "workspaceHeader__title accent" : "workspaceHeader__title"}>
-                {activeSessionName}
-              </strong>
-            </>
-          )}
-        </div>
+            ) : (
+              <div className="workspaceHeader__menuHost" ref={workspaceMenuRef}>
+                <button
+                  type="button"
+                  className="workspaceHeader__markButton"
+                  aria-label="Workspace actions"
+                  aria-haspopup="menu"
+                  aria-expanded={workspaceMenuOpen}
+                  onClick={() => {
+                    setWorkspaceNotice(null);
+                    setWorkspaceMenuOpen((open) => !open);
+                  }}
+                >
+                  <svg className="workspaceHeader__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h4.15l2 2H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25v-9.5Z" />
+                  </svg>
+                </button>
+                {workspaceMenuOpen ? (
+                  <div className="workspaceMiniMenu" role="menu" aria-label="Workspace actions">
+                    <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("show")}>
+                      Show in Explorer
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("copyPath")}>
+                      Copy path
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void runWorkspaceMenuAction("copyBranch")}>
+                      Copy branch name
+                    </button>
+                  </div>
+                ) : null}
+                {workspaceNotice !== null && !workspaceMenuOpen ? (
+                  <div className="workspaceMiniNotice" role="status" aria-live="polite">
+                    <span className="workspaceMiniNotice__icon" aria-hidden="true">i</span>
+                    <span>{workspaceNotice}</span>
+                  </div>
+                ) : null}
+              </div>
+            )}
+            <div className="workspaceHeader__crumb">
+              {isFullPageCanvas ? (
+                <strong className="workspaceHeader__group workspaceHeader__group--page">LLM Provider</strong>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={workspaceGateActive ? "workspaceHeader__group workspaceHeader__group--pick workspaceHeader__group--required" : "workspaceHeader__group workspaceHeader__group--pick"}
+                    onClick={() => void chooseWorkspace()}
+                  >
+                    {workspaceFolder ?? sectionGroup(snapshot.activeSection)}
+                  </button>
+                  <span className="workspaceHeader__slash">/</span>
+                  <strong className={snapshot.activeSection === "trading" ? "workspaceHeader__title accent" : "workspaceHeader__title"}>
+                    {activeSessionName}
+                  </strong>
+                </>
+              )}
+            </div>
+          </>
+        )}
         <div className="workspaceHeader__actions">
           {workspaceControls.map((control) => {
             const selected =
@@ -1601,9 +1613,13 @@ export function App() {
         onNewSession={resetNewSessionCanvas}
         onModuleSelect={toggleComposerModule}
         onModuleDrop={dropComposerModule}
-        onCloseProfileCanvas={() => void closeProfileCanvas()}
+        brainSpace={brainSpace}
       />
-      <RightPanelSlice open={snapshot.rightPanelOpen} />
+      <RightPanelSlice
+        open={snapshot.rightPanelOpen}
+        agentName={brainAgentMemory.preferredFirstName}
+        planSourceText={latestAssistantText}
+      />
 
       {!isFullPageCanvas && !isBangerPage ? (
         <CanvasSurfacesSlice
@@ -1651,6 +1667,7 @@ export function App() {
           webExplorerOpen={canvasWebExplorerOpen}
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
           onComposerModuleChange={setComposerModuleId}
+          sessionName={activeSessionName}
           widgetMode={widgetMode || widgetMinimizingPhase !== ""}
           widgetModeTransitioning={widgetModeTransitioning}
           onWidgetModeChange={setWidgetModeEnabled}
