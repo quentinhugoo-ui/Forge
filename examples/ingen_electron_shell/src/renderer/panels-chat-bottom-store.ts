@@ -179,7 +179,11 @@ function mergeInFlightPendingSnapshot(
   return {
     ...incomingSnapshot,
     transcript,
-    parallelLanes
+    parallelLanes,
+    composer: {
+      ...incomingSnapshot.composer,
+      assistantBusy: incomingSnapshot.composer.assistantBusy || currentSnapshot.composer.assistantBusy
+    }
   };
 }
 
@@ -293,6 +297,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
             ...nextSnapshot,
             composer: {
               ...nextSnapshot.composer,
+              assistantBusy: true,
               chatText: "",
               uploadStatus: "uploads=0",
               uploadPreviewLabel: "",
@@ -335,6 +340,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
             ...nextSnapshot,
             composer: {
               ...nextSnapshot.composer,
+              assistantBusy: true,
               chatText: "",
               uploadStatus: "uploads=0",
               uploadPreviewLabel: "",
@@ -350,6 +356,20 @@ export function createPanelsChatBottomStore(api = browserApi()) {
         emit();
       }
     }
+    if (command.kind === "stop_assistant" || command.kind === "assistant_write_complete") {
+      state = {
+        ...state,
+        snapshot: {
+          ...state.snapshot,
+          composer: {
+            ...state.snapshot.composer,
+            assistantBusy: false
+          }
+        }
+      };
+      state = { ...state, manifest: manifestFromSnapshot(state.snapshot) };
+      emit();
+    }
     if (command.kind === "new_session") {
       state = {
         ...state,
@@ -359,6 +379,7 @@ export function createPanelsChatBottomStore(api = browserApi()) {
           parallelLanes: [],
           composer: {
             ...state.snapshot.composer,
+            assistantBusy: false,
             chatText: "",
             uploadStatus: "uploads=0",
             uploadPreviewLabel: "",
