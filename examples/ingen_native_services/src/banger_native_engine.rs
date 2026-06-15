@@ -141,6 +141,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub meshlet_visibility_packet: BangerNativeMeshletVisibilityPacket,
     pub virtual_geometry_packet: BangerNativeVirtualGeometryPacket,
     pub virtual_geometry_streaming_plan: BangerNativeVirtualGeometryStreamingPlan,
+    pub voxel_clipmap_packet: BangerNativeVoxelClipmapPacket,
     pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
@@ -1557,6 +1558,89 @@ pub struct BangerNativeVirtualGeometryRayTracingStreamOut {
     pub scratch_bytes: u64,
     pub blas_priority: u32,
     pub request_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelClipmapPacket {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub virtual_geometry_hash: String,
+    pub streaming_plan_hash: String,
+    pub clipmap_count: usize,
+    pub brick_count: usize,
+    pub resident_brick_count: usize,
+    pub streaming_brick_count: usize,
+    pub surface_extraction_count: usize,
+    pub trace_tile_count: usize,
+    pub brick_resolution: u32,
+    pub page_table_hash: String,
+    pub occupancy_mask_hash: String,
+    pub sdf_atlas_hash: String,
+    pub mip_chain_hash: String,
+    pub surface_extraction_hash: String,
+    pub trace_tile_hash: String,
+    pub packet_hash: String,
+    pub clipmaps: Vec<BangerNativeVoxelClipmapLevel>,
+    pub bricks: Vec<BangerNativeVoxelBrickPage>,
+    pub surface_extractions: Vec<BangerNativeVoxelSurfaceExtraction>,
+    pub trace_tiles: Vec<BangerNativeVoxelTraceTile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelClipmapLevel {
+    pub clipmap_id: String,
+    pub level: u32,
+    pub center: [f32; 3],
+    pub extent: f32,
+    pub voxel_size: f32,
+    pub brick_count: usize,
+    pub page_table_base: u32,
+    pub clipmap_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelBrickPage {
+    pub brick_id: String,
+    pub clipmap_level: u32,
+    pub brick_coord: [i32; 3],
+    pub source_page_hash: String,
+    pub virtual_geometry_page_id: String,
+    pub occupancy_mask: u64,
+    pub min_sdf_q15: i16,
+    pub max_sdf_q15: i16,
+    pub material_word: u32,
+    pub residency_state: &'static str,
+    pub streaming_priority: u32,
+    pub atlas_page: [u32; 4],
+    pub brick_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelSurfaceExtraction {
+    pub brick_id: String,
+    pub target_cluster_id: String,
+    pub meshlet_page_id: String,
+    pub estimated_triangle_count: u32,
+    pub contour_error: f32,
+    pub extraction_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVoxelTraceTile {
+    pub tile_id: String,
+    pub clipmap_level: u32,
+    pub brick_range: [u32; 4],
+    pub trace_policy: &'static str,
+    pub indirect_dispatch_args: [u32; 3],
+    pub trace_tile_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3769,6 +3853,11 @@ impl BangerNativeEngine {
             &virtual_geometry_packet,
             &page_residency_allocator,
         );
+        let voxel_clipmap_packet = build_voxel_clipmap_packet(
+            &prepared,
+            &virtual_geometry_packet,
+            &virtual_geometry_streaming_plan,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -3854,6 +3943,7 @@ impl BangerNativeEngine {
             &meshlet_visibility_packet,
             &virtual_geometry_packet,
             &virtual_geometry_streaming_plan,
+            &voxel_clipmap_packet,
             &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
@@ -3937,6 +4027,7 @@ impl BangerNativeEngine {
             meshlet_visibility_packet,
             virtual_geometry_packet,
             virtual_geometry_streaming_plan,
+            voxel_clipmap_packet,
             nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
@@ -6260,6 +6351,526 @@ fn virtual_geometry_streaming_plan_hash(
     }
     for request in ray_tracing_stream_out {
         h.update(request.request_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn build_voxel_clipmap_packet(
+    prepared: &MonsterPreparedCompute,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
+) -> BangerNativeVoxelClipmapPacket {
+    let brick_resolution = 16;
+    let clipmaps = voxel_clipmap_levels(virtual_geometry_packet);
+    let bricks =
+        voxel_bricks_from_virtual_geometry(virtual_geometry_packet, streaming_plan, brick_resolution);
+    let surface_extractions = voxel_surface_extractions(&bricks);
+    let trace_tiles = voxel_trace_tiles(&bricks, &clipmaps);
+    let page_table_hash = voxel_page_table_hash(&clipmaps, &bricks);
+    let occupancy_mask_hash = voxel_occupancy_mask_hash(&bricks);
+    let sdf_atlas_hash = voxel_sdf_atlas_hash(&bricks);
+    let mip_chain_hash = voxel_mip_chain_hash(&clipmaps, &bricks);
+    let surface_extraction_hash = voxel_surface_extraction_hash(&surface_extractions);
+    let trace_tile_hash = voxel_trace_tile_hash(&trace_tiles);
+    let packet_hash = voxel_clipmap_packet_hash(
+        prepared,
+        virtual_geometry_packet,
+        streaming_plan,
+        brick_resolution,
+        &page_table_hash,
+        &occupancy_mask_hash,
+        &sdf_atlas_hash,
+        &mip_chain_hash,
+        &surface_extraction_hash,
+        &trace_tile_hash,
+        &clipmaps,
+        &bricks,
+        &surface_extractions,
+        &trace_tiles,
+    );
+    BangerNativeVoxelClipmapPacket {
+        schema: "forge.banger.voxel_clipmap_packet.v1",
+        schema_version: 1,
+        authority: "banger_sparse_sdf_voxel_clipmap_page_atlas",
+        clean_room_basis: "local_unreal_sparse_global_distance_field_lumen_mesh_sdf_clipmap_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        virtual_geometry_hash: virtual_geometry_packet.packet_hash.clone(),
+        streaming_plan_hash: streaming_plan.packet_hash.clone(),
+        clipmap_count: clipmaps.len(),
+        brick_count: bricks.len(),
+        resident_brick_count: bricks
+            .iter()
+            .filter(|brick| brick.residency_state == "resident_page")
+            .count(),
+        streaming_brick_count: bricks
+            .iter()
+            .filter(|brick| brick.residency_state != "resident_page")
+            .count(),
+        surface_extraction_count: surface_extractions.len(),
+        trace_tile_count: trace_tiles.len(),
+        brick_resolution,
+        page_table_hash,
+        occupancy_mask_hash,
+        sdf_atlas_hash,
+        mip_chain_hash,
+        surface_extraction_hash,
+        trace_tile_hash,
+        packet_hash,
+        clipmaps,
+        bricks,
+        surface_extractions,
+        trace_tiles,
+    }
+}
+
+fn voxel_clipmap_levels(
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+) -> Vec<BangerNativeVoxelClipmapLevel> {
+    (0..4u32)
+        .map(|level| {
+            let extent = 32.0 * 2.0_f32.powi(level as i32);
+            let voxel_size = extent / 128.0;
+            let brick_count = virtual_geometry_packet
+                .pages
+                .iter()
+                .filter(|page| (page.lod_bucket + page.mip_level).min(3) == level)
+                .count()
+                .max(1);
+            let page_table_base = virtual_geometry_packet
+                .pages
+                .iter()
+                .filter(|page| (page.lod_bucket + page.mip_level).min(3) < level)
+                .count() as u32;
+            let center = [0.0, level as f32 * 2.0, 28.0 * level as f32];
+            let clipmap_id = format!("voxel_clipmap_level_{level}");
+            let clipmap_hash = voxel_clipmap_level_hash(
+                &clipmap_id,
+                level,
+                center,
+                extent,
+                voxel_size,
+                brick_count,
+                page_table_base,
+            );
+            BangerNativeVoxelClipmapLevel {
+                clipmap_id,
+                level,
+                center,
+                extent,
+                voxel_size,
+                brick_count,
+                page_table_base,
+                clipmap_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_bricks_from_virtual_geometry(
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
+    brick_resolution: u32,
+) -> Vec<BangerNativeVoxelBrickPage> {
+    let uploading_pages = streaming_plan
+        .upload_batches
+        .iter()
+        .filter_map(|batch| batch.first_page_hash.as_deref())
+        .collect::<BTreeSet<_>>();
+    virtual_geometry_packet
+        .pages
+        .iter()
+        .enumerate()
+        .map(|(index, page)| {
+            let clipmap_level = (page.lod_bucket + page.mip_level).min(3);
+            let brick_coord = voxel_brick_coord(page, clipmap_level);
+            let occupancy_mask = voxel_occupancy_mask(page, brick_resolution);
+            let min_sdf_q15 = voxel_sdf_quantized(page, -1.0);
+            let max_sdf_q15 = voxel_sdf_quantized(page, 1.0);
+            let material_word = voxel_material_word(page, occupancy_mask);
+            let residency_state = if page.residency_state == "resident_page" {
+                "resident_page"
+            } else if uploading_pages.contains(page.page_hash.as_str()) {
+                "upload_scheduled"
+            } else {
+                "streaming_request"
+            };
+            let streaming_priority = page
+                .streaming_priority
+                .saturating_add(occupancy_mask.count_ones() * 4);
+            let atlas_page = [
+                (index as u32) & 255,
+                ((index as u32) >> 8) & 255,
+                clipmap_level,
+                brick_resolution,
+            ];
+            let brick_id = hash_text_hex(
+                "forge.banger.voxel.brick_id.v1",
+                &format!(
+                    "{}:{}:{}:{}",
+                    page.page_id, clipmap_level, brick_coord[0], brick_coord[2]
+                ),
+            );
+            let brick_hash = voxel_brick_hash(
+                &brick_id,
+                page,
+                clipmap_level,
+                brick_coord,
+                occupancy_mask,
+                min_sdf_q15,
+                max_sdf_q15,
+                material_word,
+                residency_state,
+                streaming_priority,
+                atlas_page,
+            );
+            BangerNativeVoxelBrickPage {
+                brick_id,
+                clipmap_level,
+                brick_coord,
+                source_page_hash: page.page_hash.clone(),
+                virtual_geometry_page_id: page.page_id.clone(),
+                occupancy_mask,
+                min_sdf_q15,
+                max_sdf_q15,
+                material_word,
+                residency_state,
+                streaming_priority,
+                atlas_page,
+                brick_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_brick_coord(page: &BangerNativeVirtualGeometryPage, clipmap_level: u32) -> [i32; 3] {
+    let scale = 1_i32 << clipmap_level.min(10);
+    [
+        i32::from(page.bounds_quantized[0]) / (256 * scale),
+        i32::from(page.bounds_quantized[1]) / (256 * scale),
+        i32::from(page.bounds_quantized[2]) / (256 * scale),
+    ]
+}
+
+fn voxel_occupancy_mask(page: &BangerNativeVirtualGeometryPage, brick_resolution: u32) -> u64 {
+    let seed = page.page_table_word
+        ^ (u64::from(page.triangle_count) << 17)
+        ^ (u64::from(page.vertex_count) << 29)
+        ^ u64::from(brick_resolution);
+    let density_bits = page.triangle_count.min(64).max(8);
+    let mut mask = 0u64;
+    for bit in 0..density_bits {
+        let mixed = seed.rotate_left(bit % 31) ^ (u64::from(bit) * 0x9e37_79b9);
+        mask |= 1u64 << (mixed as u32 & 63);
+    }
+    mask
+}
+
+fn voxel_sdf_quantized(page: &BangerNativeVirtualGeometryPage, sign: f32) -> i16 {
+    let value = (page.screen_error * sign * 32767.0)
+        .round()
+        .clamp(i16::MIN as f32, i16::MAX as f32);
+    value as i16
+}
+
+fn voxel_material_word(page: &BangerNativeVirtualGeometryPage, occupancy_mask: u64) -> u32 {
+    ((page.lod_bucket & 0xff) << 24)
+        | ((page.mip_level & 0xff) << 16)
+        | ((occupancy_mask.count_ones() & 0xff) << 8)
+        | (page.residency_state == "resident_page") as u32
+}
+
+fn voxel_surface_extractions(
+    bricks: &[BangerNativeVoxelBrickPage],
+) -> Vec<BangerNativeVoxelSurfaceExtraction> {
+    bricks
+        .iter()
+        .filter(|brick| {
+            brick.occupancy_mask != 0 && brick.max_sdf_q15 >= 0 && brick.min_sdf_q15 <= 0
+        })
+        .map(|brick| {
+            let estimated_triangle_count =
+                brick.occupancy_mask.count_ones().saturating_mul(2).max(1);
+            let contour_error =
+                (i32::from(brick.max_sdf_q15) - i32::from(brick.min_sdf_q15)).unsigned_abs()
+                    as f32
+                    / 32767.0;
+            let target_cluster_id = format!("voxel_surface_cluster:{}", brick.brick_id);
+            let meshlet_page_id =
+                hash_text_hex("forge.banger.voxel.surface_meshlet_page.v1", &brick.brick_hash);
+            let extraction_hash = voxel_surface_extraction_entry_hash(
+                brick,
+                &target_cluster_id,
+                &meshlet_page_id,
+                estimated_triangle_count,
+                contour_error,
+            );
+            BangerNativeVoxelSurfaceExtraction {
+                brick_id: brick.brick_id.clone(),
+                target_cluster_id,
+                meshlet_page_id,
+                estimated_triangle_count,
+                contour_error,
+                extraction_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_trace_tiles(
+    bricks: &[BangerNativeVoxelBrickPage],
+    clipmaps: &[BangerNativeVoxelClipmapLevel],
+) -> Vec<BangerNativeVoxelTraceTile> {
+    let mut grouped: BTreeMap<u32, Vec<&BangerNativeVoxelBrickPage>> = BTreeMap::new();
+    for brick in bricks {
+        grouped.entry(brick.clipmap_level).or_default().push(brick);
+    }
+    grouped
+        .into_iter()
+        .map(|(clipmap_level, level_bricks)| {
+            let clipmap = clipmaps.iter().find(|clipmap| clipmap.level == clipmap_level);
+            let base = clipmap.map(|clipmap| clipmap.page_table_base).unwrap_or_default();
+            let brick_range = [base, level_bricks.len() as u32, clipmap_level, 0];
+            let trace_policy = if clipmap_level <= 1 {
+                "lumen_world_trace_high_detail_sdf"
+            } else {
+                "lumen_world_trace_coarse_voxel_mip"
+            };
+            let indirect_dispatch_args = [level_bricks.len().div_ceil(8).max(1) as u32, 1, 1];
+            let tile_id = format!(
+                "voxel_trace_tile_l{clipmap_level}_n{}",
+                level_bricks.len()
+            );
+            let trace_tile_hash = voxel_trace_tile_entry_hash(
+                &tile_id,
+                clipmap_level,
+                brick_range,
+                trace_policy,
+                indirect_dispatch_args,
+            );
+            BangerNativeVoxelTraceTile {
+                tile_id,
+                clipmap_level,
+                brick_range,
+                trace_policy,
+                indirect_dispatch_args,
+                trace_tile_hash,
+            }
+        })
+        .collect()
+}
+
+fn voxel_clipmap_level_hash(
+    clipmap_id: &str,
+    level: u32,
+    center: [f32; 3],
+    extent: f32,
+    voxel_size: f32,
+    brick_count: usize,
+    page_table_base: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.clipmap_level.v1\0");
+    h.update(clipmap_id.as_bytes());
+    h.update(level.to_le_bytes());
+    for value in center {
+        h.update(value.to_le_bytes());
+    }
+    h.update(extent.to_le_bytes());
+    h.update(voxel_size.to_le_bytes());
+    h.update((brick_count as u64).to_le_bytes());
+    h.update(page_table_base.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_brick_hash(
+    brick_id: &str,
+    page: &BangerNativeVirtualGeometryPage,
+    clipmap_level: u32,
+    brick_coord: [i32; 3],
+    occupancy_mask: u64,
+    min_sdf_q15: i16,
+    max_sdf_q15: i16,
+    material_word: u32,
+    residency_state: &str,
+    streaming_priority: u32,
+    atlas_page: [u32; 4],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.brick_page.v1\0");
+    h.update(brick_id.as_bytes());
+    h.update(page.page_hash.as_bytes());
+    h.update(clipmap_level.to_le_bytes());
+    for value in brick_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(occupancy_mask.to_le_bytes());
+    h.update(min_sdf_q15.to_le_bytes());
+    h.update(max_sdf_q15.to_le_bytes());
+    h.update(material_word.to_le_bytes());
+    h.update(residency_state.as_bytes());
+    h.update(streaming_priority.to_le_bytes());
+    for value in atlas_page {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_surface_extraction_entry_hash(
+    brick: &BangerNativeVoxelBrickPage,
+    target_cluster_id: &str,
+    meshlet_page_id: &str,
+    estimated_triangle_count: u32,
+    contour_error: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.surface_extraction.v1\0");
+    h.update(brick.brick_hash.as_bytes());
+    h.update(target_cluster_id.as_bytes());
+    h.update(meshlet_page_id.as_bytes());
+    h.update(estimated_triangle_count.to_le_bytes());
+    h.update(contour_error.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_tile_entry_hash(
+    tile_id: &str,
+    clipmap_level: u32,
+    brick_range: [u32; 4],
+    trace_policy: &str,
+    indirect_dispatch_args: [u32; 3],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.trace_tile.v1\0");
+    h.update(tile_id.as_bytes());
+    h.update(clipmap_level.to_le_bytes());
+    for value in brick_range {
+        h.update(value.to_le_bytes());
+    }
+    h.update(trace_policy.as_bytes());
+    for value in indirect_dispatch_args {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_page_table_hash(
+    clipmaps: &[BangerNativeVoxelClipmapLevel],
+    bricks: &[BangerNativeVoxelBrickPage],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.page_table.v1\0");
+    for clipmap in clipmaps {
+        h.update(clipmap.clipmap_hash.as_bytes());
+    }
+    for brick in bricks {
+        h.update(brick.brick_id.as_bytes());
+        h.update(brick.brick_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_occupancy_mask_hash(bricks: &[BangerNativeVoxelBrickPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.occupancy_masks.v1\0");
+    for brick in bricks {
+        h.update(brick.occupancy_mask.to_le_bytes());
+        h.update(brick.material_word.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_sdf_atlas_hash(bricks: &[BangerNativeVoxelBrickPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.sdf_atlas.v1\0");
+    for brick in bricks {
+        h.update(brick.min_sdf_q15.to_le_bytes());
+        h.update(brick.max_sdf_q15.to_le_bytes());
+        for value in brick.atlas_page {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_mip_chain_hash(
+    clipmaps: &[BangerNativeVoxelClipmapLevel],
+    bricks: &[BangerNativeVoxelBrickPage],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.mip_chain.v1\0");
+    for clipmap in clipmaps {
+        let count = bricks
+            .iter()
+            .filter(|brick| brick.clipmap_level == clipmap.level)
+            .count();
+        h.update(clipmap.level.to_le_bytes());
+        h.update((count as u64).to_le_bytes());
+        h.update(clipmap.voxel_size.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_surface_extraction_hash(extractions: &[BangerNativeVoxelSurfaceExtraction]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.surface_extraction_table.v1\0");
+    for extraction in extractions {
+        h.update(extraction.extraction_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_trace_tile_hash(trace_tiles: &[BangerNativeVoxelTraceTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel.trace_tiles.v1\0");
+    for tile in trace_tiles {
+        h.update(tile.trace_tile_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn voxel_clipmap_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
+    brick_resolution: u32,
+    page_table_hash: &str,
+    occupancy_mask_hash: &str,
+    sdf_atlas_hash: &str,
+    mip_chain_hash: &str,
+    surface_extraction_hash: &str,
+    trace_tile_hash: &str,
+    clipmaps: &[BangerNativeVoxelClipmapLevel],
+    bricks: &[BangerNativeVoxelBrickPage],
+    surface_extractions: &[BangerNativeVoxelSurfaceExtraction],
+    trace_tiles: &[BangerNativeVoxelTraceTile],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.voxel_clipmap_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(virtual_geometry_packet.packet_hash.as_bytes());
+    h.update(streaming_plan.packet_hash.as_bytes());
+    h.update(brick_resolution.to_le_bytes());
+    h.update(page_table_hash.as_bytes());
+    h.update(occupancy_mask_hash.as_bytes());
+    h.update(sdf_atlas_hash.as_bytes());
+    h.update(mip_chain_hash.as_bytes());
+    h.update(surface_extraction_hash.as_bytes());
+    h.update(trace_tile_hash.as_bytes());
+    h.update((clipmaps.len() as u64).to_le_bytes());
+    h.update((bricks.len() as u64).to_le_bytes());
+    h.update((surface_extractions.len() as u64).to_le_bytes());
+    h.update((trace_tiles.len() as u64).to_le_bytes());
+    for clipmap in clipmaps {
+        h.update(clipmap.clipmap_hash.as_bytes());
+    }
+    for brick in bricks {
+        h.update(brick.brick_hash.as_bytes());
+    }
+    for extraction in surface_extractions {
+        h.update(extraction.extraction_hash.as_bytes());
+    }
+    for tile in trace_tiles {
+        h.update(tile.trace_tile_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -25358,6 +25969,7 @@ fn render_handoff_hash(
     meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
     virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
     virtual_geometry_streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
+    voxel_clipmap_packet: &BangerNativeVoxelClipmapPacket,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
@@ -25415,6 +26027,13 @@ fn render_handoff_hash(
     h.update(virtual_geometry_streaming_plan.upload_queue_hash.as_bytes());
     h.update(virtual_geometry_streaming_plan.eviction_plan_hash.as_bytes());
     h.update(virtual_geometry_streaming_plan.ray_tracing_stream_out_hash.as_bytes());
+    h.update(voxel_clipmap_packet.packet_hash.as_bytes());
+    h.update(voxel_clipmap_packet.page_table_hash.as_bytes());
+    h.update(voxel_clipmap_packet.occupancy_mask_hash.as_bytes());
+    h.update(voxel_clipmap_packet.sdf_atlas_hash.as_bytes());
+    h.update(voxel_clipmap_packet.mip_chain_hash.as_bytes());
+    h.update(voxel_clipmap_packet.surface_extraction_hash.as_bytes());
+    h.update(voxel_clipmap_packet.trace_tile_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
     h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
@@ -27484,6 +28103,94 @@ mod tests {
                 && request.vertex_count > 0
                 && request.scratch_bytes >= 4096
                 && request.request_hash.len() == 64));
+        assert_eq!(
+            response.voxel_clipmap_packet.schema,
+            "forge.banger.voxel_clipmap_packet.v1"
+        );
+        assert_eq!(response.voxel_clipmap_packet.schema_version, 1);
+        assert_eq!(
+            response.voxel_clipmap_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.virtual_geometry_hash,
+            response.virtual_geometry_packet.packet_hash
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.streaming_plan_hash,
+            response.virtual_geometry_streaming_plan.packet_hash
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.clipmap_count,
+            response.voxel_clipmap_packet.clipmaps.len()
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.brick_count,
+            response.virtual_geometry_packet.micro_page_count
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.brick_count,
+            response.voxel_clipmap_packet.bricks.len()
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.resident_brick_count
+                + response.voxel_clipmap_packet.streaming_brick_count,
+            response.voxel_clipmap_packet.brick_count
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.surface_extraction_count,
+            response.voxel_clipmap_packet.surface_extractions.len()
+        );
+        assert_eq!(
+            response.voxel_clipmap_packet.trace_tile_count,
+            response.voxel_clipmap_packet.trace_tiles.len()
+        );
+        assert_eq!(response.voxel_clipmap_packet.brick_resolution, 16);
+        assert_eq!(response.voxel_clipmap_packet.page_table_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.occupancy_mask_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.sdf_atlas_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.mip_chain_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.surface_extraction_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.trace_tile_hash.len(), 64);
+        assert_eq!(response.voxel_clipmap_packet.packet_hash.len(), 64);
+        assert!(response
+            .voxel_clipmap_packet
+            .clipmaps
+            .iter()
+            .all(|clipmap| clipmap.extent > 0.0
+                && clipmap.voxel_size > 0.0
+                && clipmap.brick_count > 0
+                && clipmap.clipmap_hash.len() == 64));
+        assert!(response
+            .voxel_clipmap_packet
+            .bricks
+            .iter()
+            .all(|brick| brick.occupancy_mask != 0
+                && brick.min_sdf_q15 <= brick.max_sdf_q15
+                && brick.streaming_priority > 0
+                && brick.atlas_page[3] == response.voxel_clipmap_packet.brick_resolution
+                && matches!(
+                    brick.residency_state,
+                    "resident_page" | "upload_scheduled" | "streaming_request"
+                )
+                && brick.brick_hash.len() == 64));
+        assert!(response
+            .voxel_clipmap_packet
+            .surface_extractions
+            .iter()
+            .all(|surface| surface.estimated_triangle_count > 0
+                && surface.contour_error >= 0.0
+                && surface.extraction_hash.len() == 64));
+        assert!(response
+            .voxel_clipmap_packet
+            .trace_tiles
+            .iter()
+            .all(|tile| tile.indirect_dispatch_args[0] > 0
+                && matches!(
+                    tile.trace_policy,
+                    "lumen_world_trace_high_detail_sdf" | "lumen_world_trace_coarse_voxel_mip"
+                )
+                && tile.trace_tile_hash.len() == 64));
         assert_eq!(
             response.nanite_second_layer_packet.schema,
             "forge.banger.nanite_second_layer_packet.v1"
