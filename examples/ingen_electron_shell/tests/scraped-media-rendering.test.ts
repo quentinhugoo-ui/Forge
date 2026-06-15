@@ -13,6 +13,20 @@ describe("scraped media transcript rendering", () => {
     expect(mainSource).toContain("attachments: visualAttachments.length > 0");
   });
 
+  it("keeps scraped media URLs in the common archive and session file history", () => {
+    expect(mainSource).toContain("url: cached ? uploadPreviewUrl(attachment.id, attachment.name) : attachment.url");
+    expect(mainSource).toContain("url: attachment.localPath ? uploadPreviewUrl(preview.id, preview.name) : preview.url");
+    expect(mainSource).toContain("filesFromArchiveSession(session)");
+    expect(mainSource).toContain("(message.attachments ?? []).map(publicArchiveAttachmentPreview)");
+  });
+
+  it("injects scraped media references into the agent conversation context", () => {
+    expect(mainSource).toContain("function isRemoteAttachmentUrl");
+    expect(mainSource).toContain("media_url=${attachment.url}");
+    expect(mainSource).toContain("media_url=${remoteUrl}");
+    expect(mainSource).toContain("remote_media=true");
+  });
+
   it("renders assistant scraped media with the existing transcript blob stack", () => {
     expect(rendererSource).toContain('role === "assistant"');
     expect(rendererSource).toContain('<div className="transcriptFloatMedia" aria-label="Attached visual media">');
