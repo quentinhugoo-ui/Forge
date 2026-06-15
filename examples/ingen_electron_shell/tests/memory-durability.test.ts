@@ -16,8 +16,10 @@ describe("canonical memory durability", () => {
     expect(mainSource).toContain('app.setPath("sessionData", join(canonicalUserDataDir, "session-data"))');
     expect(launcherSource).toContain("set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\\InGenRuntime");
     expect(launcherSource).toContain('"--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%"');
-    expect(launcherVbsSource).toContain('runtimeUserData = shell.ExpandEnvironmentStrings("%APPDATA%") & "\\InGenRuntime"');
-    expect(launcherVbsSource).toContain('env("INGEN_ELECTRON_USER_DATA_DIR") = runtimeUserData');
+    expect(launcherVbsSource).toContain('run_ingen_electron_shell.cmd');
+    expect(launcherVbsSource).toContain("always delegate freshness");
+    expect(launcherVbsSource).not.toContain("AppActivate");
+    expect(launcherVbsSource).not.toContain("INGEN_ELECTRON_DESKTOP_FAST_PATH");
   });
 
   it("treats legacy memory roots only as migration inputs", () => {
