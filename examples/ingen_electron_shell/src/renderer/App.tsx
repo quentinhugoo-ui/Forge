@@ -27,6 +27,7 @@ import {
 import { HeaderSurfaceRouter } from "./HeaderSurfaceRouter";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-store";
+import { GlobalTooltip } from "./GlobalTooltip";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
@@ -1375,6 +1376,7 @@ export function App() {
 
   return (
     <main className={shellClassName} style={shellStyleWithWidgetLock(widgetLayoutLock)}>
+      <GlobalTooltip />
       <section className="titlebar" aria-label="InGen top controls">
         <div className="titlebar__cluster">
           {topControls.slice(0, 5).map((control) => {
