@@ -937,7 +937,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__divider");
     expect(stylesSource).toContain(".assistantText strong");
     expect(stylesSource).toContain(".assistantText code");
-    expect(stylesSource).toContain("border: 1px solid var(--assistant-mark-line-soft)");
+    expect(stylesSource).toContain("background: var(--forge-sidebar-bg)");
+    expect(stylesSource).toContain("border-radius: 4px !important");
+    expect(stylesSource).toContain("color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 10%)");
     expect(stylesSource).toContain(".assistantText__mathToken");
     expect(stylesSource).toContain(".assistantText__mathPill");
     expect(stylesSource).toContain("box-shadow: none");

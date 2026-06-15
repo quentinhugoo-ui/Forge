@@ -6427,13 +6427,18 @@ ol.assistantText__list li::before {
 }
 
 .assistantText code {
-  padding: 1px 5px;
-  border: 1px solid var(--assistant-mark-line-soft);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--assistant-mark-text);
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px 3px;
+  border: 1px solid color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 10%);
+  border-radius: 4px !important;
+  background: var(--forge-sidebar-bg);
+  color: color-mix(in oklab, var(--forge-sidebar-text), var(--forge-text) 30%);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 0.91em;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  vertical-align: 0.06em;
 }
 
 .assistantText__mathToken {
