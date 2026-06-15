@@ -660,7 +660,7 @@ fn run_banger_native_host(
         depth_target_hash: frame_target.depth_target_hash.clone(),
         frame_target_allocation_count,
         surface_resize_count,
-        render_loop_policy: "native_wgpu_instanced_mesh_depth_camera_loop_v1",
+        render_loop_policy: "native_wgpu_dense_meshlet_field_depth_camera_loop_v2",
         clear_color,
         frame_uniform_hash: frame_uniform_hash.clone(),
         camera_uniform_hash: frame_uniform_hash,
@@ -672,8 +672,8 @@ fn run_banger_native_host(
         proof_hash: String::new(),
         host_pid: std::process::id(),
         verifier: BangerNativeHostVerifier {
-            wall: "scene_submission+draw_call_scaling",
-            frontier_hypothesis: "Banger can submit multiple scene objects through one native instanced indexed draw while preserving deterministic scene hashes.",
+            wall: "visible_hd_scene_density",
+            frontier_hypothesis: "Banger can render a dense Nanite-shaped field through one native indexed instanced draw before promoting full meshlet/cluster GPU streaming.",
             local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
             rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
         },
@@ -1100,6 +1100,8 @@ struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
     @location(1) normal_hint: vec3<f32>,
+    @location(2) world_pos: vec3<f32>,
+    @location(3) material_kind: f32,
 };
 
 @vertex
@@ -1112,35 +1114,31 @@ fn vs_main(
     @location(5) model_3: vec4<f32>,
     @location(6) instance_tint: vec4<f32>,
 ) -> VertexOut {
-    let t = frame.time_seconds;
-    let yaw = t * 0.62;
-    let pitch = 0.32 + 0.12 * sin(t * 0.45);
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
-    let rotated_y = vec3<f32>(
-        position.x * cos(yaw) + position.z * sin(yaw),
-        position.y,
-        -position.x * sin(yaw) + position.z * cos(yaw)
-    );
-    let rotated = vec3<f32>(
-        rotated_y.x,
-        rotated_y.y * cos(pitch) - rotated_y.z * sin(pitch),
-        rotated_y.y * sin(pitch) + rotated_y.z * cos(pitch)
-    );
-    let world = model * vec4<f32>(rotated, 1.0);
+    let world = model * vec4<f32>(position, 1.0);
     var out: VertexOut;
     out.position = frame.view_proj * world;
     out.color = color * instance_tint.rgb;
-    out.normal_hint = normalize((model * vec4<f32>(rotated, 0.0)).xyz);
+    out.normal_hint = normalize((model * vec4<f32>(position, 0.0)).xyz);
+    out.world_pos = world.xyz;
+    out.material_kind = instance_tint.a;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let light_dir = normalize(vec3<f32>(0.35, 0.55, 0.74));
-    let lambert = clamp(dot(normalize(in.normal_hint), light_dir) * 0.5 + 0.5, 0.22, 1.0);
-    let rim = vec3<f32>(0.04, 0.06, 0.09);
-    let pulse = 0.96 + 0.04 * sin(frame.time_seconds * 1.8 + f32(frame.frame_index) * 0.01);
-    return vec4<f32>(max(in.color * lambert * pulse, rim), 1.0);
+    let normal = normalize(in.normal_hint);
+    let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
+    let view_fade = clamp(length(in.world_pos.xz) / 42.0, 0.0, 1.0);
+    let lambert = clamp(dot(normal, sun_dir) * 0.62 + 0.38, 0.18, 1.0);
+    let sky = mix(vec3<f32>(0.02, 0.035, 0.065), vec3<f32>(0.95, 0.48, 0.18), clamp(in.world_pos.y * 0.04 + 0.35, 0.0, 1.0));
+    let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
+    let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), normalize(vec3<f32>(0.0, 0.22, 1.0))), 0.0), 18.0);
+    let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
+    let lit = in.color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
+    let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
+    let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
+    return vec4<f32>(max(fogged, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
 }
 "#
 }
@@ -1222,11 +1220,69 @@ fn banger_cube_index_bytes() -> Vec<u8> {
 
 #[cfg(target_os = "windows")]
 fn banger_scene_instance_bytes() -> Vec<u8> {
-    let instances: [([f32; 3], f32, [f32; 4]); 3] = [
-        ([-1.45, -0.12, 0.0], 0.64, [1.00, 0.76, 0.28, 1.0]),
-        ([0.0, 0.18, -0.15], 0.82, [0.72, 1.00, 0.54, 1.0]),
-        ([1.48, -0.04, 0.12], 0.58, [0.42, 0.72, 1.00, 1.0]),
-    ];
+    let mut instances = Vec::with_capacity(1400);
+    for z in -18..18 {
+        for x in -24..24 {
+            let xf = x as f32;
+            let zf = z as f32;
+            let ridge = (xf * 0.21).sin() * 0.45 + (zf * 0.17).cos() * 0.34;
+            let distance = (xf * xf + zf * zf).sqrt();
+            let height = (ridge - distance * 0.012).max(-0.85);
+            let material = if z < -9 { 3.0 } else { 1.0 };
+            let tint = if z < -9 {
+                [
+                    0.08 + 0.02 * (xf * 0.3).sin(),
+                    0.34 + 0.04 * (zf * 0.2).cos(),
+                    0.52 + 0.06 * (xf * 0.13).sin(),
+                    material,
+                ]
+            } else {
+                [
+                    0.20 + 0.12 * (height + 0.8).clamp(0.0, 1.0),
+                    0.28 + 0.18 * (xf * 0.12).sin().abs(),
+                    0.20 + 0.08 * (zf * 0.15).cos().abs(),
+                    material,
+                ]
+            };
+            instances.push((
+                [xf * 0.92, height - 0.95, zf * 0.92],
+                [0.44, 0.05 + height.abs() * 0.05, 0.44],
+                tint,
+            ));
+        }
+    }
+    for ring in 0..8 {
+        let radius = 4.0 + ring as f32 * 1.72;
+        let count = 20 + ring * 6;
+        for step in 0..count {
+            let angle = step as f32 / count as f32 * std::f32::consts::TAU + ring as f32 * 0.19;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius + 4.0;
+            let tower_height = 0.35 + ((step * 17 + ring * 11) % 13) as f32 * 0.09;
+            instances.push((
+                [x, -0.35 + tower_height, z],
+                [0.18 + ring as f32 * 0.008, tower_height, 0.18 + ring as f32 * 0.008],
+                [
+                    0.62 + 0.16 * (angle * 1.7).sin().abs(),
+                    0.50 + 0.14 * (ring as f32 * 0.6).cos().abs(),
+                    0.86,
+                    2.0,
+                ],
+            ));
+        }
+    }
+    for row in 0..7 {
+        for column in 0..11 {
+            let x = (column as f32 - 5.0) * 1.15;
+            let z = 9.5 + row as f32 * 1.1;
+            let height = 0.55 + ((row * 5 + column * 3) % 9) as f32 * 0.16;
+            instances.push((
+                [x, -0.55 + height, z],
+                [0.32, height, 0.32],
+                [0.78, 0.42 + row as f32 * 0.035, 0.24 + column as f32 * 0.02, 2.0],
+            ));
+        }
+    }
     let mut bytes = Vec::with_capacity(instances.len() * 80);
     for (translation, scale, tint) in instances {
         for value in banger_model_matrix(translation, scale) {
@@ -1240,11 +1296,11 @@ fn banger_scene_instance_bytes() -> Vec<u8> {
 }
 
 #[cfg(target_os = "windows")]
-fn banger_model_matrix(translation: [f32; 3], scale: f32) -> [f32; 16] {
+fn banger_model_matrix(translation: [f32; 3], scale: [f32; 3]) -> [f32; 16] {
     [
-        scale, 0.0, 0.0, 0.0,
-        0.0, scale, 0.0, 0.0,
-        0.0, 0.0, scale, 0.0,
+        scale[0], 0.0, 0.0, 0.0,
+        0.0, scale[1], 0.0, 0.0,
+        0.0, 0.0, scale[2], 0.0,
         translation[0], translation[1], translation[2], 1.0,
     ]
 }
@@ -1252,13 +1308,14 @@ fn banger_model_matrix(translation: [f32; 3], scale: f32) -> [f32; 16] {
 #[cfg(target_os = "windows")]
 fn banger_view_projection_matrix(time_seconds: f32, viewport_width: u32, viewport_height: u32) -> [f32; 16] {
     let aspect = (viewport_width as f32 / viewport_height.max(1) as f32).clamp(0.25, 4.0);
+    let orbit = time_seconds * 0.08;
     let eye = [
-        3.2 + 0.18 * (time_seconds * 0.37).sin(),
-        2.15,
-        4.35 + 0.12 * (time_seconds * 0.29).cos(),
+        15.5 * orbit.cos(),
+        8.2 + 0.45 * (time_seconds * 0.21).sin(),
+        20.0 + 15.5 * orbit.sin(),
     ];
-    let view = banger_look_at_rh(eye, [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
-    let projection = banger_perspective_rh_zo(55.0_f32.to_radians(), aspect, 0.05, 128.0);
+    let view = banger_look_at_rh(eye, [0.0, -0.35, 2.5], [0.0, 1.0, 0.0]);
+    let projection = banger_perspective_rh_zo(58.0_f32.to_radians(), aspect, 0.05, 220.0);
     banger_mat4_mul(projection, view)
 }
 
@@ -1417,6 +1474,9 @@ mod tests {
         assert!(source.contains("@location(1) color"));
         assert!(source.contains("@location(2) model_0"));
         assert!(source.contains("@location(6) instance_tint"));
+        assert!(source.contains("world_pos"));
+        assert!(source.contains("material_kind"));
+        assert!(source.contains("water_glint"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
         assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
@@ -1448,9 +1508,10 @@ mod tests {
     #[test]
     fn packs_banger_scene_instances_for_one_indexed_draw() {
         let instance_bytes = banger_scene_instance_bytes();
-        assert_eq!(instance_bytes.len(), 3 * 80);
-        assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 0.64);
-        assert_eq!(f32::from_le_bytes(instance_bytes[64..68].try_into().unwrap()), 1.0);
+        assert!(instance_bytes.len() >= 1000 * 80);
+        assert_eq!(instance_bytes.len() % 80, 0);
+        assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 0.44);
+        assert!(f32::from_le_bytes(instance_bytes[64..68].try_into().unwrap()) > 0.0);
         assert_eq!(sha256_hex(&instance_bytes).len(), 64);
     }
 
