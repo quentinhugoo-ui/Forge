@@ -14,13 +14,15 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"--surface-top": "0px"');
     expect(routerSource).toContain('"--surface-width": "100vw"');
     expect(routerSource).toContain('"--surface-height": "100vh"');
-    expect(routerSource).toContain("getBangerPreviewFrame");
     expect(routerSource).toContain("getBangerPresentLoopBootstrap");
+    expect(routerSource).toContain('sceneKind: "maps_sphere"');
     expect(routerSource).toContain("presentLoop.previewFrameDataUrl");
-    expect(routerSource).toContain("rust_banger_wgpu_present_loop_rgba8_to_bmp_data_url");
+    expect(routerSource).toContain("rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url");
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
+    expect(routerSource).toContain("bangerSphereNativeFrame__fallback");
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
     expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
+    expect(routerSource).not.toContain("BangerPreviewFrameResult");
     expect(routerSource).not.toContain("native raster frame loading");
   });
 
@@ -34,7 +36,8 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).not.toContain("cesium-widget");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
-    expect(stylesSource).toContain("perspective(620px) rotateX(58deg)");
+    expect(stylesSource).toContain("content: none");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
     expect(stylesSource).toContain("object-fit: cover");
   });
 

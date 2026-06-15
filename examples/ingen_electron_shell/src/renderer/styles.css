@@ -3235,16 +3235,14 @@ button {
   height: 100%;
   border: 0;
   border-radius: 0;
-  background:
-    radial-gradient(ellipse at 68% 45%, rgba(255, 206, 111, 0.95) 0 6%, rgba(255, 154, 61, 0.5) 9%, transparent 22%),
-    linear-gradient(180deg, #080d26 0%, #1d123d 28%, #8d3142 43%, #ff6b24 49%, #163744 50%, #07172d 100%);
+  background: #050607;
   overflow: hidden;
   pointer-events: none;
 }
 
 .surface--banger .nativeViewportSlot::before,
 .surface--banger .nativeViewportSlot::after {
-  content: "";
+  content: none;
   position: absolute;
   inset: 0;
   pointer-events: none;

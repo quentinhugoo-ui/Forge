@@ -1,7 +1,6 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
   BangerPresentLoopBootstrapResult,
-  BangerPreviewFrameResult,
   HeaderSurfaceContract,
   HeaderSurfaceSnapshot
 } from "../shared/ipc-contract";
@@ -47,21 +46,28 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 }
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
-  const [previewFrame, setPreviewFrame] = useState<BangerPreviewFrameResult | null>(null);
+  const slotRef = useRef<HTMLDivElement | null>(null);
   const [presentLoop, setPresentLoop] = useState<BangerPresentLoopBootstrapResult | null>(null);
 
   useEffect(() => {
+    const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
+      | ((request?: {
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+          sceneKind?: "maps_sphere";
+        }) => Promise<BangerPresentLoopBootstrapResult>)
+      | undefined;
     let active = true;
-    void globalThis.window?.forgeShell?.getBangerPreviewFrame?.()
-      .then((result) => {
-        if (active) {
-          setPreviewFrame(result ?? null);
-        }
-      })
-      .catch((error) => {
-        console.error("Banger native preview frame failed to load.", error);
-      });
-    void globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap?.()
+    const rect = slotRef.current?.getBoundingClientRect();
+    void getBootstrap?.({
+      x: rect ? Math.round(rect.x) : undefined,
+      y: rect ? Math.round(rect.y) : undefined,
+      width: rect ? Math.round(rect.width) : undefined,
+      height: rect ? Math.round(rect.height) : undefined,
+      sceneKind: "maps_sphere"
+    })
       .then((result) => {
         if (active) {
           setPresentLoop(result ?? null);
@@ -76,16 +82,16 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   }, []);
 
   const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
-  const splatFrameDataUrl = previewFrame?.accepted === true ? previewFrame.frameDataUrl : "";
-  const nativeFrameDataUrl = presentLoopFrameDataUrl || splatFrameDataUrl;
+  const nativeFrameDataUrl = presentLoopFrameDataUrl;
   const hasNativeFrame = nativeFrameDataUrl.length > 0;
   const renderPath = presentLoopFrameDataUrl
-    ? "rust_banger_wgpu_present_loop_rgba8_to_bmp_data_url"
-    : previewFrame?.metrics.renderPath ?? "rust-banger-wgpu-child-window";
+    ? "rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url"
+    : "rust-banger-wgpu-maps-sphere-child-window";
 
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
       <div
+        ref={slotRef}
         className={hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
         aria-label="Banger native renderer surface"
         data-native-contract={surface.nativeContract}
@@ -100,7 +106,9 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
             draggable={false}
           />
         ) : (
-          <div className="nativeViewportSlot__empty" aria-hidden="true" />
+          <div className="bangerSphereNativeFrame__fallback" aria-hidden="true">
+            <span className="bangerSphereNativeFrame__fallbackSphere" />
+          </div>
         )}
       </div>
     </section>
