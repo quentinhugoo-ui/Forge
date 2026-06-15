@@ -1998,13 +1998,31 @@ function assistantVisibleAnimationSource(text: string): string {
   return normalized.slice(0, lastVisibleEnd || normalized.trimEnd().length);
 }
 
+const ASSISTANT_INLINE_ATOMIC_PATTERN = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|`[^`]+?`)/g;
+
+function assistantInlineAtomicRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let match: RegExpExecArray | null;
+  ASSISTANT_INLINE_ATOMIC_PATTERN.lastIndex = 0;
+  while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  return ranges;
+}
+
+function assistantBreakpointInsideAtomicRange(point: number, ranges: Array<{ start: number; end: number }>): boolean {
+  return ranges.some((range) => point > range.start && point < range.end);
+}
+
 function assistantRevealBreakpoints(text: string): number[] {
   const breakpoints: number[] = [];
+  const atomicRanges = assistantInlineAtomicRanges(text);
   const pattern = /\S+\s*|\s+/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    if (/\S/.test(match[0])) {
-      breakpoints.push(match.index + match[0].length);
+    const point = match.index + match[0].length;
+    if (/\S/.test(match[0]) && !assistantBreakpointInsideAtomicRange(point, atomicRanges)) {
+      breakpoints.push(point);
     }
   }
   if (text.length > 0 && breakpoints[breakpoints.length - 1] !== text.length) {
@@ -2683,10 +2701,10 @@ function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCom
 
 function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|\*[^*\n]+?\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
+  ASSISTANT_INLINE_ATOMIC_PATTERN.lastIndex = 0;
+  while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null) {
     if (match.index > cursor) {
       nodes.push(...assistantPlainTextNodes(text.slice(cursor, match.index), `${keyPrefix}-plain-${cursor}`, onUseMathInCompute, writing));
     }
@@ -2698,7 +2716,11 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
       nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("__")) {
+      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith("*")) {
+      nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("_")) {
       nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
     } else {
       nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
@@ -4199,6 +4221,16 @@ function WidgetTranscriptPanel({
   collapsing?: boolean;
 }) {
   const titleId = useId();
+  /* No stored session title exists, so label the panel with a concise excerpt
+     of the first user message (the thread's subject), like a chat thread name. */
+  const firstUserMessage = messages.find((message) => message.role === "user" && message.text.trim().length > 0);
+  const sessionLabel = (() => {
+    const text = firstUserMessage?.text.trim();
+    if (!text) {
+      return "Conversation";
+    }
+    return text.length > 40 ? `${text.slice(0, 40).trimEnd()}…` : text;
+  })();
 
   return (
     <section
@@ -4210,15 +4242,19 @@ function WidgetTranscriptPanel({
       aria-labelledby={titleId}
     >
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
-        <span className="composerQuestionnaire__dot" aria-hidden="true" />
-        <strong id={titleId}>Conversation</strong>
+        <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
+          {sessionLabel}
+        </strong>
         <button
           type="button"
           className="widgetTranscriptPanel__reduce"
           aria-label="Réduire le panneau de conversation"
+          title="Réduire"
           onClick={onReduce}
         >
-          Réduire
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
       </div>
       <div className="widgetTranscriptPanel__body">

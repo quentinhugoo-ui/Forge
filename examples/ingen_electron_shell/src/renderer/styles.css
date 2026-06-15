@@ -166,7 +166,10 @@ button {
 .shell .brainMcpSuite,
 .shell .brainMcpSuite::before,
 .shell .brainMemoryIdentity,
-.shell .brainMemoryIdentity::before {
+.shell .brainMemoryIdentity::before,
+.shell .brainLearningRegistry,
+.shell .brainLearningRegistry::before,
+.shell .brainLearningRegistry__composer {
   border-radius: 8px !important;
 }
 
@@ -2666,6 +2669,10 @@ button {
   right: var(--workspace-right);
 }
 
+.shell--brain-canvas .brainCanvas {
+  right: 0;
+}
+
 .llmTerminal {
   width: 100%;
   min-height: 100%;
@@ -3858,19 +3865,46 @@ button {
 }
 
 .widgetTranscriptPanel__header {
-  padding: 0 1px 2px;
+  gap: 8px;
+  min-height: 16px;
+  padding: 0 2px 3px;
   transition: opacity 120ms ease-out;
 }
 
+.widgetTranscriptPanel__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 26%);
+}
+
 .composerQuestionnaire .widgetTranscriptPanel__reduce {
-  width: auto;
-  min-width: 58px;
-  height: 22px;
-  min-height: 22px;
-  padding: 0 9px;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 10%);
-  font-size: 10.5px;
-  font-weight: 650;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 34%);
+  transition: color 120ms ease-out, background 120ms ease-out;
+}
+
+.composerQuestionnaire .widgetTranscriptPanel__reduce:hover,
+.composerQuestionnaire .widgetTranscriptPanel__reduce:focus-visible {
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 8%);
+  background: color-mix(in oklab, var(--forge-chat-text), transparent 90%);
+}
+
+.widgetTranscriptPanel__reduce svg {
+  width: 14px;
+  height: 14px;
 }
 
 .widgetTranscriptPanel__body {
@@ -6717,13 +6751,18 @@ ol.assistantText__list li::before {
 }
 
 .assistantText code {
-  padding: 1px 5px;
-  border: 1px solid var(--assistant-mark-line-soft);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--assistant-mark-text);
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px 3px;
+  border: 1px solid color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 10%);
+  border-radius: 4px !important;
+  background: var(--forge-sidebar-bg);
+  color: color-mix(in oklab, var(--forge-sidebar-text), var(--forge-text) 30%);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 0.91em;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  vertical-align: 0.06em;
 }
 
 .assistantText__mathToken {
@@ -9170,6 +9209,10 @@ ol.assistantText__list li::before {
   content: none;
 }
 
+.bangerSphereNativeFrame__fallback--underlay {
+  z-index: 1;
+}
+
 .bangerSphereNativeFrame__fallbackSphere {
   position: relative;
   z-index: 1;
@@ -9183,6 +9226,41 @@ ol.assistantText__list li::before {
     inset -42px -52px 86px rgba(0, 0, 0, 0.62),
     inset 24px 18px 44px rgba(255, 255, 255, 0.16),
     0 0 80px rgba(70, 190, 255, 0.28);
+}
+
+.bangerMapsCesiumViewport {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+
+.bangerMapsCesiumViewport--ready {
+  opacity: 1;
+}
+
+.bangerMapsCesiumViewport .cesium-viewer,
+.bangerMapsCesiumViewport .cesium-widget,
+.bangerMapsCesiumViewport .cesium-widget canvas {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+}
+
+.bangerMapsCesiumViewport .cesium-viewer-bottom {
+  bottom: 8px;
+  left: 8px;
+}
+
+.bangerMapsCesiumViewport .cesium-widget-credits {
+  display: block !important;
+  max-width: min(58vw, 640px);
+  color: rgba(235, 241, 245, 0.86);
+  font-family: var(--forge-font-mono);
+  font-size: 10px;
 }
 
 .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted,
@@ -9254,9 +9332,9 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
-  inset: 50% auto auto 50%;
-  width: min(58vw, 72vh, 760px);
-  height: min(58vw, 72vh, 760px);
+  inset: 50% auto auto 59%;
+  width: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px);
+  height: min(86.89173795355475vw, 107.86560573544727vh, 1139.0766445892043px);
   overflow: visible;
   transform: translate3d(-50%, -50%, 0);
 }
@@ -9278,8 +9356,12 @@ ol.assistantText__list li::before {
   display: none;
 }
 
+.mapsCanvasGrid--earthActive .webExplorerClose {
+  display: none;
+}
+
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 760px);
+  width: min(100%, 1139.0766445892043px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
@@ -9572,21 +9654,89 @@ ol.assistantText__list li::before {
 
 .brainCanvas {
   /* Same horizontal footprint as the LLM Provider page. */
+  --brain-canvas-inline-pad: max(34px, calc((100% - 1280px) / 2));
   position: fixed;
   left: var(--left-panel-offset);
   right: 0;
   top: 96px;
   bottom: 0;
   min-width: 0;
-  padding: 12px max(34px, calc((100% - 1280px) / 2)) 72px;
+  padding: 12px var(--brain-canvas-inline-pad) 72px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--forge-chat-bg) transparent;
   container-type: inline-size;
   transition: left var(--sidebar-motion);
 }
 
+.brainCanvas::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.brainCanvas::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.brainCanvas::-webkit-scrollbar-button,
+.brainCanvas::-webkit-scrollbar-button:single-button,
+.brainCanvas::-webkit-scrollbar-button:vertical:start,
+.brainCanvas::-webkit-scrollbar-button:vertical:end,
+.brainCanvas::-webkit-scrollbar-button:horizontal:start,
+.brainCanvas::-webkit-scrollbar-button:horizontal:end {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.brainCanvas::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.brainCanvas::-webkit-scrollbar-thumb {
+  background: var(--forge-chat-bg);
+  border: 0;
+  border-radius: 0;
+  transition: background 140ms ease-out;
+}
+
+.brainCanvas::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 18%);
+}
+
+.brainCanvas__stickyChrome {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: -12px calc(-1 * var(--brain-canvas-inline-pad)) 0;
+  padding: 12px var(--brain-canvas-inline-pad) 8px;
+  background: transparent;
+  isolation: isolate;
+}
+
+.brainCanvas__stickyChrome::after {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -24px;
+  z-index: 0;
+  height: 24px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--forge-bg), transparent 24%) 0,
+    color-mix(in oklab, var(--forge-bg), transparent 46%) 9px,
+    color-mix(in oklab, var(--forge-bg), transparent 76%) 17px,
+    transparent 100%
+  );
+}
+
 .brainCanvas__head {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -9638,6 +9788,8 @@ ol.assistantText__list li::before {
 }
 
 .brainCanvas__tabs {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 30px;
   margin-top: 12px;
@@ -9860,7 +10012,8 @@ ol.assistantText__list li::before {
 .brainActivators,
 .brainGoogleSuite,
 .brainMcpSuite,
-.brainMemoryIdentity {
+.brainMemoryIdentity,
+.brainLearningRegistry {
   position: relative;
   margin-top: 12px;
   min-width: 0;
@@ -9871,7 +10024,8 @@ ol.assistantText__list li::before {
 }
 
 .brainActivators::before,
-.brainMemoryIdentity::before {
+.brainMemoryIdentity::before,
+.brainLearningRegistry::before {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -9945,7 +10099,12 @@ ol.assistantText__list li::before {
 .brainMcpSuite .brainRow,
 .brainCommandPack__label,
 .brainMemoryIdentityField,
-.brainMemoryIdentity__label {
+.brainMemoryIdentity__label,
+.brainLearningRegistry__head,
+.brainLearningRegistry__tabs,
+.brainLearningRegistry__composer,
+.brainLearningRegistry__actions,
+.brainLearningRegistry__entries {
   position: relative;
   z-index: 1;
 }
@@ -10119,25 +10278,6 @@ ol.assistantText__list li::before {
   color: #fff0b9;
 }
 
-.brainMemoryIdentityField__body {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.brainMemoryIdentityField__label {
-  color: var(--forge-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.brainMemoryIdentityField__control {
-  position: relative;
-  display: inline-grid;
-  grid-template-columns: minmax(0, auto) 10px;
-  align-items: center;
-  justify-content: start;
-  gap: 3px;
 .brainPersonalityPresetStack {
   position: relative;
   z-index: 1;
@@ -10205,6 +10345,25 @@ ol.assistantText__list li::before {
   line-height: 1.35;
 }
 
+.brainMemoryIdentityField__body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.brainMemoryIdentityField__label {
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.brainMemoryIdentityField__control {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto) 10px;
+  align-items: center;
+  justify-content: start;
+  gap: 3px;
   width: fit-content;
   max-width: 100%;
 }
@@ -10343,7 +10502,6 @@ ol.assistantText__list li::before {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
 }
 
-.brainLearningRegistry,
 .brainCustomCodeActs {
   display: grid;
   gap: 10px;
@@ -10354,6 +10512,17 @@ ol.assistantText__list li::before {
   border: 1px solid color-mix(in oklab, var(--forge-line), var(--forge-accent) 12%);
   border-radius: 7px;
   background: color-mix(in oklab, var(--forge-surface-deep), transparent 18%);
+}
+
+.brainLearningRegistry {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 640px);
+  max-width: 640px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-color: color-mix(in oklab, #ffbf48, transparent 58%);
+  background: var(--forge-sidebar-bg);
 }
 
 .brainCustomCodeActs {
@@ -10367,10 +10536,9 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__head,
 .brainCustomCodeActs__head {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -10381,11 +10549,11 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__head strong,
 .brainCustomCodeActs__head strong {
   display: block;
-  color: var(--forge-text);
+  color: var(--forge-muted);
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 12px;
-  font-weight: 680;
-  line-height: 1.25;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
 }
 
 .brainLearningRegistry__head span span,
@@ -10395,6 +10563,16 @@ ol.assistantText__list li::before {
   color: var(--forge-muted);
   font-size: 11px;
   line-height: 1.38;
+}
+
+.brainLearningRegistry__head span span {
+  display: none;
+}
+
+.brainLearningRegistry__head .brainRow__icon {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
 }
 
 .brainCustomCodeActs__soonBadge {
@@ -10454,7 +10632,7 @@ ol.assistantText__list li::before {
 
 .brainLearningRegistry__tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -10465,12 +10643,12 @@ ol.assistantText__list li::before {
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  min-height: 34px;
+  min-height: 28px;
   padding: 0 8px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 28%);
-  border-radius: 6px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 76%);
+  border-radius: 0;
   color: var(--forge-muted);
-  background: color-mix(in oklab, var(--forge-panel), transparent 42%);
+  background: transparent;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
@@ -10481,22 +10659,23 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__tab:hover,
 .brainLearningRegistry__tab:focus-visible,
 .brainLearningRegistry__tab--active {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 22%);
-  color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-accent), transparent 88%);
+  border-color: color-mix(in oklab, #ffbf48, transparent 42%);
+  color: #f1d596;
+  background: color-mix(in oklab, #ffbf48, transparent 92%);
   outline: 0;
 }
 
 .brainLearningRegistry__composer,
 .brainCustomCodeActs__editor label {
+  position: relative;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
-.brainLearningRegistry__composer span,
+.brainLearningRegistry__composerLabel,
 .brainCustomCodeActs__editor label span {
-  color: color-mix(in oklab, var(--forge-text), transparent 16%);
+  color: var(--forge-muted);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
@@ -10507,21 +10686,44 @@ ol.assistantText__list li::before {
 .brainCustomCodeActs__editor textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
-  border-radius: 6px;
-  color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-panel), #000 10%);
-  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
-  font-size: 12px;
-  line-height: 1.45;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, #ffbf48, transparent 72%);
+  border-bottom: 1px solid color-mix(in oklab, #ffbf48, transparent 78%);
+  border-radius: 0;
+  color: #f1d596;
+  background: transparent;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
   outline: 0;
+}
+
+.brainLearningRegistry__composer {
+  min-height: 112px;
+  padding: 8px 78px 32px 0;
+  border: 0;
+  background: transparent;
 }
 
 .brainLearningRegistry__composer textarea,
 .brainCustomCodeActs__editor textarea {
   resize: vertical;
-  min-height: 76px;
-  padding: 8px 9px;
+  min-height: 72px;
+  padding: 9px 0;
+}
+
+.brainLearningRegistry__composer textarea {
+  height: 62px;
+  min-height: 62px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  resize: none;
+  transition: height 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.brainLearningRegistry__composer textarea::placeholder {
+  color: color-mix(in oklab, var(--forge-muted), transparent 18%);
 }
 
 .brainCustomCodeActs__editor input {
@@ -10533,8 +10735,9 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__composer textarea:focus,
 .brainCustomCodeActs__editor input:focus,
 .brainCustomCodeActs__editor textarea:focus {
-  border-color: color-mix(in oklab, var(--forge-accent), transparent 18%);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 84%);
+  color: #fff0b9;
+  border-color: color-mix(in oklab, #ffbf48, transparent 46%);
+  box-shadow: none;
 }
 
 .brainLearningRegistry__actions,
@@ -10545,6 +10748,9 @@ ol.assistantText__list li::before {
 }
 
 .brainLearningRegistry__actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
   justify-items: start;
 }
 
@@ -10554,17 +10760,77 @@ ol.assistantText__list li::before {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
+  min-height: 28px;
   width: fit-content;
+  padding: 0 11px;
+  border: 1px solid color-mix(in oklab, #ffbf48, transparent 62%);
+  border-radius: 6px !important;
+  color: #f1d596;
+  background: color-mix(in oklab, #ffbf48, transparent 94%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.brainLearningRegistry__actions button:hover,
+.brainLearningRegistry__actions button:focus-visible {
+  border-color: color-mix(in oklab, #ffbf48, transparent 36%);
+  color: #fff0b9;
+  background: color-mix(in oklab, #ffbf48, transparent 90%);
+  outline: 0;
+}
+
+.brainCustomCodeActs__head {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.brainCustomCodeActs__head strong {
+  color: var(--forge-text);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.brainCustomCodeActs__editor label span {
+  color: color-mix(in oklab, var(--forge-text), transparent 16%);
+}
+
+.brainCustomCodeActs__editor input,
+.brainCustomCodeActs__editor textarea {
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
+  border-radius: 6px;
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-panel), #000 10%);
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.brainCustomCodeActs__editor textarea {
+  min-height: 76px;
+  padding: 8px 9px;
+}
+
+.brainCustomCodeActs__editor input {
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+.brainCustomCodeActs__editor input:focus,
+.brainCustomCodeActs__editor textarea:focus {
+  border-color: color-mix(in oklab, var(--forge-accent), transparent 18%);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 84%);
+}
+
+.brainCustomCodeActs__editor button {
+  min-height: 32px;
   padding: 0 10px;
   border: 1px solid color-mix(in oklab, var(--forge-accent), transparent 36%);
   border-radius: 6px;
   color: color-mix(in oklab, var(--forge-text), var(--forge-accent) 18%);
   background: color-mix(in oklab, var(--forge-accent), transparent 90%);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 10.5px;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 .brainLearningRegistry__actions button:disabled,
@@ -10606,6 +10872,7 @@ ol.assistantText__list li::before {
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .brainLearningRegistry__entry footer,
@@ -11224,12 +11491,15 @@ ol.assistantText__list li::before {
   --brain-blob-time: 8s;
   --brain-blob-gleam: 50%;
   --brain-blob-gleam-opacity: 0.34;
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  left: var(--workspace-left);
+  right: 0;
+  top: 96px;
+  bottom: 0;
   z-index: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 100%;
+  width: auto;
+  height: auto;
+  min-height: 0;
   pointer-events: none;
   opacity: 0.96;
   overflow: visible;
@@ -11475,12 +11745,15 @@ ol.assistantText__list li::before {
   .brainCanvas__mark,
   .brainActivators::before,
   .brainMemoryIdentity::before,
+  .brainLearningRegistry::before,
   .brainActivators .brainRow__icon,
   .brainActivators .brainRow code,
   .brainMemoryIdentity__label .brainGlyph,
   .brainMemoryIdentityField__edit,
-  .brainMemoryIdentityField__input {
+  .brainMemoryIdentityField__input,
+  .brainLearningRegistry__composer textarea {
     animation: none;
+    transition: none;
   }
 }
 
@@ -12751,10 +13024,6 @@ ol.assistantText__list li::before {
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
-.shell--widget-canvas-hidden::before {
-  transform: translate3d(0, calc(-100vh - 96px), 0);
-}
-
 .shell--widget-mode .widgetTranscriptPanel .chatCanvas--widgetPanel,
 .shell--widget-canvas-hidden .widgetTranscriptPanel .chatCanvas--widgetPanel {
   opacity: 1;
@@ -12762,6 +13031,10 @@ ol.assistantText__list li::before {
   transform: none;
   transition: none;
   will-change: auto;
+}
+
+.shell--widget-canvas-hidden::before {
+  transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
 @media (max-width: 1220px) {

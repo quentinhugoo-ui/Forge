@@ -166,7 +166,9 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".widgetTranscriptTab", padding: { left: 8, right: 8, top: 8, bottom: 8 } },
-  { selector: ".permissionModeMenu", padding: { left: 10, right: 10, top: 14, bottom: 10 } }
+  /* Generous top margin: the menu opens upward and its frame/shadow can sit
+     above the region computed mid open-animation, which clipped its top edge. */
+  { selector: ".permissionModeMenu", padding: { left: 12, right: 12, top: 30, bottom: 10 } }
 ];
 
 function readWidgetLayoutLock(): WidgetLayoutLock | null {
@@ -318,6 +320,11 @@ export function App() {
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
   const [mapsWebviewUrl, setMapsWebviewUrl] = useState(GOOGLE_EARTH_DOM_DEFAULT_URL);
+  const [mapsViewportTarget, setMapsViewportTarget] = useState<{
+    target?: string;
+    latitude?: number;
+    longitude?: number;
+  } | null>(null);
   const [webExplorerModuleId, setWebExplorerModuleId] = useState<SidebarModuleId | null>(null);
   const [composerModuleId, setComposerModuleId] = useState<SidebarModuleId | null>(null);
   const [parallelSidebarBirth, setParallelSidebarBirth] = useState<{ sessionId: string; token: number } | null>(null);
@@ -1048,6 +1055,7 @@ export function App() {
       canvasMapsOpenRef.current = false;
       setCanvasMapsOpen(false);
       setCanvasMapsClosing(false);
+      setMapsViewportTarget(null);
       canvasMapsCloseTimerRef.current = null;
     }, 260);
     setMapsParallelIndex(0);
@@ -1092,6 +1100,11 @@ export function App() {
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeMapsCodeAct?.((event) => {
       setMapsWebviewUrl(event.url || GOOGLE_EARTH_DOM_DEFAULT_URL);
+      setMapsViewportTarget({
+        target: event.target || event.query,
+        latitude: typeof event.latitude === "number" ? event.latitude : undefined,
+        longitude: typeof event.longitude === "number" ? event.longitude : undefined
+      });
       openCanvasMaps(event.parallelSessionIndex ?? 0);
     });
   }, [openCanvasMaps]);
@@ -1605,6 +1618,7 @@ export function App() {
           mapsClosing={canvasMapsClosing}
           mapsParallelIndex={mapsParallelIndex}
           mapsUrl={mapsWebviewUrl}
+          mapsTarget={mapsViewportTarget}
           mapsSearchQuery={latestAssistantGeoEntityLabel}
           codingLivePreview={codingLivePreview}
           leftPanelOpen={snapshot.leftPanelOpen}
