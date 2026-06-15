@@ -284,6 +284,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('[BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"]');
     expect(rendererSource).toContain("function parseQuestionnaireFromMessage");
     expect(rendererSource).toContain("function ComposerQuestionnaire");
+    expect(rendererSource).toContain("function parseQuestionnaireAnswerTable");
+    expect(rendererSource).toContain("function QuestionnaireAnswerTable");
+    expect(rendererSource).toContain("questionnaireAnswerRows.length > 0");
     expect(rendererSource).toContain("const promptId = useId()");
     expect(rendererSource).toContain("function questionnaireOptionCopy");
     expect(rendererSource).toContain("const QUESTIONNAIRE_TAGS");
@@ -339,6 +342,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : ""');
     expect(rendererSource).toContain('permissionMode === "self-directed" ? "permissionModeTrigger--selfDirected" : ""');
     expect(stylesSource).toContain(".composerQuestionnaire");
+    expect(stylesSource).toContain(".questionnaireAnswerTable");
+    expect(stylesSource).toContain(".questionnaireAnswerTable__row");
+    expect(stylesSource).toContain(".questionnaireAnswerTable__answer");
     expect(stylesSource).toContain("--questionnaire-width: min(756px, calc(var(--chat-width) - 8px))");
     expect(stylesSource).toContain(".panelsChatBottom--questionnaireOpen");
     expect(stylesSource).toContain("z-index: 31");

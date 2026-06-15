@@ -2064,6 +2064,48 @@ interface QuestionnaireAnswer {
   otherText: string;
 }
 
+interface QuestionnaireAnswerTableRow {
+  question: string;
+  answer: string;
+}
+
+function parseQuestionnaireAnswerTable(text: string): QuestionnaireAnswerTableRow[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const answersIndex = lines.findIndex((line) => line.trim().toLowerCase() === "questionnaire answers:");
+  if (answersIndex < 0) {
+    return [];
+  }
+  return lines.slice(answersIndex + 1)
+    .map((line) => /^-\s*(.+?)\s*:\s*(.+)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => Boolean(match))
+    .map((match) => ({
+      question: (match[1] ?? "").trim(),
+      answer: (match[2] ?? "").trim()
+    }))
+    .filter((row) => row.question.length > 0 && row.answer.length > 0);
+}
+
+function QuestionnaireAnswerTable({ rows }: { rows: QuestionnaireAnswerTableRow[] }) {
+  return (
+    <section className="questionnaireAnswerTable" aria-label="Questionnaire answers">
+      <header className="questionnaireAnswerTable__header">
+        <span className="questionnaireAnswerTable__dot" aria-hidden="true" />
+        <strong>Questionnaire answers</strong>
+      </header>
+      <table className="questionnaireAnswerTable__body">
+        <tbody>
+          {rows.map((row, index) => (
+            <tr className="questionnaireAnswerTable__row" key={`${row.question}-${index}`}>
+              <td className="questionnaireAnswerTable__question">{row.question}</td>
+              <td className="questionnaireAnswerTable__answer">{row.answer}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function unquoteCodeActSlotValue(value: string): string {
   const trimmed = value.trim();
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
@@ -4080,6 +4122,7 @@ function TranscriptCanvas({
           const pinned = pinnedIds.has(message.id);
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
+          const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
           if (assistantCanAnimate && assistantAnimationRef.current) {
@@ -4203,7 +4246,11 @@ function TranscriptCanvas({
                     <div className="transcriptUserStack">
                       {message.text.trim() ? (
                         <div className="transcriptUserTextFrame">
-                          <p className="transcriptPill transcriptPill--user">{message.text}</p>
+                          {questionnaireAnswerRows.length > 0 ? (
+                            <QuestionnaireAnswerTable rows={questionnaireAnswerRows} />
+                          ) : (
+                            <p className="transcriptPill transcriptPill--user">{message.text}</p>
+                          )}
                           {actions}
                         </div>
                       ) : null}

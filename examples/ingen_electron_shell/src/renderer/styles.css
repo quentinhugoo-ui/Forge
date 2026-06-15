@@ -5335,6 +5335,105 @@ button {
   max-width: 100%;
 }
 
+.questionnaireAnswerTable {
+  display: grid;
+  gap: 0;
+  width: min(720px, 100%);
+  overflow: hidden;
+  color: var(--forge-text);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.34),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.026);
+}
+
+.questionnaireAnswerTable__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  color: color-mix(in oklab, var(--forge-text), white 5%);
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+
+.questionnaireAnswerTable__header strong {
+  font-weight: 640;
+}
+
+.questionnaireAnswerTable__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px !important;
+  background: var(--forge-accent);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--forge-accent), transparent 42%);
+}
+
+.questionnaireAnswerTable__body {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.questionnaireAnswerTable__row {
+  min-width: 0;
+}
+
+.questionnaireAnswerTable__row + .questionnaireAnswerTable__row {
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.questionnaireAnswerTable__question,
+.questionnaireAnswerTable__answer {
+  min-width: 0;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.42;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.questionnaireAnswerTable__question {
+  width: 42%;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
+  border-right: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.questionnaireAnswerTable__answer {
+  color: color-mix(in oklab, var(--forge-text), white 3%);
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--forge-accent), transparent 94%), transparent 58%);
+}
+
+@media (max-width: 760px) {
+  .questionnaireAnswerTable__body,
+  .questionnaireAnswerTable__body tbody,
+  .questionnaireAnswerTable__row {
+    display: block;
+  }
+
+  .questionnaireAnswerTable__question,
+  .questionnaireAnswerTable__answer {
+    display: block;
+    width: 100%;
+  }
+
+  .questionnaireAnswerTable__question {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    padding-bottom: 6px;
+  }
+
+  .questionnaireAnswerTable__answer {
+    padding-top: 8px;
+  }
+}
+
 .transcriptAttachmentEvents {
   display: grid;
   gap: 5px;
