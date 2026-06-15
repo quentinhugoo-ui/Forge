@@ -38,6 +38,11 @@ interface PaneTabsProps {
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
+export interface CodingLivePreviewTarget {
+  path: string;
+  kind: "html" | "react" | "vite" | "unknown";
+  revision: number;
+}
 type GoogleEarthWebviewElement = HTMLElement & {
   executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
 };
@@ -251,6 +256,66 @@ function GoogleWordmarkMono() {
       <path fill="currentColor" d="M262.02 54.48l7.56 5.04c-2.44 3.61-8.32 9.83-18.48 9.83-12.6 0-22.01-9.74-22.01-22.18 0-13.19 9.49-22.18 20.92-22.18 11.51 0 17.14 9.16 18.98 14.11l1.01 2.52-29.65 12.28c2.27 4.45 5.8 6.72 10.75 6.72 4.96 0 8.4-2.44 10.92-6.14zm-23.27-7.98l19.82-8.23c-1.09-2.77-4.37-4.7-8.23-4.7-4.95 0-11.84 4.37-11.59 12.93z" />
       <path fill="currentColor" d="M35.29 41.41V32H67c.31 1.64.47 3.58.47 5.68 0 7.06-1.93 15.79-8.15 22.01-6.05 6.3-13.78 9.66-24.02 9.66C16.32 69.35.36 53.89.36 34.91.36 15.93 16.32.47 35.3.47c10.5 0 17.98 4.12 23.6 9.49l-6.64 6.64c-4.03-3.78-9.49-6.72-16.97-6.72-13.86 0-24.7 11.17-24.7 25.03 0 13.86 10.84 25.03 24.7 25.03 8.99 0 14.11-3.61 17.39-6.89 2.66-2.66 4.41-6.46 5.1-11.65l-22.49.01z" />
     </svg>
+  );
+}
+
+function fileUrlFromPreviewPath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/\\/g, "/");
+  const drivePath = normalized.match(/^([A-Za-z]):\/(.+)$/);
+  if (drivePath) {
+    const body = drivePath[2].split("/").map(encodeURIComponent).join("/");
+    return `file:///${drivePath[1]}:/${body}`;
+  }
+  if (normalized.startsWith("//")) {
+    return `file:${normalized.split("/").map((part, index) => index < 2 ? part : encodeURIComponent(part)).join("/")}`;
+  }
+  if (normalized.startsWith("/")) {
+    return `file://${normalized.split("/").map((part, index) => index === 0 ? part : encodeURIComponent(part)).join("/")}`;
+  }
+  return null;
+}
+
+function CodingLivePreviewFrame({ preview }: { preview: CodingLivePreviewTarget }) {
+  const [reloadTick, setReloadTick] = useState(0);
+  const fileUrl = useMemo(() => fileUrlFromPreviewPath(preview.path), [preview.path]);
+  useEffect(() => {
+    if (!fileUrl) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => setReloadTick((tick) => tick + 1), 1400);
+    return () => window.clearInterval(interval);
+  }, [fileUrl]);
+  const src = fileUrl ? `${fileUrl}${fileUrl.includes("?") ? "&" : "?"}ingenPreview=${preview.revision}-${reloadTick}` : "";
+  const fileName = preview.path.split(/[\\/]/).filter(Boolean).at(-1) || preview.path;
+  return (
+    <div className="codingLivePreview" aria-label="Coding live preview">
+      <div className="codingLivePreview__meta" aria-hidden="true">
+        <span>{preview.kind === "unknown" ? "Live Preview" : `${preview.kind.toUpperCase()} Preview`}</span>
+        <code>{fileName}</code>
+      </div>
+      {fileUrl ? (
+        <iframe
+          key={src}
+          className="codingLivePreview__frame"
+          src={src}
+          sandbox="allow-scripts allow-forms allow-modals"
+          referrerPolicy="no-referrer"
+          title={`Live preview ${fileName}`}
+        />
+      ) : (
+        <div className="codingLivePreview__empty">
+          <strong>Preview path unavailable</strong>
+          <span>{preview.path}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -923,6 +988,7 @@ export function CanvasSurfacesSlice({
   mapsParallelIndex = 0,
   mapsUrl,
   mapsSearchQuery,
+  codingLivePreview,
   leftPanelOpen,
   parallelPrompts,
   removableParallelIndexes,
@@ -938,6 +1004,7 @@ export function CanvasSurfacesSlice({
   onWebExplorerOpen,
   onWebExplorerClose,
   onMapsClose,
+  onCodingLivePreviewClose,
   onParallelAdd,
   onParallelRemove
 }: {
@@ -954,6 +1021,7 @@ export function CanvasSurfacesSlice({
   mapsParallelIndex?: number;
   mapsUrl?: string;
   mapsSearchQuery?: string;
+  codingLivePreview?: CodingLivePreviewTarget | null;
   leftPanelOpen: boolean;
   parallelPrompts: string[];
   removableParallelIndexes: boolean[];
@@ -969,6 +1037,7 @@ export function CanvasSurfacesSlice({
   onWebExplorerOpen: () => void;
   onWebExplorerClose: () => void;
   onMapsClose: () => void;
+  onCodingLivePreviewClose: () => void;
   onParallelAdd: () => void;
   onParallelRemove: (index: number) => void;
 }) {
@@ -1000,6 +1069,7 @@ export function CanvasSurfacesSlice({
   const parallelWebExplorerOpen = split && webExplorerOpen && parallelOpen;
   const mapsCanvasOpen = split && mapsOpen && !parallelOpen;
   const parallelMapsOpen = split && mapsOpen && parallelOpen;
+  const codingLivePreviewOpen = split && codingLivePreview !== null && !parallelOpen;
   const dualNativeBrowserOpen = split && webExplorerOpen && mapsOpen;
   const boundedWebExplorerParallelIndex = Math.max(0, Math.min(webExplorerParallelIndex, parallelPrompts.length - 1));
   const boundedMapsParallelIndex = Math.max(0, Math.min(mapsParallelIndex, parallelPrompts.length - 1));
@@ -1012,8 +1082,9 @@ export function CanvasSurfacesSlice({
     actionsOpen ? "canvasSurfaces--actionsOpen" : "",
     filesOpen ? "canvasSurfaces--filesOpen" : "",
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
-    parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen ? "canvasSurfaces--parallelOpen" : "",
+    parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen || codingLivePreviewOpen ? "canvasSurfaces--parallelOpen" : "",
     activeNativeBrowserSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
+    codingLivePreviewOpen ? "canvasSurfaces--codingLivePreviewOpen" : "",
     activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
     dualNativeBrowserOpen ? "canvasSurfaces--nativePager" : ""
   ].filter(Boolean).join(" ");
@@ -1272,6 +1343,16 @@ export function CanvasSurfacesSlice({
                 </section>
               );
             })}
+          </div>
+        ) : codingLivePreviewOpen && codingLivePreview ? (
+          <div className="parallelCanvasGrid parallelCanvasGrid--count2 codingLivePreviewGrid">
+            <section className="parallelCanvasPane" aria-label="Primary canvas" />
+            <section className="parallelCanvasPane codingLivePreviewPane" aria-label="Coding live preview canvas">
+              <button type="button" className="webExplorerClose codingLivePreview__close" aria-label="Close coding live preview" onClick={onCodingLivePreviewClose}>
+                <span aria-hidden="true" />
+              </button>
+              <CodingLivePreviewFrame preview={codingLivePreview} />
+            </section>
           </div>
         ) : webExplorerCanvasOpen && mapsCanvasOpen ? (
           <div className={["parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid", nativeBrowserPage === "maps" ? "mapsCanvasGrid--earthActive" : ""].filter(Boolean).join(" ")}>

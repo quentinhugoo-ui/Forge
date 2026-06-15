@@ -3,6 +3,7 @@ import {
   BRAIN_AIRBNB_COMMAND,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
+  BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_WORKSPACE_COMMAND,
   type NativeWebExplorerCodeAct,
@@ -56,6 +57,33 @@ function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModul
   if (event.command === BRAIN_AIRBNB_COMMAND) return "airbnb";
   if (event.command === BRAIN_GMAIL_COMMAND || event.command === BRAIN_GMAIL_COM_COMMAND) return "gmail";
   return null;
+}
+
+interface CodingLivePreviewTarget {
+  path: string;
+  kind: "html" | "react" | "vite" | "unknown";
+  revision: number;
+}
+
+function codeActSlotValue(line: string, name: string): string {
+  const pattern = new RegExp(`${name}=("([^"]*)"|'([^']*)'|([^\\s]+))`, "i");
+  const match = line.match(pattern);
+  return (match?.[2] ?? match?.[3] ?? match?.[4] ?? "").trim();
+}
+
+function latestCodingLivePreviewTarget(text: string): Omit<CodingLivePreviewTarget, "revision"> | null {
+  const commandIndex = text.lastIndexOf(BRAIN_CODING_LIVE_PREVIEW_COMMAND);
+  if (commandIndex < 0) {
+    return null;
+  }
+  const line = text.slice(commandIndex).split(/\r?\n/, 1)[0] ?? "";
+  const path = codeActSlotValue(line, "path") || codeActSlotValue(line, "file");
+  if (!path) {
+    return null;
+  }
+  const rawKind = codeActSlotValue(line, "kind").toLowerCase();
+  const kind = rawKind === "html" || rawKind === "react" || rawKind === "vite" ? rawKind : "unknown";
+  return { path, kind };
 }
 
 function windowGlyphClass(command: HeaderControl["command"]): string {
@@ -209,6 +237,7 @@ export function App() {
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
+  const [codingLivePreview, setCodingLivePreview] = useState<CodingLivePreviewTarget | null>(null);
   const [widgetMode, setWidgetMode] = useState(false);
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
@@ -284,6 +313,7 @@ export function App() {
     canvasPlanetsOpen ||
     canvasWebExplorerOpen ||
     canvasMapsOpen ||
+    codingLivePreview !== null ||
     parallelPrompts.length > 1;
   const latestAssistantText = useMemo(() => {
     return panelsChatSnapshot.transcript.filter((message) => message.role === "assistant").at(-1)?.text ?? "";
@@ -379,6 +409,7 @@ export function App() {
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
     canvasMapsOpen ? "shell--maps-canvas-open" : "",
+    codingLivePreview ? "shell--coding-live-preview-open" : "",
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
@@ -688,6 +719,7 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCodingLivePreview(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setCanvasFilesOpen(true);
@@ -698,6 +730,7 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCodingLivePreview(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setCanvasTerminalOpen(true);
@@ -721,6 +754,7 @@ export function App() {
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCodingLivePreview(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setParallelPrompts([""]);
@@ -735,6 +769,7 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasWebExplorerOpen(false);
+    setCodingLivePreview(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setParallelPrompts([""]);
@@ -747,6 +782,7 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
+    setCodingLivePreview(null);
     if (!options?.keepMapsOpen) {
       canvasMapsOpenRef.current = false;
       setCanvasMapsOpen(false);
@@ -773,6 +809,7 @@ export function App() {
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCodingLivePreview(null);
     setMapsParallelIndex(parallelSessionIndex);
     mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft";
     canvasMapsOpenRef.current = true;
@@ -788,6 +825,27 @@ export function App() {
     setCanvasMapsOpen(false);
     setMapsParallelIndex(0);
     void globalThis.window?.forgeShell?.hideNativeMaps?.();
+  }, []);
+
+  const openCodingLivePreview = useCallback((target: Omit<CodingLivePreviewTarget, "revision">) => {
+    setCanvasSplitOpen(false);
+    setCanvasFilesOpen(false);
+    setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
+    setCanvasPlanetsOpen(false);
+    setCanvasWebExplorerOpen(false);
+    setWebExplorerModuleId(null);
+    canvasMapsOpenRef.current = false;
+    setCanvasMapsOpen(false);
+    setParallelPrompts([""]);
+    setCodingLivePreview((current) => ({
+      ...target,
+      revision: current && current.path === target.path ? current.revision + 1 : 1
+    }));
+  }, []);
+
+  const closeCodingLivePreview = useCallback(() => {
+    setCodingLivePreview(null);
   }, []);
 
   useEffect(() => {
@@ -813,6 +871,11 @@ export function App() {
 
   useEffect(() => {
     const latestAssistant = latestAssistantText ? { text: latestAssistantText } : undefined;
+    const codingPreviewTarget = latestAssistant ? latestCodingLivePreviewTarget(latestAssistant.text) : null;
+    if (codingPreviewTarget) {
+      openCodingLivePreview(codingPreviewTarget);
+      return;
+    }
     if (latestAssistant?.text.includes("AIRBNB_RESULT")) {
       const keepMapsOpen = latestAssistant.text.includes("MAPS_RESULT") || latestAssistant.text.includes(BRAIN_MAPS_COMMAND);
       if (keepMapsOpen && !canvasMapsOpenRef.current) {
@@ -835,7 +898,7 @@ export function App() {
     if (latestAssistant?.text.includes("MAPS_RESULT")) {
       openCanvasMaps(0);
     }
-  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer]);
+  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer, openCodingLivePreview]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -1282,6 +1345,7 @@ export function App() {
           mapsParallelIndex={mapsParallelIndex}
           mapsUrl={mapsWebviewUrl}
           mapsSearchQuery={latestAssistantGeoEntityLabel}
+          codingLivePreview={codingLivePreview}
           leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
           removableParallelIndexes={removableParallelIndexes}
@@ -1297,6 +1361,7 @@ export function App() {
           onWebExplorerOpen={openCanvasWebExplorer}
           onWebExplorerClose={closeCanvasWebExplorer}
           onMapsClose={closeCanvasMaps}
+          onCodingLivePreviewClose={closeCodingLivePreview}
           onParallelAdd={addParallelCanvas}
           onParallelRemove={removeParallelCanvas}
         />

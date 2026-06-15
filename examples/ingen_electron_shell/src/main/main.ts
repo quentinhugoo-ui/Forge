@@ -39,6 +39,7 @@ import {
   BRAIN_SELECTCOMPUTE_COMMAND,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
   BRAIN_WORKSPACE_COMMAND,
@@ -4745,7 +4746,7 @@ function textLooksLikeLocalActionIntent(text: string): boolean {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-  return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build)\b/.test(normalized);
+  return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build|code|coder|html|css|javascript|typescript|react|vite|page|site|frontend|front-end|composant)\b/.test(normalized);
 }
 
 function textIsAgentActionContinuation(text: string): boolean {
@@ -4834,6 +4835,7 @@ function brainSegmentManifest(): string {
       "active=coding",
       `activated_by=${BRAIN_CODING_COMMAND}`,
       `rule=${BRAIN_CODING_COMMAND} is already active for this session; continue directly in Coding Brain and do not emit ${BRAIN_CODING_COMMAND} again unless a later turn explicitly switches away first.`,
+      `visual_artifact_rule=For HTML/CSS/JS/React/Vite pages or visual components, create or modify the real local file with AGENT_ACTION_JSON first, wait for AGENT_ACTION_RESULT proof, then emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} path="verified absolute file path" kind="html|react|vite". Do not only paste a code block unless the user explicitly asked for a snippet.`,
       BRAIN_CODING_VISIBLE_CATALOG
     ].join("\n");
   }

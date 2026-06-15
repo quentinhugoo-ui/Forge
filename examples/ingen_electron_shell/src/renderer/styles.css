@@ -4105,7 +4105,8 @@ button {
   z-index: 30;
 }
 
-.canvasSurfaces--webExplorerOpen ~ .panelsChatBottom .chatCanvas {
+.canvasSurfaces--webExplorerOpen ~ .panelsChatBottom .chatCanvas,
+.canvasSurfaces--codingLivePreviewOpen ~ .panelsChatBottom .chatCanvas {
   left: calc(var(--main-left) + 24px);
   width: max(300px, calc(((100vw - var(--main-left) - 18px) / 2) - 24px));
 }
@@ -8128,7 +8129,8 @@ ol.assistantText__list li::before {
   pointer-events: auto;
 }
 
-.canvasSurfaces--webExplorerOpen {
+.canvasSurfaces--webExplorerOpen,
+.canvasSurfaces--codingLivePreviewOpen {
   top: 96px;
   right: 0;
   bottom: var(--chat-canvas-bottom);
@@ -8239,6 +8241,73 @@ ol.assistantText__list li::before {
   position: relative;
   background: transparent;
   pointer-events: auto;
+}
+
+.codingLivePreviewPane {
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.codingLivePreview {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.codingLivePreview__frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+.codingLivePreview__meta {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 72px);
+  padding: 5px 7px;
+  color: rgba(245, 248, 255, 0.72);
+  font-family: var(--forge-font-mono);
+  font-size: 10px;
+  line-height: 1.2;
+  background: rgba(8, 10, 14, 0.56);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.codingLivePreview__meta code {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(245, 248, 255, 0.88);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codingLivePreview__empty {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  gap: 8px;
+  padding: 28px;
+  color: #0f172a;
+  font-family: var(--forge-font);
+  text-align: center;
+}
+
+.codingLivePreview__empty span {
+  color: #475569;
+  font-family: var(--forge-font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .canvasSurfaces--webExplorerOpen .parallelCanvasGrid {
