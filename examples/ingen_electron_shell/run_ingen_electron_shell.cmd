@@ -17,9 +17,13 @@ set FORGE_WINDOWS_TASKBAR_HELPER_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-s
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
 set INGEN_ELECTRON_LEGACY_USER_DATA_DIR=%APPDATA%\InGen
 set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\InGenRuntime
+set FORGE_ELECTRON_BUILD_WIDGET_SCRIPT=%~dp0scripts\launcher-build-progress-widget.ps1
 for /f %%H in ('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\').ToLowerInvariant(); $bytes = [Text.Encoding]::UTF8.GetBytes($root); $sha = [Security.Cryptography.SHA256]::Create(); $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').Substring(0, 12).ToLowerInvariant(); $sha.Dispose(); Write-Output $hash"') do set WORKSPACE_BUILD_ID=%%H
 if "%WORKSPACE_BUILD_ID%"=="" set WORKSPACE_BUILD_ID=default
 set BUILD_LOCK=C:\tmp\ingen-electron-launch-build-%WORKSPACE_BUILD_ID%.lock
+if not "%FORGE_ELECTRON_BUILD_WIDGET%"=="0" if exist "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" (
+  start "" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Sta -File "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" -LogPath "%LOG%" -ElectronPath "%FORGE_ELECTRON_EXE%" -ShellRoot "%~dp0" -BuildLockPath "%BUILD_LOCK%"
+)
 set NEED_BACKEND_REBUILD=0
 set NEED_TASKBAR_HELPER_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
