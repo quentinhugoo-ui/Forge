@@ -22619,12 +22619,26 @@ fn noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+fn fbm(p: vec2<f32>) -> f32 {
+    var value = 0.0;
+    var amp = 0.5;
+    var q = p;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        value += noise(q) * amp;
+        q = mat2x2<f32>(1.64, 1.08, -1.08, 1.64) * q + vec2<f32>(4.7, 1.3);
+        amp *= 0.52;
+    }
+    return value;
+}
+
 fn ocean_height(p: vec2<f32>) -> f32 {
     let swell_a = sin(dot(p, vec2<f32>(0.78, 0.23)) * 0.82 + 0.42) * 0.72;
     let swell_b = sin(dot(p, vec2<f32>(-0.34, 0.91)) * 1.55 + 1.85) * 0.38;
     let chop = sin(dot(p, vec2<f32>(1.45, 0.64)) * 4.6 + 2.7) * 0.16;
+    let cross_chop = sin(dot(p, vec2<f32>(-1.18, 1.54)) * 5.9 + 0.3) * 0.11;
     let ripple = sin(dot(p, vec2<f32>(-1.90, 0.22)) * 9.0 + 0.7) * 0.055;
-    return swell_a + swell_b + chop + ripple + (noise(p * 0.55) - 0.5) * 0.24;
+    let capillary = sin(dot(p, vec2<f32>(3.4, -1.2)) * 18.0 + fbm(p * 0.75) * 3.2) * 0.026;
+    return swell_a + swell_b + chop + cross_chop + ripple + capillary + (fbm(p * 0.55) - 0.5) * 0.30;
 }
 
 fn ocean_normal(p: vec2<f32>) -> vec3<f32> {
@@ -22654,8 +22668,22 @@ fn sky_color(uv: vec2<f32>, sun_center: vec2<f32>) -> vec3<f32> {
     color += vec3<f32>(1.0, 0.62, 0.20) * glow * 0.52;
     color = mix(color, vec3<f32>(1.0, 0.74, 0.35), disk);
 
-    let band = smoothstep(0.02, 0.0, abs(uv.y - 0.49)) * (0.35 + 0.65 * noise(vec2<f32>(uv.x * 14.0, 2.0)));
-    return color + vec3<f32>(0.36, 0.10, 0.16) * band * 0.22;
+    let band = smoothstep(0.025, 0.0, abs(uv.y - 0.49)) * (0.35 + 0.65 * fbm(vec2<f32>(uv.x * 18.0, 2.0)));
+    color += vec3<f32>(0.52, 0.13, 0.18) * band * 0.28;
+
+    let cloud_shape = fbm(vec2<f32>(uv.x * 5.0 + uv.y * 1.6, uv.y * 13.0 + 4.0));
+    let high_clouds = smoothstep(0.60, 0.83, cloud_shape) * smoothstep(0.58, 0.92, uv.y);
+    color = mix(color, color + vec3<f32>(0.34, 0.21, 0.28), high_clouds * 0.25);
+
+    let ridge = 0.445 + fbm(vec2<f32>(uv.x * 8.0, 6.0)) * 0.040 + sin(uv.x * 19.0) * 0.006;
+    let below_ridge = 1.0 - smoothstep(ridge - 0.004, ridge + 0.006, uv.y);
+    let horizon_gate = 1.0 - smoothstep(0.44, 0.54, uv.y);
+    let land = below_ridge * horizon_gate;
+    let land_color = mix(vec3<f32>(0.08, 0.065, 0.075), vec3<f32>(0.27, 0.15, 0.12), smoothstep(0.48, 0.78, uv.x));
+    color = mix(color, land_color, land * 0.72);
+
+    let haze = 1.0 - smoothstep(0.43, 0.54, abs(uv.y - 0.48));
+    return mix(color, vec3<f32>(1.0, 0.48, 0.20), haze * 0.08);
 }
 
 @vertex
@@ -22727,44 +22755,58 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let sky = sky_color(screen_uv, sun_center);
         return vec4<f32>(pow(clamp(sky, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
     }
-    let normal = ocean_normal(in.world_xz);
+    let base_normal = ocean_normal(in.world_xz);
     let view_dir = normalize(vec3<f32>(-in.world_xz.x * 0.015, 0.40, 1.0));
     let light_dir = normalize(vec3<f32>(0.30, 0.50, 0.82));
-    let fresnel = pow(1.0 - saturate(dot(normal, view_dir)), 4.2);
-    let specular = pow(saturate(dot(reflect(-light_dir, normal), view_dir)), 84.0);
-    let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (8.0 + in.distance_t * 18.0)) * smoothstep(0.05, 0.95, 1.0 - in.distance_t);
-    let wave_glint = smoothstep(0.58, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5);
     let water_info = sample_water_info(water_info_uv_from_world(in.world_xz));
     let surface_uv = water_info_uv_from_world(in.world_xz);
     let displacement = sample_water_displacement(surface_uv);
     let slope_sample = sample_water_slope(surface_uv);
-    let hzb = sample_water_hzb(screen_uv + (slope_sample.xy * 2.0 - vec2<f32>(1.0, 1.0)) * 0.018, 1u);
+    let spectral_slope = slope_sample.xy * 2.0 - vec2<f32>(1.0, 1.0);
+    let micro_break = slope_sample.w;
+    let normal = normalize(vec3<f32>(
+        base_normal.x + spectral_slope.x * mix(0.92, 0.30, in.distance_t),
+        base_normal.y,
+        base_normal.z + spectral_slope.y * mix(0.92, 0.28, in.distance_t),
+    ));
+    let fresnel = pow(1.0 - saturate(dot(normal, view_dir)), 4.2);
+    let specular = pow(saturate(dot(reflect(-light_dir, normal), view_dir)), 96.0);
+    let hzb = sample_water_hzb(screen_uv + spectral_slope * 0.018, 1u);
     let water_depth_delta = water_info.y - water_info.x;
     let shoreline = smoothstep(0.075, 0.0, abs(water_depth_delta));
     let flow = water_info.zw * 2.0 - vec2<f32>(1.0, 1.0);
-    let spectral_slope = slope_sample.xy * 2.0 - vec2<f32>(1.0, 1.0);
     let spectral_foam = slope_sample.z;
     let refraction_mask = hzb.z;
     let hzb_occlusion = smoothstep(0.18, 0.94, hzb.y - hzb.x);
     let flow_energy = smoothstep(0.18, 0.72, length(flow));
     let foam_seed = sin(dot(in.world_xz + flow * 2.4, vec2<f32>(1.7, 0.43)) * 4.8) * 0.5 + 0.5;
-    let wave_foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
-    let foam = saturate(wave_foam * 0.42 + spectral_foam * 0.36 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
+    let foam_threads = smoothstep(
+        0.58,
+        0.96,
+        fbm(in.world_xz * vec2<f32>(0.07, 0.34) + flow * 1.8 + spectral_slope * 0.32),
+    ) * smoothstep(0.0, 0.52, 1.0 - in.distance_t);
+    let wave_foam = smoothstep(0.62, 1.12, abs(normal.x) + abs(normal.z) + micro_break * 0.22) * smoothstep(0.0, 0.42, 1.0 - in.distance_t);
+    let foam = saturate(wave_foam * 0.40 + spectral_foam * 0.32 + foam_threads * 0.24 + shoreline * (0.40 + 0.60 * foam_seed) + flow_energy * shoreline * 0.42);
     let shallow_tint = smoothstep(0.16, 0.0, abs(water_depth_delta));
+    let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (5.2 + in.distance_t * 12.0)) * smoothstep(0.02, 0.96, 1.0 - in.distance_t);
+    let broken_streaks = smoothstep(0.42, 0.90, fbm(vec2<f32>(in.world_xz.x * 0.11, in.world_xz.y * 0.64) + spectral_slope * 0.7));
+    let wave_glint = smoothstep(0.48, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5) * (0.45 + 0.55 * broken_streaks);
 
     let deep = vec3<f32>(0.010, 0.055, 0.13);
     let near = mix(vec3<f32>(0.02, 0.23, 0.30), vec3<f32>(0.07, 0.35, 0.34), shallow_tint);
     let refracted_scene = sky_color(vec2<f32>(screen_uv.x + spectral_slope.x * 0.045, 0.46 + (1.0 - in.distance_t) * 0.18), sun_center);
     let reflected = sky_color(vec2<f32>(screen_uv.x + (normal.x + spectral_slope.x * 0.18) * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
     let absorption = exp(-(0.45 + in.distance_t * 2.2 + hzb_occlusion * 1.4));
+    let horizon_haze = smoothstep(0.66, 1.0, in.distance_t);
     var color = mix(near, deep, smoothstep(0.0, 0.92, in.distance_t));
     color = mix(color, refracted_scene * vec3<f32>(0.16, 0.34, 0.30), refraction_mask * absorption * 0.28);
     color = mix(color, reflected, 0.12 + fresnel * 0.42 + shoreline * 0.06);
     color += vec3<f32>(0.02, 0.13, 0.10) * (1.0 - absorption) * 0.30;
-    color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
-    color += vec3<f32>(1.0, 0.78, 0.52) * specular * (0.48 + displacement.w * 0.22);
+    color += vec3<f32>(1.0, 0.43, 0.09) * sun_path * (0.22 + 0.58 * wave_glint);
+    color += vec3<f32>(1.0, 0.78, 0.52) * specular * (0.48 + displacement.w * 0.22 + micro_break * 0.26);
     color = mix(color, vec3<f32>(0.72, 0.91, 0.88), shoreline * 0.14);
-    color = mix(color, vec3<f32>(0.72, 0.90, 0.94), foam * 0.24);
+    color = mix(color, vec3<f32>(0.75, 0.91, 0.94), foam * 0.30);
+    color = mix(color, vec3<f32>(0.62, 0.34, 0.24), horizon_haze * 0.16);
     color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
     return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
 }
@@ -23015,7 +23057,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let ndc_x = world_x / (z * 0.34);
     let interaction_keep = smoothstep(0.08, 0.42, mask_energy + depth_span);
     let frustum_keep = select(0.0, 1.0, abs(ndc_x) < 1.18);
-    let visible = max(frustum_keep, interaction_keep);
+    let visible = frustum_keep * max(0.55, interaction_keep);
     let lod_ring = saturate(distance_t);
 
     if (visible > 0.5) {
