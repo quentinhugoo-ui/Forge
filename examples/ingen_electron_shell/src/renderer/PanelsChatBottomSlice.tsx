@@ -1208,6 +1208,13 @@ function prefersReducedMotion() {
 }
 
 const TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
+const TRANSCRIPT_INITIAL_VISIBLE_MESSAGES = 48;
+const TRANSCRIPT_PREPEND_BATCH_MESSAGES = 48;
+const TRANSCRIPT_TOP_PRELOAD_THRESHOLD_PX = 96;
+
+function initialTranscriptWindowSize(total: number): number {
+  return Math.min(total, TRANSCRIPT_INITIAL_VISIBLE_MESSAGES);
+}
 
 function transcriptIsNearBottom(container: HTMLElement) {
   return container.scrollHeight - container.scrollTop - container.clientHeight <= TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX;
@@ -3903,10 +3910,24 @@ function TranscriptCanvas({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const followLatestTranscriptRef = useRef(true);
+  const prependScrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const messageCountRef = useRef(messages.length);
+  const visibleMessageCountRef = useRef(initialTranscriptWindowSize(messages.length));
+  const [messageWindow, setMessageWindow] = useState(() => ({
+    sessionId: activeSessionId,
+    count: initialTranscriptWindowSize(messages.length)
+  }));
   const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; queue: string[]; hadPending: boolean } | null>(null);
   const [, setAssistantAnimationQueueVersion] = useState(0);
   const latestMessage = messages.at(-1);
   const messageIds = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
+  const visibleMessageCount = Math.min(
+    messages.length,
+    messageWindow.sessionId === activeSessionId ? messageWindow.count : initialTranscriptWindowSize(messages.length)
+  );
+  const visibleStartIndex = Math.max(0, messages.length - visibleMessageCount);
+  const visibleMessages = useMemo(() => messages.slice(visibleStartIndex), [messages, visibleStartIndex]);
+  const visibleMessageIds = useMemo(() => new Set(visibleMessages.map((message) => message.id)), [visibleMessages]);
   const assistantMessageIds = useMemo(
     () => messages
       .filter((message) => message.role === "assistant" && message.text.trim() && !message.id.startsWith("assistant-pending-") && !message.id.startsWith("assistant-error-"))
@@ -3915,7 +3936,8 @@ function TranscriptCanvas({
   );
   const latestAssistantMessageId = assistantMessageIds.at(-1) ?? "";
   const hasPendingAssistant = messages.some((message) => message.role === "assistant" && message.id.startsWith("assistant-pending-"));
-  const visiblePins = useMemo(() => pins.filter((pin) => messageIds.has(pin.id)), [messageIds, pins]);
+  const storedPins = useMemo(() => pins.filter((pin) => messageIds.has(pin.id)), [messageIds, pins]);
+  const visiblePins = useMemo(() => storedPins.filter((pin) => visibleMessageIds.has(pin.id)), [storedPins, visibleMessageIds]);
   let hadPendingBeforeRender = assistantAnimationRef.current?.hadPending ?? false;
 
   if (assistantAnimationRef.current === null) {
@@ -3980,12 +4002,36 @@ function TranscriptCanvas({
   }, [storageKey]);
 
   useEffect(() => {
-    savePins(storageKey, visiblePins);
-  }, [storageKey, visiblePins]);
+    savePins(storageKey, storedPins);
+  }, [storageKey, storedPins]);
+
+  useLayoutEffect(() => {
+    prependScrollRestoreRef.current = null;
+    messageCountRef.current = messages.length;
+    visibleMessageCountRef.current = initialTranscriptWindowSize(messages.length);
+    setMessageWindow({
+      sessionId: activeSessionId,
+      count: initialTranscriptWindowSize(messages.length)
+    });
+    followLatestTranscriptRef.current = true;
+    followTranscriptLatest(messagesRef.current, "instant");
+  }, [activeSessionId]);
 
   useEffect(() => {
-    followLatestTranscriptRef.current = true;
-  }, [activeSessionId]);
+    messageCountRef.current = messages.length;
+    visibleMessageCountRef.current = visibleMessageCount;
+  }, [messages.length, visibleMessageCount]);
+
+  useLayoutEffect(() => {
+    const restore = prependScrollRestoreRef.current;
+    const container = messagesRef.current;
+    if (!restore || !container) {
+      return;
+    }
+    prependScrollRestoreRef.current = null;
+    const heightDelta = container.scrollHeight - restore.scrollHeight;
+    container.scrollTop = restore.scrollTop + heightDelta;
+  }, [visibleMessageCount, visibleStartIndex]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -3994,6 +4040,25 @@ function TranscriptCanvas({
     }
     const updateFollowMode = () => {
       followLatestTranscriptRef.current = transcriptIsNearBottom(container);
+      if (container.scrollTop > TRANSCRIPT_TOP_PRELOAD_THRESHOLD_PX) {
+        return;
+      }
+      const totalMessages = messageCountRef.current;
+      const currentVisibleMessages = visibleMessageCountRef.current;
+      if (currentVisibleMessages >= totalMessages) {
+        return;
+      }
+      prependScrollRestoreRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop
+      };
+      setMessageWindow((current) => ({
+        sessionId: activeSessionId,
+        count: Math.min(
+          totalMessages,
+          (current.sessionId === activeSessionId ? current.count : currentVisibleMessages) + TRANSCRIPT_PREPEND_BATCH_MESSAGES
+        )
+      }));
     };
     container.addEventListener("scroll", updateFollowMode, { passive: true });
     return () => container.removeEventListener("scroll", updateFollowMode);
@@ -4013,7 +4078,7 @@ function TranscriptCanvas({
     followTranscriptLatest(container, latestMessage?.role === "user" ? "smooth" : "instant");
   }, [latestMessage?.id, latestMessage?.text]);
 
-  const pinnedIds = new Set(visiblePins.map((pin) => pin.id));
+  const pinnedIds = new Set(storedPins.map((pin) => pin.id));
 
   const togglePin = (message: TranscriptMessage) => {
     setPins((current) =>
@@ -4079,7 +4144,8 @@ function TranscriptCanvas({
         </div>
       ) : null}
       <div className="chatCanvas__messages" ref={messagesRef}>
-        {messages.map((message, index) => {
+        {visibleMessages.map((message, visibleIndex) => {
+          const index = visibleStartIndex + visibleIndex;
           const attachments = message.attachments ?? [];
           const visualAttachments = attachments.filter(isTranscriptVisualAttachment);
           const role = message.role === "user" ? "user" : "assistant";
@@ -4833,7 +4899,7 @@ export function PanelsChatBottomSlice({
   const providers = snapshot.composer.providers;
   const uploadPreviews = snapshot.composer.uploadPreviews;
   const permissionMode = snapshot.composer.permissionMode;
-  const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
+  const canvasMessages = useMemo(() => snapshot.transcript.filter((message) => message.role !== "system"), [snapshot.transcript]);
   const widgetTranscriptMessages = useMemo(
     () =>
       canvasMessages
