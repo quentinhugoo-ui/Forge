@@ -17,13 +17,18 @@ set FORGE_WINDOWS_TASKBAR_HELPER_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-s
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
 set INGEN_ELECTRON_LEGACY_USER_DATA_DIR=%APPDATA%\InGen
 set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\InGenRuntime
-set BUILD_LOCK=C:\tmp\ingen-electron-launch-build.lock
+for /f %%H in ('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\').ToLowerInvariant(); $bytes = [Text.Encoding]::UTF8.GetBytes($root); $sha = [Security.Cryptography.SHA256]::Create(); $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').Substring(0, 12).ToLowerInvariant(); $sha.Dispose(); Write-Output $hash"') do set WORKSPACE_BUILD_ID=%%H
+if "%WORKSPACE_BUILD_ID%"=="" set WORKSPACE_BUILD_ID=default
+set BUILD_LOCK=C:\tmp\ingen-electron-launch-build-%WORKSPACE_BUILD_ID%.lock
 set NEED_BACKEND_REBUILD=0
 set NEED_TASKBAR_HELPER_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
 set APP_ALREADY_RUNNING=0
 set OWN_BUILD_LOCK=0
-set DESKTOP_AUTO_REBUILD=0
+set RESTART_RUNNING_APP_AFTER_REBUILD=0
+set DESKTOP_AUTO_REBUILD=1
+if "%FORGE_ELECTRON_DESKTOP_STABLE%"=="1" set DESKTOP_AUTO_REBUILD=0
+if "%FORGE_ELECTRON_DESKTOP_AUTO_REBUILD%"=="0" set DESKTOP_AUTO_REBUILD=0
 if "%FORGE_ELECTRON_DESKTOP_AUTO_REBUILD%"=="1" set DESKTOP_AUTO_REBUILD=1
 
 if not exist "%INGEN_ELECTRON_USER_DATA_DIR%" mkdir "%INGEN_ELECTRON_USER_DATA_DIR%"
@@ -57,11 +62,12 @@ if "%APP_ALREADY_RUNNING%"=="1" (
     exit /b 0
   )
   echo InGen is already running, but Electron sources are newer. Rebuilding renderer assets before launch. >> "%LOG%"
+  set RESTART_RUNNING_APP_AFTER_REBUILD=1
 )
 
 2>nul mkdir "%BUILD_LOCK%"
 if errorlevel 1 (
-  echo Another InGen launcher is already preparing the build. Waiting briefly, then focusing the app. >> "%LOG%"
+  echo Another InGen launcher is already preparing this workspace build. Waiting briefly, then starting the fresh build output. >> "%LOG%"
   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $deadline = (Get-Date).AddSeconds(180); while ((Test-Path -LiteralPath $lock) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }; if (Test-Path -LiteralPath $lock) { exit 1 }"
   goto start_electron
 )
@@ -147,6 +153,11 @@ if exist "%~dp0dist-electron\main\main.js" (
 goto fail
 
 :start_electron
+if "%RESTART_RUNNING_APP_AFTER_REBUILD%"=="1" (
+  echo Restarting existing InGen Electron process so the fresh renderer bundle is visible. >> "%LOG%"
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >> "%LOG%" 2>>&1
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Milliseconds 650" >> "%LOG%" 2>>&1
+)
 echo Starting Electron... >> "%LOG%"
 if not exist "%FORGE_ELECTRON_EXE%" (
   echo Electron executable is missing. Repairing Electron runtime... >> "%LOG%"
