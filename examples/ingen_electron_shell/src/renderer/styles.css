@@ -171,10 +171,15 @@ button {
 .shell .brainMcpSuite::before,
 .shell .brainMemoryIdentity,
 .shell .brainMemoryIdentity::before,
+.shell .brainMemoryLocationSuggestions,
 .shell .brainLearningRegistry,
 .shell .brainLearningRegistry::before,
 .shell .brainLearningRegistry__composer {
   border-radius: 8px !important;
+}
+
+.shell .brainMemoryLocationSuggestions__option {
+  border-radius: 6px !important;
 }
 
 .shell--left-collapsed {
@@ -10699,9 +10704,10 @@ ol.assistantText__list li::before {
   overflow-y: auto;
   padding: 5px;
   border: 1px solid color-mix(in oklab, var(--forge-line), #f1d596 22%);
-  border-radius: 7px;
-  background: color-mix(in oklab, var(--forge-panel), #050608 18%);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.38);
+  background: var(--forge-canvas-bg, #0e0e0f);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 color-mix(in oklab, #ffffff, transparent 94%);
 }
 
 .brainMemoryLocationSuggestions__option {
@@ -10711,8 +10717,7 @@ ol.assistantText__list li::before {
   min-height: 30px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 5px;
-  color: var(--forge-ink);
+  color: color-mix(in oklab, var(--forge-text), #f1d596 18%);
   background: transparent;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 11px;
@@ -10724,7 +10729,7 @@ ol.assistantText__list li::before {
 .brainMemoryLocationSuggestions__option:hover,
 .brainMemoryLocationSuggestions__option--active {
   color: #fff5d6;
-  background: color-mix(in oklab, #f1d596, transparent 88%);
+  background: color-mix(in oklab, #f1d596, var(--forge-canvas-bg, #0e0e0f) 88%);
 }
 
 .brainMemoryLocationStatus {
