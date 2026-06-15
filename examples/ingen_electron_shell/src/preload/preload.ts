@@ -15,7 +15,8 @@ import type {
   NativeTerminalBounds,
   NativeWebExplorerCodeAct,
   NativeWebExplorerBounds,
-  WidgetWallpaperSampleBounds
+  WidgetWallpaperSampleBounds,
+  BrainCanonicalMemorySnapshot
 } from "../shared/ipc-contract.js";
 
 const forgeShell: ForgeShellApi = {
@@ -78,6 +79,12 @@ const forgeShell: ForgeShellApi = {
   },
   getSessionFilesSnapshot() {
     return ipcRenderer.invoke("forge:get-session-files-snapshot");
+  },
+  getBrainMemorySnapshot() {
+    return ipcRenderer.invoke("forge:get-brain-memory-snapshot");
+  },
+  mergeBrainMemorySnapshot(snapshot: BrainCanonicalMemorySnapshot) {
+    return ipcRenderer.invoke("forge:merge-brain-memory-snapshot", snapshot);
   },
   onLlmProviderEvent(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {

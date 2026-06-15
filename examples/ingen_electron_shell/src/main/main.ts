@@ -112,6 +112,8 @@ import {
   type NativeWebExplorerResult,
   type SearchArchiveRequest,
   type SearchArchiveResult,
+  type BrainCanonicalMemoryResult,
+  type BrainCanonicalMemorySnapshot,
   type SessionFilesSnapshot,
   type WidgetWallpaperSampleBounds,
   type WidgetWallpaperSampleResult,
@@ -4084,6 +4086,10 @@ function brainIdentityStorePath(): string {
   return join(memoryRootPath(), "identity-memory.json");
 }
 
+function brainRendererMemoryStorePath(): string {
+  return join(memoryRootPath(), "renderer-brain-memory.json");
+}
+
 function memoryBackupDir(): string {
   return join(memoryRootPath(), "backups");
 }
@@ -4144,6 +4150,152 @@ function memoryFileMtimeMs(filePath: string): number {
   } catch {
     return 0;
   }
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (typeof value === "undefined") return value;
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function blankBrainCanonicalMemorySnapshot(): BrainCanonicalMemorySnapshot {
+  return {
+    schema: "ingen.brain.renderer_memory_store.v1",
+    updatedAt: new Date(0).toISOString(),
+    learningEntries: [],
+    customCodeActs: [],
+    specializedBrains: [],
+    proofHash: ""
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeBrainCanonicalMemorySnapshot(value: unknown): BrainCanonicalMemorySnapshot {
+  const candidate = isRecord(value) ? value : {};
+  const snapshot: BrainCanonicalMemorySnapshot = {
+    schema: "ingen.brain.renderer_memory_store.v1",
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
+    userMemory: isRecord(candidate.userMemory) ? cloneJsonValue(candidate.userMemory) : undefined,
+    agentMemory: isRecord(candidate.agentMemory) ? cloneJsonValue(candidate.agentMemory) : undefined,
+    userLocationMemory: isRecord(candidate.userLocationMemory) ? cloneJsonValue(candidate.userLocationMemory) : undefined,
+    personalityMemory: isRecord(candidate.personalityMemory) ? cloneJsonValue(candidate.personalityMemory) : undefined,
+    learningEntries: Array.isArray(candidate.learningEntries) ? cloneJsonValue(candidate.learningEntries) : [],
+    customCodeActs: Array.isArray(candidate.customCodeActs) ? cloneJsonValue(candidate.customCodeActs) : [],
+    specializedBrains: Array.isArray(candidate.specializedBrains) ? cloneJsonValue(candidate.specializedBrains) : [],
+    proofHash: ""
+  };
+  snapshot.proofHash = stableSearchArchiveHash({
+    userMemory: snapshot.userMemory,
+    agentMemory: snapshot.agentMemory,
+    userLocationMemory: snapshot.userLocationMemory,
+    personalityMemory: snapshot.personalityMemory,
+    learningEntries: snapshot.learningEntries,
+    customCodeActs: snapshot.customCodeActs,
+    specializedBrains: snapshot.specializedBrains
+  });
+  return snapshot;
+}
+
+function brainMemoryObjectField(value: unknown, field: string): string {
+  return isRecord(value) && typeof value[field] === "string" ? (value[field] as string).trim() : "";
+}
+
+function selectBrainMemorySlot(current: unknown, incoming: unknown, durableField: string): unknown {
+  const currentValue = brainMemoryObjectField(current, durableField);
+  const incomingValue = brainMemoryObjectField(incoming, durableField);
+  if (currentValue) return current;
+  if (incomingValue) return incoming;
+  return current ?? incoming;
+}
+
+function brainMemoryEntryKey(value: unknown): string {
+  if (!isRecord(value)) return stableSearchArchiveHash(value);
+  for (const key of ["brainName", "command", "id"]) {
+    const entryKey = value[key];
+    if (typeof entryKey === "string" && entryKey.trim()) {
+      return `${key}:${entryKey.trim().toLowerCase()}`;
+    }
+  }
+  return stableSearchArchiveHash(value);
+}
+
+function brainMemoryEntryUpdatedAt(value: unknown): string {
+  return isRecord(value) && typeof value.updatedAt === "string" ? value.updatedAt : "";
+}
+
+function mergeBrainMemoryEntryArray(current: unknown[] = [], incoming: unknown[] = []): unknown[] {
+  const merged = new Map<string, unknown>();
+  for (const entry of [...current, ...incoming]) {
+    const key = brainMemoryEntryKey(entry);
+    const previous = merged.get(key);
+    if (!previous || brainMemoryEntryUpdatedAt(entry) >= brainMemoryEntryUpdatedAt(previous)) {
+      merged.set(key, cloneJsonValue(entry));
+    }
+  }
+  return Array.from(merged.values())
+    .sort((left, right) => brainMemoryEntryUpdatedAt(right).localeCompare(brainMemoryEntryUpdatedAt(left)));
+}
+
+function mergeBrainCanonicalMemorySnapshots(
+  current: BrainCanonicalMemorySnapshot,
+  incoming: BrainCanonicalMemorySnapshot
+): BrainCanonicalMemorySnapshot {
+  const merged: BrainCanonicalMemorySnapshot = {
+    schema: "ingen.brain.renderer_memory_store.v1",
+    updatedAt: new Date().toISOString(),
+    userMemory: selectBrainMemorySlot(current.userMemory, incoming.userMemory, "preferredFirstName"),
+    agentMemory: selectBrainMemorySlot(current.agentMemory, incoming.agentMemory, "preferredFirstName"),
+    userLocationMemory: selectBrainMemorySlot(current.userLocationMemory, incoming.userLocationMemory, "homeLocation"),
+    personalityMemory: selectBrainMemorySlot(current.personalityMemory, incoming.personalityMemory, "manifest"),
+    learningEntries: mergeBrainMemoryEntryArray(current.learningEntries, incoming.learningEntries),
+    customCodeActs: mergeBrainMemoryEntryArray(current.customCodeActs, incoming.customCodeActs),
+    specializedBrains: mergeBrainMemoryEntryArray(current.specializedBrains, incoming.specializedBrains),
+    proofHash: ""
+  };
+  merged.proofHash = stableSearchArchiveHash({
+    userMemory: merged.userMemory,
+    agentMemory: merged.agentMemory,
+    userLocationMemory: merged.userLocationMemory,
+    personalityMemory: merged.personalityMemory,
+    learningEntries: merged.learningEntries,
+    customCodeActs: merged.customCodeActs,
+    specializedBrains: merged.specializedBrains
+  });
+  return merged;
+}
+
+async function readBrainCanonicalMemorySnapshotFromDisk(): Promise<BrainCanonicalMemorySnapshot> {
+  try {
+    const raw = await readFile(brainRendererMemoryStorePath(), "utf8");
+    return normalizeBrainCanonicalMemorySnapshot(JSON.parse(raw));
+  } catch (error) {
+    if (existsSync(brainRendererMemoryStorePath())) {
+      await backupMemoryFile(brainRendererMemoryStorePath(), "corrupt-renderer-brain-memory");
+      console.error("Failed to read renderer Brain memory; preserved backup before recovery.", error);
+    }
+    return blankBrainCanonicalMemorySnapshot();
+  }
+}
+
+async function mergeBrainCanonicalMemorySnapshotToDisk(
+  incoming: unknown,
+  reason = "renderer-brain-memory"
+): Promise<BrainCanonicalMemorySnapshot> {
+  const current = await readBrainCanonicalMemorySnapshotFromDisk();
+  const merged = mergeBrainCanonicalMemorySnapshots(current, normalizeBrainCanonicalMemorySnapshot(incoming));
+  await atomicWriteJsonFile(brainRendererMemoryStorePath(), merged, reason);
+  return merged;
+}
+
+async function ensureBrainCanonicalMemorySnapshotOnDisk(): Promise<void> {
+  if (existsSync(brainRendererMemoryStorePath())) return;
+  await atomicWriteJsonFile(
+    brainRendererMemoryStorePath(),
+    blankBrainCanonicalMemorySnapshot(),
+    "renderer-brain-memory-init"
+  );
 }
 
 function normalizeBrainIdentityName(value: unknown): string {
@@ -14852,12 +15004,14 @@ async function writeCanonicalMemoryManifest(): Promise<void> {
     migratedLegacyRoots: memoryLegacyRootDirs().filter((root) => existsSync(root)),
     chatArchivePath: chatArchiveStorePath(),
     brainIdentityPath: brainIdentityStorePath(),
+    rendererBrainMemoryPath: brainRendererMemoryStorePath(),
     sessionAssetsPath: join(memoryRootPath(), "session-assets"),
     backupPath: memoryBackupDir(),
     proofHash: stableSearchArchiveHash({
       sourceOfTruth: memoryRootPath(),
       chatArchivePath: chatArchiveStorePath(),
-      brainIdentityPath: brainIdentityStorePath()
+      brainIdentityPath: brainIdentityStorePath(),
+      rendererBrainMemoryPath: brainRendererMemoryStorePath()
     })
   };
   await atomicWriteJsonFile(join(memoryRootPath(), "memory-source.json"), manifest, "memory-source");
@@ -14869,6 +15023,7 @@ async function reconcileCanonicalMemoryStore(): Promise<void> {
   await mkdir(join(memoryRootPath(), "session-assets"), { recursive: true });
   await reconcileCanonicalBrainIdentityStore();
   await reconcileCanonicalChatArchiveStore();
+  await ensureBrainCanonicalMemorySnapshotOnDisk();
   await writeCanonicalMemoryManifest();
 }
 
@@ -17409,6 +17564,33 @@ function installIpc(): void {
     }
     await loadChatArchive();
     return sessionFilesSnapshot();
+  });
+
+  ipcMain.handle("forge:get-brain-memory-snapshot", async (event): Promise<BrainCanonicalMemorySnapshot> => {
+    if (!validateSender(event)) {
+      return blankBrainCanonicalMemorySnapshot();
+    }
+    return readBrainCanonicalMemorySnapshotFromDisk();
+  });
+
+  ipcMain.handle("forge:merge-brain-memory-snapshot", async (event, snapshot: unknown): Promise<BrainCanonicalMemoryResult> => {
+    const current = await readBrainCanonicalMemorySnapshotFromDisk();
+    if (!validateSender(event)) {
+      return {
+        accepted: false,
+        snapshot: current,
+        error: {
+          code: "bad_sender",
+          message: "Rejected Brain memory snapshot from an untrusted sender.",
+          proofHash: stableSearchArchiveHash({ sender: event.senderFrame?.url ?? "" })
+        }
+      };
+    }
+    const merged = await mergeBrainCanonicalMemorySnapshotToDisk(snapshot);
+    return {
+      accepted: true,
+      snapshot: merged
+    };
   });
 
   ipcMain.handle("forge:search-city-suggestions", async (event, query: unknown): Promise<CitySuggestionResult> => {

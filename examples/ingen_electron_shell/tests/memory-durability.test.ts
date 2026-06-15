@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "utf8");
+const preloadSource = readFileSync(join(process.cwd(), "src", "preload", "preload.ts"), "utf8");
+const brainStoreSource = readFileSync(join(process.cwd(), "src", "renderer", "brain-user-memory-store.ts"), "utf8");
+const ipcContractSource = readFileSync(join(process.cwd(), "src", "shared", "ipc-contract.ts"), "utf8");
 const launcherSource = readFileSync(join(process.cwd(), "run_ingen_electron_shell.cmd"), "utf8");
 const launcherVbsSource = readFileSync(join(process.cwd(), "run_ingen_electron_shell.vbs"), "utf8");
 
@@ -46,5 +49,21 @@ describe("canonical memory durability", () => {
     expect(mainSource).toContain("copyFileSync(sourcePath, targetPath)");
     expect(mainSource).toContain("return cached ? persistArchiveAttachmentLocalCopy(preview, cached.path, cached.mimeType) : preview");
     expect(mainSource).toContain("function normalizeArchiveSessionAssets");
+  });
+
+  it("persists renderer Brain registries through the canonical main-process store", () => {
+    expect(ipcContractSource).toContain("interface BrainCanonicalMemorySnapshot");
+    expect(mainSource).toContain('return join(memoryRootPath(), "renderer-brain-memory.json")');
+    expect(mainSource).toContain("function mergeBrainCanonicalMemorySnapshotToDisk");
+    expect(mainSource).toContain('ipcMain.handle("forge:get-brain-memory-snapshot"');
+    expect(mainSource).toContain('ipcMain.handle("forge:merge-brain-memory-snapshot"');
+    expect(preloadSource).toContain("getBrainMemorySnapshot()");
+    expect(preloadSource).toContain("mergeBrainMemorySnapshot(snapshot");
+    expect(brainStoreSource).toContain("export async function hydrateCanonicalBrainMemory");
+    expect(brainStoreSource).toContain("persistCanonicalBrainMemorySnapshot()");
+    expect(brainStoreSource).toContain("readBrainLearningMemoryEntries()");
+    expect(brainStoreSource).toContain("readBrainCustomCodeActs()");
+    expect(brainStoreSource).toContain("readBrainSpecializedBrains()");
+    expect(brainStoreSource).toContain("void hydrateCanonicalBrainMemory()");
   });
 });

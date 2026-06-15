@@ -271,6 +271,25 @@ export interface LlmProviderRuntimeEvent {
 
 export type LlmProviderRuntimeSnapshot = Record<LlmProviderConnectId, LlmProviderRuntimeEvent>;
 
+export interface BrainCanonicalMemorySnapshot {
+  schema: "ingen.brain.renderer_memory_store.v1";
+  updatedAt: string;
+  userMemory?: unknown;
+  agentMemory?: unknown;
+  userLocationMemory?: unknown;
+  personalityMemory?: unknown;
+  learningEntries?: unknown[];
+  customCodeActs?: unknown[];
+  specializedBrains?: unknown[];
+  proofHash: string;
+}
+
+export interface BrainCanonicalMemoryResult {
+  accepted: boolean;
+  snapshot: BrainCanonicalMemorySnapshot;
+  error?: IpcError;
+}
+
 export interface PanelsChatBottomSnapshotEvent {
   kind: "snapshot_updated";
   reason:
@@ -1799,6 +1818,8 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   copyWorkspaceBranchName?: () => Promise<WorkspaceActionResult>;
   searchArchive?: (request: SearchArchiveRequest) => Promise<SearchArchiveResult>;
   getSessionFilesSnapshot?: () => Promise<SessionFilesSnapshot>;
+  getBrainMemorySnapshot?: () => Promise<BrainCanonicalMemorySnapshot>;
+  mergeBrainMemorySnapshot?: (snapshot: BrainCanonicalMemorySnapshot) => Promise<BrainCanonicalMemoryResult>;
   showNativeWebExplorer?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   updateNativeWebExplorerBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   hideNativeWebExplorer?: () => Promise<NativeWebExplorerResult>;

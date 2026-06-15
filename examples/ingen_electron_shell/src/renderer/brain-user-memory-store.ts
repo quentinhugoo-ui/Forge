@@ -1,4 +1,4 @@
-import { BRAIN_CODEACT_COMMANDS } from "../shared/ipc-contract";
+import { BRAIN_CODEACT_COMMANDS, type BrainCanonicalMemorySnapshot } from "../shared/ipc-contract";
 
 export interface BrainUserMemorySlot {
   schema: "ingen.brain.memory.user_identity.v1";
@@ -225,11 +225,17 @@ function writeJsonArray<T>(storageKey: string, entries: T[]): T[] {
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(entries));
+      persistCanonicalBrainMemorySnapshot();
     } catch {
       // Keep the caller state usable even if localStorage is temporarily unavailable.
     }
   }
   return entries;
+}
+
+function writeLocalJson(storageKey: string, value: unknown): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(storageKey, JSON.stringify(value));
 }
 
 function dispatchBrainStoreEvent<T>(eventName: string, detail: T) {
@@ -475,6 +481,7 @@ export function writeBrainUserMemory(preferredFirstName: string): BrainUserMemor
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(next));
+      persistCanonicalBrainMemorySnapshot();
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
@@ -845,6 +852,7 @@ export function writeBrainPersonalityMemory(manifest: string): BrainPersonalityM
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(PERSONALITY_STORAGE_KEY, JSON.stringify(next));
+      persistCanonicalBrainMemorySnapshot();
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
@@ -954,6 +962,7 @@ export function writeBrainAgentMemory(preferredFirstName: string): BrainAgentMem
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(next));
+      persistCanonicalBrainMemorySnapshot();
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
@@ -987,9 +996,158 @@ export function writeBrainUserLocationMemory(homeLocation: string): BrainUserLoc
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(USER_LOCATION_STORAGE_KEY, JSON.stringify(next));
+      persistCanonicalBrainMemorySnapshot();
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
   }
   return next;
+}
+
+function brainCanonicalMemorySnapshot(): BrainCanonicalMemorySnapshot {
+  return {
+    schema: "ingen.brain.renderer_memory_store.v1",
+    updatedAt: nowIso(),
+    userMemory: readBrainUserMemory(),
+    agentMemory: readBrainAgentMemory(),
+    userLocationMemory: readBrainUserLocationMemory(),
+    personalityMemory: readBrainPersonalityMemory(),
+    learningEntries: readBrainLearningMemoryEntries(),
+    customCodeActs: readBrainCustomCodeActs(),
+    specializedBrains: readBrainSpecializedBrains(),
+    proofHash: ""
+  };
+}
+
+function brainMemoryEntryUpdatedAt(value: unknown): string {
+  return value && typeof value === "object" && typeof (value as { updatedAt?: unknown }).updatedAt === "string"
+    ? (value as { updatedAt: string }).updatedAt
+    : "";
+}
+
+function brainMemoryEntryKey(value: unknown): string {
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  const candidate = value as { brainName?: unknown; command?: unknown; id?: unknown };
+  for (const key of [candidate.brainName, candidate.command, candidate.id]) {
+    if (typeof key === "string" && key.trim()) {
+      return key.trim().toLowerCase();
+    }
+  }
+  return JSON.stringify(value);
+}
+
+function mergeBrainMemoryEntries<T>(left: T[] = [], right: T[] = []): T[] {
+  const merged = new Map<string, T>();
+  for (const entry of [...left, ...right]) {
+    const key = brainMemoryEntryKey(entry);
+    const previous = merged.get(key);
+    if (!previous || brainMemoryEntryUpdatedAt(entry) >= brainMemoryEntryUpdatedAt(previous)) {
+      merged.set(key, entry);
+    }
+  }
+  return Array.from(merged.values()).sort((leftEntry, rightEntry) =>
+    brainMemoryEntryUpdatedAt(rightEntry).localeCompare(brainMemoryEntryUpdatedAt(leftEntry))
+  );
+}
+
+function slotHasText(value: unknown, key: string): boolean {
+  return Boolean(value && typeof value === "object" && typeof (value as Record<string, unknown>)[key] === "string" && ((value as Record<string, string>)[key] ?? "").trim());
+}
+
+function mergeBrainCanonicalMemorySnapshots(
+  canonical: BrainCanonicalMemorySnapshot,
+  local: BrainCanonicalMemorySnapshot
+): BrainCanonicalMemorySnapshot {
+  const learningEntries = mergeBrainMemoryEntries(
+    (canonical.learningEntries ?? []).map(normalizeBrainLearningMemoryEntry).filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry)),
+    (local.learningEntries ?? []).map(normalizeBrainLearningMemoryEntry).filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry))
+  );
+  const customCodeActs = mergeBrainMemoryEntries(
+    (canonical.customCodeActs ?? []).filter(isBrainCustomCodeActEntry),
+    (local.customCodeActs ?? []).filter(isBrainCustomCodeActEntry)
+  );
+  const specializedBrains = mergeBrainMemoryEntries(
+    (canonical.specializedBrains ?? []).map(normalizeBrainSpecializedBrainEntry).filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry)),
+    (local.specializedBrains ?? []).map(normalizeBrainSpecializedBrainEntry).filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry))
+  );
+  return {
+    schema: "ingen.brain.renderer_memory_store.v1",
+    updatedAt: nowIso(),
+    userMemory: slotHasText(canonical.userMemory, "preferredFirstName") ? canonical.userMemory : local.userMemory,
+    agentMemory: slotHasText(canonical.agentMemory, "preferredFirstName") ? canonical.agentMemory : local.agentMemory,
+    userLocationMemory: slotHasText(canonical.userLocationMemory, "homeLocation") ? canonical.userLocationMemory : local.userLocationMemory,
+    personalityMemory: slotHasText(canonical.personalityMemory, "manifest") ? canonical.personalityMemory : local.personalityMemory,
+    learningEntries,
+    customCodeActs,
+    specializedBrains,
+    proofHash: canonical.proofHash || local.proofHash || ""
+  };
+}
+
+function applyCanonicalBrainMemorySnapshot(snapshot: BrainCanonicalMemorySnapshot): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (isBrainUserMemorySlot(snapshot.userMemory)) writeLocalJson(USER_STORAGE_KEY, snapshot.userMemory);
+    if (isBrainAgentMemorySlot(snapshot.agentMemory)) writeLocalJson(AGENT_STORAGE_KEY, snapshot.agentMemory);
+    if (isBrainUserLocationMemorySlot(snapshot.userLocationMemory)) writeLocalJson(USER_LOCATION_STORAGE_KEY, snapshot.userLocationMemory);
+    if (isBrainPersonalityMemorySlot(snapshot.personalityMemory)) writeLocalJson(PERSONALITY_STORAGE_KEY, snapshot.personalityMemory);
+    const learningEntries = (snapshot.learningEntries ?? [])
+      .map(normalizeBrainLearningMemoryEntry)
+      .filter((entry): entry is BrainLearningMemoryEntry => Boolean(entry));
+    const customCodeActs = (snapshot.customCodeActs ?? []).filter(isBrainCustomCodeActEntry);
+    const specializedBrains = (snapshot.specializedBrains ?? [])
+      .map(normalizeBrainSpecializedBrainEntry)
+      .filter((entry): entry is BrainSpecializedBrainEntry => Boolean(entry));
+    writeLocalJson(LEARNING_REGISTRY_STORAGE_KEY, learningEntries);
+    writeLocalJson(CUSTOM_CODEACT_REGISTRY_STORAGE_KEY, customCodeActs);
+    writeLocalJson(SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY, specializedBrains);
+    if (isBrainAgentMemorySlot(snapshot.agentMemory)) {
+      dispatchBrainStoreEvent(BRAIN_AGENT_MEMORY_UPDATED_EVENT, snapshot.agentMemory);
+    }
+    if (isBrainPersonalityMemorySlot(snapshot.personalityMemory)) {
+      dispatchBrainStoreEvent(BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT, snapshot.personalityMemory);
+    }
+    dispatchBrainStoreEvent(BRAIN_LEARNING_MEMORY_UPDATED_EVENT, learningEntries);
+    dispatchBrainStoreEvent(BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT, customCodeActs);
+    dispatchBrainStoreEvent(BRAIN_SPECIALIZED_BRAINS_UPDATED_EVENT, specializedBrains);
+  } catch {
+    // The canonical file in main remains authoritative even if the local cache cannot be refreshed.
+  }
+}
+
+let canonicalBrainMemoryWriteQueued = false;
+
+function persistCanonicalBrainMemorySnapshot(): void {
+  const api = typeof window === "undefined" ? undefined : window.forgeShell;
+  if (!api?.mergeBrainMemorySnapshot || canonicalBrainMemoryWriteQueued) return;
+  canonicalBrainMemoryWriteQueued = true;
+  queueMicrotask(() => {
+    canonicalBrainMemoryWriteQueued = false;
+    void api.mergeBrainMemorySnapshot?.(brainCanonicalMemorySnapshot()).then((result) => {
+      if (result?.accepted) {
+        applyCanonicalBrainMemorySnapshot(result.snapshot);
+      }
+    });
+  });
+}
+
+export async function hydrateCanonicalBrainMemory(): Promise<BrainCanonicalMemorySnapshot | null> {
+  const api = typeof window === "undefined" ? undefined : window.forgeShell;
+  if (!api?.getBrainMemorySnapshot || !api.mergeBrainMemorySnapshot) return null;
+  const local = brainCanonicalMemorySnapshot();
+  const canonical = await api.getBrainMemorySnapshot();
+  const merged = mergeBrainCanonicalMemorySnapshots(canonical, local);
+  applyCanonicalBrainMemorySnapshot(merged);
+  const result = await api.mergeBrainMemorySnapshot(merged);
+  if (result.accepted) {
+    applyCanonicalBrainMemorySnapshot(result.snapshot);
+    return result.snapshot;
+  }
+  return merged;
+}
+
+if (typeof window !== "undefined") {
+  queueMicrotask(() => {
+    void hydrateCanonicalBrainMemory();
+  });
 }
