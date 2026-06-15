@@ -35,8 +35,11 @@ describe("assistant progressive response feed", () => {
 
   it("keeps the existing assistant writing animation implementation untouched", () => {
     expect(animationSource).toContain("function assistantRenderableText");
-    expect(animationSource).toContain("_renamechat_");
-    expect(animationSource).toContain("_renamechat_?)?");
+    expect(animationSource).toContain("BRAIN_RENAME_SESSION_COMMAND");
+    expect(animationSource).toContain("renamechat");
+    expect(animationSource).toContain("_?renamechat_?");
+    expect(animationSource).toContain(".map((line) => line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND) ? \"\" : line)");
+    expect(animationSource).toContain("“”");
     expect(animationSource).toContain("\\s*$");
     expect(animationSource).toContain("assistantRenderableText(text)");
     expect(animationSource).toContain("function AnimatedAssistantText");

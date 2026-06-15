@@ -14090,8 +14090,8 @@ function todayIsoDate(): string {
 
 const PENDING_LLM_SESSION_TITLE = "New session";
 const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_";
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/(["'`])([^"'`\r\n]{1,120})\1_renamechat_/;
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/(["'`])([^"'`\r\n]{1,120})\1_renamechat_/g;
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/["'`“‘]\s*([^"'`“”‘’\r\n]{1,120}?)\s*(?:["'`”’]\s*)?_?renamechat_?/i;
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/["'`“‘]\s*([^"'`“”‘’\r\n]{1,120}?)\s*(?:["'`”’]\s*)?_?renamechat_?/giu;
 
 function normalizeSessionTitle(value: string): string {
   const compact = value

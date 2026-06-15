@@ -29,6 +29,7 @@ import {
   BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_RUST_PORT_ADAPTER_COMMAND,
   BRAIN_RUST_STATE_STORE_COMMAND,
+  BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
   BRAIN_SELECTCOMPUTE_COMMAND,
   BRAIN_WORKSPACE_COMMAND,
@@ -1288,9 +1289,17 @@ interface TranscriptCodeActEvent {
 
 const BRAIN_CODEACT_COMMAND_SET = new Set<string>(BRAIN_CODEACT_COMMANDS);
 const BRAIN_CODEACT_COMMANDS_BY_LENGTH = [...BRAIN_CODEACT_COMMANDS].sort((left, right) => right.length - left.length);
+const SILENT_TRANSCRIPT_CODEACT_COMMANDS = new Set<string>([BRAIN_RENAME_SESSION_COMMAND]);
 const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS.map((entry) => [entry.command, entry.description])
 );
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/["'`“‘]\s*[^"'`“”‘’\r\n]{1,120}?\s*(?:["'`”’]\s*)?_?renamechat_?/iu;
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/["'`“‘]\s*[^"'`“”‘’\r\n]{1,120}?\s*(?:["'`”’]\s*)?_?renamechat_?/giu;
+
+function isSilentTranscriptCodeActLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND) || COMPACT_RENAME_CHAT_CODEACT_PATTERN.test(trimmed);
+}
 
 const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "registered"] as const;
 const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", "revised"] as const;
@@ -1464,6 +1473,9 @@ function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined
 
 function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined {
   const trimmed = line.trim();
+  if (isSilentTranscriptCodeActLine(trimmed)) {
+    return undefined;
+  }
   const agentActionEvent = agentActionEventFromLine(trimmed);
   if (agentActionEvent) {
     return agentActionEvent;
@@ -1471,17 +1483,23 @@ function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined 
   const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
   const assignedCommand = commandAssignment ? readCodeActCommand(commandAssignment[2] ?? commandAssignment[3] ?? commandAssignment[4] ?? "") : undefined;
   if (assignedCommand) {
+    if (SILENT_TRANSCRIPT_CODEACT_COMMANDS.has(assignedCommand)) {
+      return undefined;
+    }
     return transcriptCodeActEvent(assignedCommand, trimmed);
   }
   const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
   const directCommand = readCodeActCommand(firstToken);
   if (directCommand) {
+    if (SILENT_TRANSCRIPT_CODEACT_COMMANDS.has(directCommand)) {
+      return undefined;
+    }
     return transcriptCodeActEvent(directCommand, trimmed);
   }
   if (/\/modify(?:"[^"]+"|'[^']+')brain_/.test(trimmed)) {
     return transcriptCodeActEvent(BRAIN_MODIFY_NAMED_BRAIN_COMMAND, trimmed);
   }
-  const containedCommand = BRAIN_CODEACT_COMMANDS_BY_LENGTH.find((command) => trimmed.includes(command));
+  const containedCommand = BRAIN_CODEACT_COMMANDS_BY_LENGTH.find((command) => !SILENT_TRANSCRIPT_CODEACT_COMMANDS.has(command) && trimmed.includes(command));
   if (containedCommand) {
     return transcriptCodeActEvent(containedCommand, trimmed);
   }
@@ -1956,8 +1974,11 @@ function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): Assistan
 
 function assistantRenderableText(text: string): string {
   return text
-    .replace(/\/(["'`])[^"'`\r\n]{1,120}\1_renamechat_/g, "")
-    .replace(/(^|\n)\s*\/(["'`])[^"'`\r\n]{0,120}(?:\2(?:_renamechat_?)?|_renamechat_?)?\s*$/g, "$1")
+    .split(/\r?\n/)
+    .map((line) => line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND) ? "" : line)
+    .join("\n")
+    .replace(COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL, "")
+    .replace(/(^|\n)\s*\/["'`“‘]\s*[^"'`“”‘’\r\n]{0,120}?(?:(?:["'`”’]\s*)?_?renamechat_?)?\s*$/giu, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

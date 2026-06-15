@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "utf8");
 const generatedSource = readFileSync(join(process.cwd(), "src", "shared", "generated", "forge-ipc.generated.ts"), "utf8");
 const brainSource = readFileSync(join(process.cwd(), "..", "..", "src", "brain.rs"), "utf8");
+const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 
 describe("session rename CodeAct", () => {
   it("injects and executes a Brain-owned short title command", () => {
@@ -15,19 +16,21 @@ describe("session rename CodeAct", () => {
     expect(brainSource).toContain("standalone internal line");
     expect(brainSource).toContain("never merge it with visible prose");
     expect(brainSource).toContain("Local action tools exist for user requests");
-    expect(brainSource).toContain("Local action tools exist for repo inspection");
+    expect(brainSource).toContain("Windows/local action tools remain available in Coding Brain for repo inspection");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION");
     expect(generatedSource).toContain("standalone Brain-owned compact line");
     expect(generatedSource).toContain("never merge it with visible prose");
     expect(generatedSource).toContain("Local action tools exist for user requests");
-    expect(generatedSource).toContain("Local action tools exist for repo inspection");
+    expect(generatedSource).toContain("Windows/local action tools remain available in Coding Brain for repo inspection");
     expect(mainSource).toContain("Au premier message utilisateur de cette session");
     expect(mainSource).toContain('/"Titre"_renamechat_');
     expect(mainSource).toContain("une ligne interne seule");
     expect(mainSource).toContain("Ne colle jamais cette ligne a la reponse visible");
     expect(mainSource).toContain('const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_"');
     expect(mainSource).toContain("COMPACT_RENAME_CHAT_CODEACT_PATTERN");
+    expect(mainSource).toContain("_?renamechat_?");
+    expect(mainSource).toContain("“”");
     expect(mainSource).toContain("trimmed.match(COMPACT_RENAME_CHAT_CODEACT_PATTERN)");
     expect(mainSource).not.toContain("trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)");
     expect(mainSource).toContain("brain_compact_renamechat");
@@ -57,10 +60,15 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain("removeRenameSessionChatter(removeLooseRenameSessionChatter(message.text))");
     expect(mainSource).toContain("removeRenameSessionChatter(removeLooseRenameSessionChatter(removeRenameSessionCodeActLines(message.text)))");
     expect(mainSource).toContain("sanitizeAssistantRenameChatter(assistantMessage)");
-    expect(mainSource).toContain("sanitizeAssistantRenameChatter(continuationMessage)");
+    expect(mainSource).toContain("const continuationPass = await executeUniversalLoopOrchestratorPass({");
     expect(mainSource).toContain("sujet\\s*:");
     expect(mainSource).not.toContain("renderRenameSessionCodeActResult");
     expect(mainSource).not.toContain("RENAME_SESSION_RESULT");
-    expect(mainSource).toContain("executeAssistantRenameSessionCodeAct(assistantMessage, session)");
+    expect(mainSource).toContain("executeAssistantRenameSessionCodeAct(assistantMessage, params.session)");
+    expect(rendererSource).toContain("BRAIN_RENAME_SESSION_COMMAND");
+    expect(rendererSource).toContain("SILENT_TRANSCRIPT_CODEACT_COMMANDS");
+    expect(rendererSource).toContain("function isSilentTranscriptCodeActLine");
+    expect(rendererSource).toContain("if (isSilentTranscriptCodeActLine(trimmed))");
+    expect(rendererSource).toContain("!SILENT_TRANSCRIPT_CODEACT_COMMANDS.has(command)");
   });
 });
