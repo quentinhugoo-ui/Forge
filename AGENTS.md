@@ -122,6 +122,12 @@ Use these coordination files before adding new frontend actors:
 
 ## Build Isolation
 
+Parallel coding sessions must use separate Git worktrees when they write code. Do not run two Codex/Claude coding agents in the same worktree and expect conflict-free edits. Create a dedicated branch/worktree per session:
+
+```powershell
+.\scripts\forge-session-worktree.ps1 -Name loop-stream-ui
+```
+
 Multiple Codex and Claude Code sessions must not share the same Cargo target directory. Agents must not call `cargo` directly for project builds/checks/runs. Use the repo wrapper so each session gets a stable isolated cache under `.codex-targets/<session>`.
 
 ```powershell
