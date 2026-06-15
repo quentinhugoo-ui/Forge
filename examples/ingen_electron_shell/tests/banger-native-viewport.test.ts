@@ -120,8 +120,14 @@ describe("Banger native viewport contract", () => {
 
   it("rebuilds stale Electron renderer assets before reusing the desktop fast path", () => {
     expect(launcherSource).toContain("preload.cjs");
+    expect(launcherSource).toContain("ingen-electron-launch-build-%WORKSPACE_BUILD_ID%.lock");
+    expect(launcherSource).toContain("set DESKTOP_AUTO_REBUILD=1");
+    expect(launcherSource).toContain("FORGE_ELECTRON_DESKTOP_STABLE");
     expect(launcherSource).toContain("if errorlevel 1 set NEED_ELECTRON_REBUILD=1");
     expect(launcherSource).toContain('if "%NEED_ELECTRON_REBUILD%"=="0" (');
     expect(launcherSource).toContain("Electron sources are newer");
+    expect(launcherSource).toContain("set RESTART_RUNNING_APP_AFTER_REBUILD=1");
+    expect(launcherSource).toContain("Restarting existing InGen Electron process so the fresh renderer bundle is visible");
+    expect(launcherSource).toContain("Stop-Process -Id $_.ProcessId -Force");
   });
 });
