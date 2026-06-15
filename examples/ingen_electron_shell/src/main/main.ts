@@ -258,7 +258,9 @@ const PANELS_CHAT_BOTTOM_MAX_TEXT_PREVIEW_BYTES = 96 * 1024;
 const PANELS_CHAT_BOTTOM_MAX_VISUAL_SNAPSHOTS = 6;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_CUES = 160;
 const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
-const WIDGET_WINDOW_HEIGHT = 174;
+// Keep the native widget envelope tall enough for flyouts; Electron setShape
+// keeps the visible/clickable surface compact when no panel is open.
+const WIDGET_WINDOW_HEIGHT = 535;
 const WIDGET_WINDOW_PANEL_HEIGHT = 535;
 const WIDGET_WINDOW_BOTTOM_GAP = 0;
 const WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP = 2;
