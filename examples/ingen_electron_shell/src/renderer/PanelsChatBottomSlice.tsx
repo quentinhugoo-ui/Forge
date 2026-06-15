@@ -2707,9 +2707,9 @@ function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changi
     : `Changed from General Brain to ${target}`;
 }
 
-function activeAgentEventText(agentName: string, command: TranscriptCodeActCommand): string {
+function activeAgentEventText(agentName: string, command: AgentActionEventCommand): string {
   const label = agentName.trim() || "Agent";
-  return `${label} is using ${command}`;
+  return `${label} is applying a local action: ${agentActionEventText(command)}`;
 }
 
 interface AgentFileModificationSummary {
@@ -2847,7 +2847,7 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
   const text = isBrainSegment
     ? brainSegmentEventText(event.command, brainSegmentPhase)
     : isPendingAgentEvent
-      ? activeAgentEventText(agentName, event.command)
+      ? activeAgentEventText(agentName, agentCommand!)
       : event.text;
 
   if (fileModification) {

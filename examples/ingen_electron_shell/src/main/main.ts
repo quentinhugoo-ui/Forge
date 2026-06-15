@@ -6560,6 +6560,12 @@ function agentActionDisplayName(value?: string): string {
   return fileName.length > 54 ? `${fileName.slice(0, 43)}...${fileName.slice(-8)}` : fileName;
 }
 
+function agentActionDestinationFolderName(value?: string): string {
+  const parent = value ? dirname(value) : "";
+  const folder = agentActionDisplayName(parent);
+  return folder === "cet element" ? "son dossier cible" : folder;
+}
+
 function agentActionShouldLeavePathInPlace(item: AgentActionPathEntry, moveDirectories: boolean): boolean {
   const normalizedName = item.name.trim().toLowerCase();
   if (AGENT_ACTION_IGNORED_SYSTEM_FILENAMES.has(normalizedName)) {
@@ -6627,20 +6633,29 @@ function agentActionFileOrganizationRequests(originalUserText: string, request: 
 }
 
 function agentActionFileOrganizationProgressText(request: AgentActionRequest, index: number, total: number): string {
-  const position = total > 1 ? `Etape ${index + 1}/${total}. ` : "";
   const sourceName = agentActionDisplayName(request.path);
   const targetName = agentActionDisplayName(request.toPath ?? request.path);
+  const targetFolder = agentActionDestinationFolderName(request.toPath);
+  const opening =
+    index === 0
+      ? "Je commence le tri par les elements les plus evidents."
+      : index % 3 === 0
+        ? "Le bureau se simplifie par petites decisions verifiables."
+        : index % 3 === 1
+          ? "Je garde le rythme: une action claire, puis verification."
+          : "Je continue sans toucher aux raccourcis ni aux applications visibles.";
+  const remaining = total > index + 1 ? "Je poursuis ensuite avec le prochain element utile." : "Je fais ensuite une derniere verification du resultat.";
   switch (request.action) {
     case "create_directory":
-      return `${position}Je prepare le dossier ${targetName} pour que le bureau reste lisible.`;
+      return `${opening} Je prepare le dossier ${targetName}; il servira de point d'arrivee propre au lieu d'empiler les fichiers au meme endroit.`;
     case "move_path":
-      return `${position}Je range ${sourceName} dans son dossier, sans toucher aux raccourcis d'application.`;
+      return `${opening} Je deplace ${sourceName} vers ${targetFolder}, parce que sa categorie est claire. ${remaining}`;
     case "copy_path":
-      return `${position}Je copie ${sourceName} vers ${targetName} en gardant l'original.`;
+      return `${opening} Je copie ${sourceName} vers ${targetName} en gardant l'original intact, puis je controle que la copie existe.`;
     case "rename_path":
-      return `${position}Je renomme ${sourceName} en ${targetName} pour le rendre plus clair.`;
+      return `${opening} Je renomme ${sourceName} en ${targetName}; le but est de rendre l'element reconnaissable sans changer son contenu.`;
     default:
-      return `${position}J'applique l'action locale necessaire, puis je verifie le resultat.`;
+      return `${opening} J'applique l'action locale necessaire, puis je verifie le resultat avant de continuer.`;
   }
 }
 

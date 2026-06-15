@@ -171,7 +171,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("await waitAgentActionVisualStep()");
     expect(mainSource).toContain("Principe universel d'agent local");
     expect(mainSource).toContain("si un outil echoue");
-    expect(mainSource).toContain("Je range ${sourceName} dans son dossier");
+    expect(mainSource).toContain("Je commence le tri par les elements les plus evidents.");
+    expect(mainSource).toContain("Je deplace ${sourceName} vers ${targetFolder}");
+    expect(mainSource).not.toContain("Etape ${index + 1}/${total}");
+    expect(mainSource).not.toContain("sans toucher aux raccourcis d'application");
     expect(mainSource).toContain("agentActionOrganizeCategory(item)");
     expect(mainSource).toContain("action: \"create_directory\"");
     expect(mainSource).toContain("action: \"move_path\"");
@@ -227,6 +230,8 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("function isAgentFileModificationCommand");
     expect(animationSource).toContain("return command === AGENT_COPY_PATH_COMMAND");
     expect(animationSource).toContain("return delta.addedChars > 0 || delta.removedChars > 0 ? delta : undefined");
+    expect(animationSource).toContain("is applying a local action");
+    expect(animationSource).not.toContain("is using ${command}");
     expect(animationSource).toContain("Modified");
     expect(animationSource).not.toContain("Modification de");
   });
