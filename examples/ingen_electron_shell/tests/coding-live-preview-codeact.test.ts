@@ -36,6 +36,8 @@ describe("Coding Brain live preview CodeAct", () => {
     expect(mainSource).toContain("Coding Brain conserve les outils Windows/local action");
     expect(mainSource).toContain("n'ecris pas de bloc de code a copier-coller");
     expect(mainSource).toContain("html|css|javascript|typescript|react|vite|page|site|frontend|front-end|composant");
+    expect(mainSource).toContain("continuationAssistantMessageId");
+    expect(mainSource).toContain("const continuationLiveSink = createAssistantLiveTextSink");
   });
 
   it("opens a sandboxed canvas preview for verified visual file paths", () => {
@@ -57,6 +59,7 @@ describe("Coding Brain live preview CodeAct", () => {
   it("renders the preview CodeAct as a readable loop-stream event", () => {
     expect(panelsSource).toContain('BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"');
     expect(panelsSource).toContain('return "is opening the live preview";');
+    expect(panelsSource).toContain("is continuing in ${brainSegmentName(event.command)}");
   });
 
   it("forces visual coding snippets back into the Windows tool loop", () => {

@@ -71,6 +71,25 @@ describe("agent action loop parser", () => {
     expect(removeAgentActionJsonFragments(text)).not.toContain("AGENT_ACTION_JSON");
   });
 
+  it("normalizes shell scope on command actions glued to prose", () => {
+    const text = [
+      "Je cree directement une petite page HTML autonome pour pouvoir l'ouvrir ensuite en apercu live.",
+      'AGENT_ACTION_JSON {"action":"run_command","scope":"shell","command":"node","args":["--version"],"confirmed":true}'
+    ].join("");
+
+    const extracted = extractAgentActionJsonRequest(text);
+
+    expect(extracted?.request).toEqual({
+      action: "run_command",
+      scope: "computer",
+      command: "node",
+      args: ["--version"],
+      confirmed: true
+    });
+    expect(agentActionLiveVisibleText(text)).toBe("Je cree directement une petite page HTML autonome pour pouvoir l'ouvrir ensuite en apercu live.");
+    expect(removeAgentActionJsonFragments(text)).not.toContain("run_command");
+  });
+
   it("removes malformed control JSON from visible text even when it cannot execute it", () => {
     const text = [
       "Je tente une action locale, mais le nom d'action est invalide.",

@@ -41,15 +41,15 @@ function normalizedAgentActionRequest(value: unknown): AgentActionRequest | unde
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  const action = typeof record.action === "string" ? AGENT_ACTION_ALIASES[record.action] : undefined;
-  if (!action) {
-    return undefined;
-  }
+  const action = typeof record.action === "string" ? AGENT_ACTION_ALIASES[record.action] ?? record.action : undefined;
   const path = typeof record.path === "string" ? record.path : "";
+  const rawScope = record.scope;
   const scope =
     (action === "list" || action === "search") && record.scope === "workspace" && /^[A-Za-z]:[\\/]/.test(path)
       ? "computer"
-      : record.scope;
+      : (action === "run_command" || action === "run_readonly_command") && rawScope === "shell"
+        ? "computer"
+        : rawScope;
   const normalized = { ...record, action, scope };
   return isAgentActionRequest(normalized) ? normalized : undefined;
 }

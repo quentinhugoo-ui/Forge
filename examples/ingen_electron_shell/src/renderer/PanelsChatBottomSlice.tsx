@@ -2787,6 +2787,9 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   if (event.command === BRAIN_CODING_LIVE_PREVIEW_COMMAND) {
     return "is opening the live preview";
   }
+  if (isBrainSegmentCommand(event.command)) {
+    return `is continuing in ${brainSegmentName(event.command)}`;
+  }
   if (!isAgentActionCommand(event.command)) {
     return "is continuing the current step";
   }
@@ -2811,8 +2814,8 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   return "is applying a local action";
 }
 
-function canShowAssistantWorkingStatus(event?: TranscriptCodeActEvent): boolean {
-  return !event || !isBrainSegmentCommand(event.command);
+function canShowAssistantWorkingStatus(_event?: TranscriptCodeActEvent): boolean {
+  return true;
 }
 
 function latestTranscriptEvent(text: string): TranscriptCodeActEvent | undefined {

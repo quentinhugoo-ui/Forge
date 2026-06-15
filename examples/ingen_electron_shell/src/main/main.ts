@@ -6888,6 +6888,19 @@ async function executeAssistantAgentActionLoop(params: {
     throwIfAssistantRunCancelled(params.assistantRun);
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
+      const sanitizedText = removeAgentActionJsonFragments(assistantMessage.text).trim();
+      if (sanitizedText && sanitizedText !== assistantMessage.text.trim()) {
+        assistantMessage = {
+          ...assistantMessage,
+          text: sanitizedText,
+          proofHash: hashJson({
+            agentActionLoopRemovedInvalidControlJson: true,
+            previousProofHash: assistantMessage.proofHash,
+            text: sanitizedText
+          })
+        };
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+      }
       if (!initialCodingVisualActionForced && shouldForceInitialCodingVisualAction(params.originalUserText, assistantMessage.text)) {
         initialCodingVisualActionForced = true;
         const forcedLiveSink = createAssistantLiveTextSink({
@@ -15858,12 +15871,22 @@ async function submitChatDraftForSessionInner(
   archiveTranscriptMessage(session, assistantMessage);
   if (!searchArchiveRequest && activatedBrainSegment && activatedBrainSegment !== previousBrainSegment) {
     const continuationUserText = brainSegmentContinuationUserText(draft, activatedBrainSegment);
+    const continuationAssistantMessageId = `assistant-response-${Date.now()}-${activatedBrainSegment}`;
+    const continuationLiveSink = createAssistantLiveTextSink({
+      baseTranscript: nextTranscript,
+      assistantMessageId: continuationAssistantMessageId,
+      agentEvents,
+      commitTranscript,
+      assistantRun
+    });
     let continuationMessage = await buildAssistantTranscriptMessage(
       continuationUserText,
       providerAttachments,
       message.id,
       moduleId,
-      nextTranscript
+      nextTranscript,
+      continuationLiveSink,
+      continuationAssistantMessageId
     );
     continuationMessage = await executeAssistantAgentActionLoop({
       assistantMessage: continuationMessage,

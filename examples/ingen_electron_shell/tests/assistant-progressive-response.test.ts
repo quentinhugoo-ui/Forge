@@ -122,7 +122,8 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("function agentWorkingStatusText");
     expect(animationSource).toContain("function canShowAssistantWorkingStatus");
     expect(animationSource).toContain("assistantWorkingCandidate && canShowAssistantWorkingStatus(assistantWorkingEvent)");
-    expect(animationSource).toContain("return !event || !isBrainSegmentCommand(event.command)");
+    expect(animationSource).toContain("is continuing in ${brainSegmentName(event.command)}");
+    expect(animationSource).toContain("return true;");
     expect(animationSource).toContain("sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox");
     expect(animationSource).toContain("latestTranscriptEvent(message.text)");
     expect(animationSource).toContain("is running a confirmed shell command");
