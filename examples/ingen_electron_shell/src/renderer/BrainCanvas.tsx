@@ -299,54 +299,34 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
 ];
 
 const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
-  id: BrainLearningMemoryCategory | "anti_pattern" | "conduct_rule";
+  id: BrainLearningMemoryCategory;
   label: string;
   title: string;
   glyph: string;
   placeholder: string;
 }> = [
   {
-    id: "anti_pattern",
-    label: "Erreurs",
-    title: "Erreurs à ne plus répéter",
+    id: "lesson",
+    label: "Lessons",
+    title: "Lessons: observed error -> replacement rule",
     glyph: "shield-check",
-    placeholder: "Ex: Ne plus valider une campagne sans audience, douleur, mécanisme et résultat mesurable."
-  },
-  {
-    id: "conduct_rule",
-    label: "Règles",
-    title: "Règles de conduite",
-    glyph: "database",
-    placeholder: "Ex: Avant de proposer une campagne, vérifier l'offre, le canal, la preuve et l'objection principale."
+    placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
   {
     id: "skill",
     label: "Skills",
     title: "Skills",
     glyph: "zap",
-    placeholder: "Ex: Critiquer une accroche marketing avec le cadre audience / douleur / mécanisme / preuve."
+    placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
   },
   {
     id: "task",
     label: "Tasks",
     title: "Tasks",
     glyph: "terminal",
-    placeholder: "Ex: Revoir les 5 dernières variantes et extraire les erreurs récurrentes."
+    placeholder: "Ex: Review the last 5 variants and extract recurring errors."
   }
-].map((item) => item.id === "anti_pattern" ? {
-  ...item,
-  id: "lesson",
-  label: "Lessons",
-  title: "Lessons: observed error -> replacement rule",
-  placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
-} : item)
-  .filter((item) => item.id !== "conduct_rule") as Array<{
-    id: BrainLearningMemoryCategory;
-    label: string;
-    title: string;
-    glyph: string;
-    placeholder: string;
-  }>;
+];
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
@@ -802,9 +782,13 @@ function BrainLearningRegistry() {
   }, [activeCategory, draft]);
 
   const addEntry = () => {
+    const text = draft.trim();
+    if (!text) {
+      return;
+    }
     const next = appendBrainLearningMemoryEntry({
       category: activeCategory,
-      text: draft,
+      text,
       source: "manual",
       trust: "user_confirmed",
       evidence: "brain_learning_registry:manual_editor"
@@ -856,6 +840,13 @@ function BrainLearningRegistry() {
             setDraft(event.currentTarget.value);
             window.requestAnimationFrame(syncDraftTextareaHeight);
           }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey) {
+              return;
+            }
+            event.preventDefault();
+            addEntry();
+          }}
         />
         <div className="brainLearningRegistry__actions">
           <button type="button" disabled={!draft.trim()} onClick={addEntry}>
@@ -863,9 +854,9 @@ function BrainLearningRegistry() {
           </button>
         </div>
       </div>
-      <div className="brainLearningRegistry__entries" role="list" aria-label={category.title}>
+      <div className="brainLearningRegistry__entries" role="list" aria-label={`${category.title} macros`}>
         {categoryEntries.map((entry) => (
-          <article className="brainLearningRegistry__entry" key={entry.id} role="listitem">
+          <article className="brainLearningRegistry__entry brainLearningRegistry__macro" key={entry.id} role="listitem">
             <p>{entry.text}</p>
             <footer>
               <BrainEntrySourceBadge source={entry.source} />
