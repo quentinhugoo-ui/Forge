@@ -45,6 +45,7 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
   const slotRef = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef("");
   const [status, setStatus] = useState("Banger sphere viewport pending");
+  const [frameDataUrl, setFrameDataUrl] = useState("");
   const label = searchQuery?.replace(/\s+/g, " ").trim() || "Map";
 
   useLayoutEffect(() => {
@@ -95,13 +96,16 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
         .then((result) => {
           if (!active) return;
           if (result?.ok) {
+            setFrameDataUrl(result.previewFrameDataUrl ?? "");
             setStatus(`Banger sphere live ${result.instanceCount ?? 1} object`);
           } else {
+            setFrameDataUrl("");
             setStatus(result?.error?.message ?? "Banger sphere rejected");
           }
         })
         .catch((error: unknown) => {
           if (active) {
+            setFrameDataUrl("");
             setStatus(error instanceof Error ? error.message : String(error));
           }
         });
@@ -132,7 +136,11 @@ function BangerSphereNativeViewport({ searchQuery }: { searchQuery?: string | nu
 
   return (
     <div ref={slotRef} className="googleEarthDomFrame bangerSphereNativeFrame" aria-label="Map 3D sphere viewport">
-      <div className="nativeViewportSlot__empty" aria-hidden="true" />
+      {frameDataUrl ? (
+        <img className="bangerSphereNativeFrame__preview" src={frameDataUrl} alt="" draggable={false} />
+      ) : (
+        <div className="nativeViewportSlot__empty" aria-hidden="true" />
+      )}
       <span className="webExplorerNativeStatus">{label} - {status}</span>
     </div>
   );

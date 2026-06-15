@@ -8572,6 +8572,15 @@ ol.assistantText__list li::before {
   background: #000000;
 }
 
+.bangerSphereNativeFrame__preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+  background: #050607;
+}
+
 .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted,
 .canvasSurfaces--nativePager .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted {
   background: transparent;

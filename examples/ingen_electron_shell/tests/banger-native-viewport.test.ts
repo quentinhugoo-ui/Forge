@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const routerSource = readFileSync("src/renderer/HeaderSurfaceRouter.tsx", "utf8");
+const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
@@ -64,5 +65,13 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("BangerNativeFrameTarget");
     expect(nativeBridgeSource).toContain("create_banger_frame_target");
     expect(nativeBridgeSource).toContain("persistent_resize_tracked_depth_target_v1");
+  });
+
+  it("paints the Maps sphere from the Banger preview frame returned by IPC", () => {
+    expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
+    expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
+    expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame__preview");
+    expect(stylesSource).toContain("object-fit: cover");
   });
 });
