@@ -140,6 +140,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub culling_manifest: BangerNativeCullingManifest,
     pub meshlet_visibility_packet: BangerNativeMeshletVisibilityPacket,
     pub virtual_geometry_packet: BangerNativeVirtualGeometryPacket,
+    pub virtual_geometry_streaming_plan: BangerNativeVirtualGeometryStreamingPlan,
     pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
@@ -1490,6 +1491,72 @@ pub struct BangerNativeVirtualGeometryDispatch {
     pub indirect_dispatch_args: [u32; 3],
     pub first_page_hash: Option<String>,
     pub batch_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryStreamingPlan {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub virtual_geometry_hash: String,
+    pub residency_allocator_hash: String,
+    pub upload_budget_bytes: u64,
+    pub upload_page_count: usize,
+    pub resident_page_count: usize,
+    pub eviction_candidate_count: usize,
+    pub ray_tracing_stream_out_count: usize,
+    pub staging_buffer_count: usize,
+    pub max_staging_buffer_bytes: u64,
+    pub upload_queue_hash: String,
+    pub eviction_plan_hash: String,
+    pub ray_tracing_stream_out_hash: String,
+    pub packet_hash: String,
+    pub upload_batches: Vec<BangerNativeVirtualGeometryUploadBatch>,
+    pub eviction_candidates: Vec<BangerNativeVirtualGeometryEvictionCandidate>,
+    pub ray_tracing_stream_out: Vec<BangerNativeVirtualGeometryRayTracingStreamOut>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryUploadBatch {
+    pub batch_id: String,
+    pub queue_lane: &'static str,
+    pub page_count: usize,
+    pub byte_count: u64,
+    pub priority_min: u32,
+    pub priority_max: u32,
+    pub staging_buffer_id: u32,
+    pub staging_offset_bytes: u64,
+    pub first_page_hash: Option<String>,
+    pub command_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryEvictionCandidate {
+    pub page_id: String,
+    pub physical_pool: &'static str,
+    pub priority: u32,
+    pub eviction_reason: &'static str,
+    pub physical_address: [u32; 4],
+    pub page_hash: String,
+    pub candidate_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualGeometryRayTracingStreamOut {
+    pub page_id: String,
+    pub cluster_id: String,
+    pub lod_bucket: u32,
+    pub triangle_count: u32,
+    pub vertex_count: u32,
+    pub scratch_bytes: u64,
+    pub blas_priority: u32,
+    pub request_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3697,6 +3764,11 @@ impl BangerNativeEngine {
             &temporal_history_packet,
             &render_graph_compilation,
         );
+        let virtual_geometry_streaming_plan = build_virtual_geometry_streaming_plan(
+            &prepared,
+            &virtual_geometry_packet,
+            &page_residency_allocator,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -3781,6 +3853,7 @@ impl BangerNativeEngine {
             &culling_manifest,
             &meshlet_visibility_packet,
             &virtual_geometry_packet,
+            &virtual_geometry_streaming_plan,
             &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
@@ -3863,6 +3936,7 @@ impl BangerNativeEngine {
             culling_manifest,
             meshlet_visibility_packet,
             virtual_geometry_packet,
+            virtual_geometry_streaming_plan,
             nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
@@ -5829,6 +5903,363 @@ fn virtual_geometry_packet_hash(
     }
     for dispatch in dispatches {
         h.update(dispatch.batch_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn build_virtual_geometry_streaming_plan(
+    prepared: &MonsterPreparedCompute,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+) -> BangerNativeVirtualGeometryStreamingPlan {
+    let upload_budget_bytes = 24 * 1024 * 1024;
+    let max_staging_buffer_bytes = 8 * 1024 * 1024;
+    let upload_batches = virtual_geometry_upload_batches(
+        virtual_geometry_packet,
+        upload_budget_bytes,
+        max_staging_buffer_bytes,
+    );
+    let eviction_candidates =
+        virtual_geometry_eviction_candidates(virtual_geometry_packet, page_residency_allocator);
+    let ray_tracing_stream_out = virtual_geometry_ray_tracing_stream_out(virtual_geometry_packet);
+    let upload_queue_hash = virtual_geometry_upload_queue_hash(&upload_batches);
+    let eviction_plan_hash = virtual_geometry_eviction_plan_hash(&eviction_candidates);
+    let ray_tracing_stream_out_hash = virtual_geometry_ray_tracing_stream_out_hash(&ray_tracing_stream_out);
+    let packet_hash = virtual_geometry_streaming_plan_hash(
+        prepared,
+        virtual_geometry_packet,
+        page_residency_allocator,
+        upload_budget_bytes,
+        max_staging_buffer_bytes,
+        &upload_queue_hash,
+        &eviction_plan_hash,
+        &ray_tracing_stream_out_hash,
+        &upload_batches,
+        &eviction_candidates,
+        &ray_tracing_stream_out,
+    );
+    BangerNativeVirtualGeometryStreamingPlan {
+        schema: "forge.banger.virtual_geometry_streaming_plan.v1",
+        schema_version: 1,
+        authority: "banger_virtual_geometry_feedback_streaming_budgeter",
+        clean_room_basis: "local_unreal_sparse_nanite_feedback_streaming_raytracing_streamout_budget_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        virtual_geometry_hash: virtual_geometry_packet.packet_hash.clone(),
+        residency_allocator_hash: page_residency_allocator.packet_hash.clone(),
+        upload_budget_bytes,
+        upload_page_count: upload_batches.iter().map(|batch| batch.page_count).sum(),
+        resident_page_count: virtual_geometry_packet.resident_micro_page_count,
+        eviction_candidate_count: eviction_candidates.len(),
+        ray_tracing_stream_out_count: ray_tracing_stream_out.len(),
+        staging_buffer_count: upload_batches
+            .iter()
+            .map(|batch| batch.staging_buffer_id)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        max_staging_buffer_bytes,
+        upload_queue_hash,
+        eviction_plan_hash,
+        ray_tracing_stream_out_hash,
+        packet_hash,
+        upload_batches,
+        eviction_candidates,
+        ray_tracing_stream_out,
+    }
+}
+
+fn virtual_geometry_upload_batches(
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    upload_budget_bytes: u64,
+    max_staging_buffer_bytes: u64,
+) -> Vec<BangerNativeVirtualGeometryUploadBatch> {
+    let mut pages = virtual_geometry_packet
+        .pages
+        .iter()
+        .filter(|page| page.residency_state != "resident_page")
+        .collect::<Vec<_>>();
+    pages.sort_by(|a, b| {
+        b.streaming_priority
+            .cmp(&a.streaming_priority)
+            .then_with(|| a.lod_bucket.cmp(&b.lod_bucket))
+            .then_with(|| a.mip_level.cmp(&b.mip_level))
+            .then_with(|| a.page_id.cmp(&b.page_id))
+    });
+
+    let mut batches = Vec::new();
+    let mut staged_bytes = 0u64;
+    let mut current_pages = Vec::new();
+    let mut current_bytes = 0u64;
+    let mut staging_buffer_id = 0u32;
+    let mut staging_offset_bytes = 0u64;
+    for page in pages {
+        if staged_bytes >= upload_budget_bytes {
+            break;
+        }
+        let page_bytes = page.byte_len.min(max_staging_buffer_bytes).max(4096);
+        if !current_pages.is_empty()
+            && (current_bytes + page_bytes > max_staging_buffer_bytes
+                || staged_bytes + current_bytes + page_bytes > upload_budget_bytes)
+        {
+            batches.push(virtual_geometry_upload_batch(
+                staging_buffer_id,
+                staging_offset_bytes,
+                &current_pages,
+            ));
+            staged_bytes = staged_bytes.saturating_add(current_bytes);
+            staging_offset_bytes = staging_offset_bytes.saturating_add(current_bytes);
+            if staging_offset_bytes >= max_staging_buffer_bytes {
+                staging_buffer_id = staging_buffer_id.saturating_add(1);
+                staging_offset_bytes = 0;
+            }
+            current_pages.clear();
+            current_bytes = 0;
+        }
+        current_bytes = current_bytes.saturating_add(page_bytes);
+        current_pages.push(page);
+    }
+    if !current_pages.is_empty() && staged_bytes < upload_budget_bytes {
+        batches.push(virtual_geometry_upload_batch(
+            staging_buffer_id,
+            staging_offset_bytes,
+            &current_pages,
+        ));
+    }
+    batches
+}
+
+fn virtual_geometry_upload_batch(
+    staging_buffer_id: u32,
+    staging_offset_bytes: u64,
+    pages: &[&BangerNativeVirtualGeometryPage],
+) -> BangerNativeVirtualGeometryUploadBatch {
+    let byte_count = pages.iter().map(|page| page.byte_len).sum();
+    let priority_min = pages.iter().map(|page| page.streaming_priority).min().unwrap_or_default();
+    let priority_max = pages.iter().map(|page| page.streaming_priority).max().unwrap_or_default();
+    let first_page_hash = pages.first().map(|page| page.page_hash.clone());
+    let batch_id = format!(
+        "virtual_geometry_upload_s{staging_buffer_id}_o{staging_offset_bytes}_n{}",
+        pages.len()
+    );
+    let command_hash = virtual_geometry_upload_batch_hash(
+        &batch_id,
+        pages.len(),
+        byte_count,
+        priority_min,
+        priority_max,
+        staging_buffer_id,
+        staging_offset_bytes,
+        first_page_hash.as_deref(),
+    );
+    BangerNativeVirtualGeometryUploadBatch {
+        batch_id,
+        queue_lane: "copy_queue_upload_to_geometry_pool",
+        page_count: pages.len(),
+        byte_count,
+        priority_min,
+        priority_max,
+        staging_buffer_id,
+        staging_offset_bytes,
+        first_page_hash,
+        command_hash,
+    }
+}
+
+fn virtual_geometry_eviction_candidates(
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+) -> Vec<BangerNativeVirtualGeometryEvictionCandidate> {
+    let page_ids = virtual_geometry_packet
+        .pages
+        .iter()
+        .map(|page| page.page_hash.as_str())
+        .collect::<BTreeSet<_>>();
+    page_residency_allocator
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.page_kind == "virtual_geometry_micro_page"
+                && (entry.lock_state == "eviction_candidate"
+                    || (entry.stale_feedback && entry.priority < 4096)
+                    || !page_ids.contains(entry.source_page_hash.as_str()))
+        })
+        .map(|entry| {
+            let eviction_reason = if !page_ids.contains(entry.source_page_hash.as_str()) {
+                "not_visible_this_frame"
+            } else if entry.stale_feedback {
+                "stale_feedback_trim"
+            } else {
+                "low_priority_eviction"
+            };
+            let candidate_hash = virtual_geometry_eviction_candidate_hash(entry, eviction_reason);
+            BangerNativeVirtualGeometryEvictionCandidate {
+                page_id: entry.page_id.clone(),
+                physical_pool: entry.physical_pool,
+                priority: entry.priority,
+                eviction_reason,
+                physical_address: entry.physical_address,
+                page_hash: entry.source_page_hash.clone(),
+                candidate_hash,
+            }
+        })
+        .collect()
+}
+
+fn virtual_geometry_ray_tracing_stream_out(
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+) -> Vec<BangerNativeVirtualGeometryRayTracingStreamOut> {
+    virtual_geometry_packet
+        .pages
+        .iter()
+        .filter(|page| page.residency_state == "resident_page" && page.lod_bucket <= 2)
+        .map(|page| {
+            let scratch_bytes = u64::from(page.triangle_count)
+                .saturating_mul(64)
+                .saturating_add(u64::from(page.vertex_count).saturating_mul(48))
+                .max(4096);
+            let blas_priority = page.streaming_priority.saturating_add(512u32.saturating_sub(page.lod_bucket.min(512)));
+            let request_hash = virtual_geometry_ray_tracing_stream_out_entry_hash(page, scratch_bytes, blas_priority);
+            BangerNativeVirtualGeometryRayTracingStreamOut {
+                page_id: page.page_id.clone(),
+                cluster_id: page.cluster_id.clone(),
+                lod_bucket: page.lod_bucket,
+                triangle_count: page.triangle_count,
+                vertex_count: page.vertex_count,
+                scratch_bytes,
+                blas_priority,
+                request_hash,
+            }
+        })
+        .collect()
+}
+
+fn virtual_geometry_upload_batch_hash(
+    batch_id: &str,
+    page_count: usize,
+    byte_count: u64,
+    priority_min: u32,
+    priority_max: u32,
+    staging_buffer_id: u32,
+    staging_offset_bytes: u64,
+    first_page_hash: Option<&str>,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.upload_batch.v1\0");
+    h.update(batch_id.as_bytes());
+    h.update((page_count as u64).to_le_bytes());
+    h.update(byte_count.to_le_bytes());
+    h.update(priority_min.to_le_bytes());
+    h.update(priority_max.to_le_bytes());
+    h.update(staging_buffer_id.to_le_bytes());
+    h.update(staging_offset_bytes.to_le_bytes());
+    if let Some(first_page_hash) = first_page_hash {
+        h.update(first_page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_upload_queue_hash(batches: &[BangerNativeVirtualGeometryUploadBatch]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.upload_queue.v1\0");
+    for batch in batches {
+        h.update(batch.command_hash.as_bytes());
+        h.update(batch.byte_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_eviction_candidate_hash(
+    entry: &BangerNativePageResidencyEntry,
+    eviction_reason: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.eviction_candidate.v1\0");
+    h.update(entry.page_id.as_bytes());
+    h.update(entry.physical_pool.as_bytes());
+    h.update(entry.priority.to_le_bytes());
+    h.update(eviction_reason.as_bytes());
+    for value in entry.physical_address {
+        h.update(value.to_le_bytes());
+    }
+    h.update(entry.source_page_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_eviction_plan_hash(
+    candidates: &[BangerNativeVirtualGeometryEvictionCandidate],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.eviction_plan.v1\0");
+    for candidate in candidates {
+        h.update(candidate.candidate_hash.as_bytes());
+        h.update(candidate.eviction_reason.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_ray_tracing_stream_out_entry_hash(
+    page: &BangerNativeVirtualGeometryPage,
+    scratch_bytes: u64,
+    blas_priority: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.ray_tracing_stream_out_entry.v1\0");
+    h.update(page.page_id.as_bytes());
+    h.update(page.cluster_id.as_bytes());
+    h.update(page.lod_bucket.to_le_bytes());
+    h.update(page.triangle_count.to_le_bytes());
+    h.update(page.vertex_count.to_le_bytes());
+    h.update(scratch_bytes.to_le_bytes());
+    h.update(blas_priority.to_le_bytes());
+    h.update(page.page_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_ray_tracing_stream_out_hash(
+    requests: &[BangerNativeVirtualGeometryRayTracingStreamOut],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry.ray_tracing_stream_out.v1\0");
+    for request in requests {
+        h.update(request.request_hash.as_bytes());
+        h.update(request.scratch_bytes.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_geometry_streaming_plan_hash(
+    prepared: &MonsterPreparedCompute,
+    virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+    upload_budget_bytes: u64,
+    max_staging_buffer_bytes: u64,
+    upload_queue_hash: &str,
+    eviction_plan_hash: &str,
+    ray_tracing_stream_out_hash: &str,
+    upload_batches: &[BangerNativeVirtualGeometryUploadBatch],
+    eviction_candidates: &[BangerNativeVirtualGeometryEvictionCandidate],
+    ray_tracing_stream_out: &[BangerNativeVirtualGeometryRayTracingStreamOut],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_geometry_streaming_plan.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(virtual_geometry_packet.packet_hash.as_bytes());
+    h.update(page_residency_allocator.packet_hash.as_bytes());
+    h.update(upload_budget_bytes.to_le_bytes());
+    h.update(max_staging_buffer_bytes.to_le_bytes());
+    h.update(upload_queue_hash.as_bytes());
+    h.update(eviction_plan_hash.as_bytes());
+    h.update(ray_tracing_stream_out_hash.as_bytes());
+    h.update((upload_batches.len() as u64).to_le_bytes());
+    h.update((eviction_candidates.len() as u64).to_le_bytes());
+    h.update((ray_tracing_stream_out.len() as u64).to_le_bytes());
+    for batch in upload_batches {
+        h.update(batch.command_hash.as_bytes());
+    }
+    for candidate in eviction_candidates {
+        h.update(candidate.candidate_hash.as_bytes());
+    }
+    for request in ray_tracing_stream_out {
+        h.update(request.request_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -16767,6 +17198,7 @@ fn page_residency_compacted_feedback(
 
 fn page_residency_pool_static(pool: &str) -> &'static str {
     match pool {
+        "virtual_geometry_micro_page_pool" => "virtual_geometry_micro_page_pool",
         "nanite_geometry_pool" => "nanite_geometry_pool",
         "virtual_shadow_physical_pool" => "virtual_shadow_physical_pool",
         "material_texture_pool" => "material_texture_pool",
@@ -24925,6 +25357,7 @@ fn render_handoff_hash(
     culling_manifest: &BangerNativeCullingManifest,
     meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
     virtual_geometry_packet: &BangerNativeVirtualGeometryPacket,
+    virtual_geometry_streaming_plan: &BangerNativeVirtualGeometryStreamingPlan,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
@@ -24978,6 +25411,10 @@ fn render_handoff_hash(
     h.update(virtual_geometry_packet.streaming_heap_hash.as_bytes());
     h.update(virtual_geometry_packet.indirect_compaction_hash.as_bytes());
     h.update(virtual_geometry_packet.work_graph_dispatch_hash.as_bytes());
+    h.update(virtual_geometry_streaming_plan.packet_hash.as_bytes());
+    h.update(virtual_geometry_streaming_plan.upload_queue_hash.as_bytes());
+    h.update(virtual_geometry_streaming_plan.eviction_plan_hash.as_bytes());
+    h.update(virtual_geometry_streaming_plan.ray_tracing_stream_out_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
     h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
@@ -26966,6 +27403,87 @@ mod tests {
             .any(|entry| entry.page_kind == "virtual_geometry_micro_page"
                 && entry.physical_pool == "virtual_geometry_micro_page_pool"
                 && entry.entry_hash.len() == 64));
+        assert_eq!(
+            response.virtual_geometry_streaming_plan.schema,
+            "forge.banger.virtual_geometry_streaming_plan.v1"
+        );
+        assert_eq!(response.virtual_geometry_streaming_plan.schema_version, 1);
+        assert_eq!(
+            response.virtual_geometry_streaming_plan.virtual_geometry_hash,
+            response.virtual_geometry_packet.packet_hash
+        );
+        assert_eq!(
+            response
+                .virtual_geometry_streaming_plan
+                .residency_allocator_hash,
+            response.page_residency_allocator.packet_hash
+        );
+        assert!(response.virtual_geometry_streaming_plan.upload_budget_bytes > 0);
+        assert!(response.virtual_geometry_streaming_plan.max_staging_buffer_bytes > 0);
+        assert_eq!(
+            response.virtual_geometry_streaming_plan.upload_page_count,
+            response
+                .virtual_geometry_streaming_plan
+                .upload_batches
+                .iter()
+                .map(|batch| batch.page_count)
+                .sum::<usize>()
+        );
+        assert_eq!(
+            response.virtual_geometry_streaming_plan.resident_page_count,
+            response.virtual_geometry_packet.resident_micro_page_count
+        );
+        assert_eq!(response.virtual_geometry_streaming_plan.upload_queue_hash.len(), 64);
+        assert_eq!(response.virtual_geometry_streaming_plan.eviction_plan_hash.len(), 64);
+        assert_eq!(
+            response
+                .virtual_geometry_streaming_plan
+                .ray_tracing_stream_out_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.virtual_geometry_streaming_plan.packet_hash.len(), 64);
+        assert!(response
+            .virtual_geometry_streaming_plan
+            .upload_batches
+            .iter()
+            .all(|batch| batch.page_count > 0
+                && batch.byte_count > 0
+                && batch.byte_count <= response.virtual_geometry_streaming_plan.max_staging_buffer_bytes
+                && batch.priority_max >= batch.priority_min
+                && batch.command_hash.len() == 64));
+        assert_eq!(
+            response
+                .virtual_geometry_streaming_plan
+                .eviction_candidate_count,
+            response
+                .virtual_geometry_streaming_plan
+                .eviction_candidates
+                .len()
+        );
+        assert!(response
+            .virtual_geometry_streaming_plan
+            .eviction_candidates
+            .iter()
+            .all(|candidate| candidate.physical_pool == "virtual_geometry_micro_page_pool"
+                && candidate.candidate_hash.len() == 64));
+        assert_eq!(
+            response
+                .virtual_geometry_streaming_plan
+                .ray_tracing_stream_out_count,
+            response
+                .virtual_geometry_streaming_plan
+                .ray_tracing_stream_out
+                .len()
+        );
+        assert!(response
+            .virtual_geometry_streaming_plan
+            .ray_tracing_stream_out
+            .iter()
+            .all(|request| request.triangle_count > 0
+                && request.vertex_count > 0
+                && request.scratch_bytes >= 4096
+                && request.request_hash.len() == 64));
         assert_eq!(
             response.nanite_second_layer_packet.schema,
             "forge.banger.nanite_second_layer_packet.v1"
