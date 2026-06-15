@@ -199,6 +199,8 @@ Update 2026-06-15: the chat submit path now uses a single `executeUniversalLoopO
 
 Update 2026-06-15: non-Brain CodeAct events now share the same visual lifecycle as local agent actions: a `working` phase while the streamed event is active, with the existing animated icon treatment, then a `complete` phase that settles into the muted chatbar-gray event line. Brain creation/change/modification events keep their dedicated blue Brain treatment instead of being folded into the generic gray lifecycle.
 
+Update 2026-06-15: the deterministic desktop/file-organization fallback is no longer part of the normal runtime path; it can run only behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1`. `executeUniversalLoopContinuation` is now a controlled loop: after each Brain switch or actionable CodeAct continuation it re-runs the same orchestrator pass, then decides again whether to continue, pause/stop, or exit on a repeated continuation key.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.

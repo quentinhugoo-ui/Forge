@@ -219,7 +219,12 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("interface UniversalLoopOrchestratorPassResult");
     expect(mainSource).toContain("async function executeUniversalLoopOrchestratorPass");
     expect(mainSource).toContain("function universalLoopContinuationUserText");
+    expect(mainSource).toContain("function universalLoopContinuationKey");
     expect(mainSource).toContain("async function executeUniversalLoopContinuation");
+    expect(mainSource).toContain("const seenContinuationKeys = new Set<string>()");
+    expect(mainSource).toContain("while (true)");
+    expect(mainSource).toContain("if (seenContinuationKeys.has(continuationKey))");
+    expect(mainSource).toContain("pass = continuationPass");
     expect(mainSource).toContain("BRAIN_CODEACT_LOOP_CONTINUATION v1");
     expect(mainSource).toContain("Le ou les CodeActs Brain precedents sont des evenements de loop stream");
     expect(mainSource).toContain("previous_visible_progress=");
@@ -337,7 +342,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function reportableAgentActionLoopOutcome");
     expect(mainSource).toContain("function ensureAgentActionLoopFinalSummary");
     expect(mainSource).toContain("Final summary: agent loop ${state.finalStatus}");
-    expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback");
+    expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK &&");
+    expect(mainSource).not.toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback");
     expect(mainSource).not.toContain("Final summary: agent loop max_steps");
     expect(mainSource).toContain("while (true)");
     expect(mainSource).toContain("stopActiveAssistantRunControl");

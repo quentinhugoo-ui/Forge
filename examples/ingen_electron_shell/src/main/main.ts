@@ -7241,7 +7241,8 @@ async function executeAssistantAgentActionLoop(params: {
       return assistantMessage;
     }
     if (
-      (AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback(params.originalUserText, extracted.request, result)) &&
+      AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK &&
+      agentActionShouldRunFileOrganizationFallback(params.originalUserText, extracted.request, result) &&
       agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)
     ) {
       const fallbackMessage = await applyDeterministicOrganizationFallback({
@@ -16143,6 +16144,20 @@ function universalLoopContinuationUserText(params: {
   return undefined;
 }
 
+function universalLoopContinuationKey(params: {
+  continuation: { text: string; idSuffix: string };
+  pass: UniversalLoopOrchestratorPassResult;
+}): string {
+  const codeActs = brainCodeActCommandsFromAssistantText(params.pass.assistantMessage.text)
+    .filter((command) => command !== BRAIN_RENAME_SESSION_COMMAND)
+    .join("|");
+  return [
+    params.continuation.idSuffix,
+    params.pass.activatedBrainSegment ?? "",
+    codeActs || "no-codeact"
+  ].join(":");
+}
+
 async function executeUniversalLoopContinuation(params: {
   nextTranscript: TranscriptMessage[];
   requestSessionId: string;
@@ -16158,54 +16173,66 @@ async function executeUniversalLoopContinuation(params: {
   searchArchiveActive: boolean;
   pass: UniversalLoopOrchestratorPassResult;
 }): Promise<TranscriptMessage[]> {
-  const continuation = universalLoopContinuationUserText({
-    originalUserText: params.originalUserText,
-    assistantText: params.pass.assistantMessage.text,
-    searchArchiveActive: params.searchArchiveActive,
-    previousBrainSegment: params.pass.previousBrainSegment,
-    activatedBrainSegment: params.pass.activatedBrainSegment
-  });
-  if (!continuation) {
-    return params.nextTranscript;
+  let nextTranscript = params.nextTranscript;
+  let pass = params.pass;
+  const seenContinuationKeys = new Set<string>();
+
+  while (true) {
+    const continuation = universalLoopContinuationUserText({
+      originalUserText: params.originalUserText,
+      assistantText: pass.assistantMessage.text,
+      searchArchiveActive: params.searchArchiveActive,
+      previousBrainSegment: pass.previousBrainSegment,
+      activatedBrainSegment: pass.activatedBrainSegment
+    });
+    if (!continuation) {
+      return nextTranscript;
+    }
+    const continuationKey = universalLoopContinuationKey({ continuation, pass });
+    if (seenContinuationKeys.has(continuationKey)) {
+      return nextTranscript;
+    }
+    seenContinuationKeys.add(continuationKey);
+
+    const continuationAssistantMessageId = `assistant-response-${Date.now()}-${continuation.idSuffix}`;
+    const continuationLiveSink = createAssistantLiveTextSink({
+      baseTranscript: nextTranscript,
+      assistantMessageId: continuationAssistantMessageId,
+      agentEvents: params.agentEvents,
+      commitTranscript: params.commitTranscript,
+      assistantRun: params.assistantRun
+    });
+    const rawContinuationMessage = await buildAssistantTranscriptMessage(
+      continuation.text,
+      params.providerAttachments,
+      params.userMessageId,
+      params.moduleId,
+      nextTranscript,
+      continuationLiveSink,
+      continuationAssistantMessageId
+    );
+    const continuationPass = await executeUniversalLoopOrchestratorPass({
+      assistantMessage: rawContinuationMessage,
+      baseTranscript: nextTranscript,
+      originalUserText: continuation.text,
+      providerAttachments: params.providerAttachments,
+      userMessageId: params.userMessageId,
+      moduleId: params.moduleId,
+      parallelSessionIndex: params.parallelSessionIndex,
+      session: params.session,
+      agentEvents: params.agentEvents,
+      assistantRun: params.assistantRun,
+      commitTranscript: params.commitTranscript
+    });
+    nextTranscript = await commitAssistantMessageWithProgressiveSeed(
+      nextTranscript,
+      continuationPass.assistantMessage,
+      params.requestSessionId,
+      params.commitTranscript
+    );
+    archiveTranscriptMessage(params.session, continuationPass.assistantMessage);
+    pass = continuationPass;
   }
-  const continuationAssistantMessageId = `assistant-response-${Date.now()}-${continuation.idSuffix}`;
-  const continuationLiveSink = createAssistantLiveTextSink({
-    baseTranscript: params.nextTranscript,
-    assistantMessageId: continuationAssistantMessageId,
-    agentEvents: params.agentEvents,
-    commitTranscript: params.commitTranscript,
-    assistantRun: params.assistantRun
-  });
-  const rawContinuationMessage = await buildAssistantTranscriptMessage(
-    continuation.text,
-    params.providerAttachments,
-    params.userMessageId,
-    params.moduleId,
-    params.nextTranscript,
-    continuationLiveSink,
-    continuationAssistantMessageId
-  );
-  const continuationPass = await executeUniversalLoopOrchestratorPass({
-    assistantMessage: rawContinuationMessage,
-    baseTranscript: params.nextTranscript,
-    originalUserText: continuation.text,
-    providerAttachments: params.providerAttachments,
-    userMessageId: params.userMessageId,
-    moduleId: params.moduleId,
-    parallelSessionIndex: params.parallelSessionIndex,
-    session: params.session,
-    agentEvents: params.agentEvents,
-    assistantRun: params.assistantRun,
-    commitTranscript: params.commitTranscript
-  });
-  const nextTranscript = await commitAssistantMessageWithProgressiveSeed(
-    params.nextTranscript,
-    continuationPass.assistantMessage,
-    params.requestSessionId,
-    params.commitTranscript
-  );
-  archiveTranscriptMessage(params.session, continuationPass.assistantMessage);
-  return nextTranscript;
 }
 
 async function submitChatDraftForSessionInner(
