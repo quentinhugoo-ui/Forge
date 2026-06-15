@@ -5116,11 +5116,11 @@ function brainSegmentManifest(): string {
     "ACTIVE_BRAIN_SEGMENT v1",
     "active=general",
     brainPersonalityContextManifest(),
-    `mandatory=Before answering or asking clarifying questions, classify the user's task by semantic domain. If you understand that it belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, future Banger 3D, Monster or /newcompute_ work, write a short natural acknowledgement and activate ${BRAIN_SCIENCE_COMMAND} before any detailed specialized answer or questionnaire.`,
+    `mandatory=Before answering or acting, classify the user's task by semantic domain. If key choices, constraints, scope, files, risks or success criteria are missing, you may use ${BRAIN_QUESTIONNAIRE_COMMAND} from General Brain before acting. If the task is already clear and belongs to science, engineering, mathematics, biology, chemistry, physics, cryptography, formal analysis, physical product design, electronics, mechanics, robotics, CAD/3D, Banger, future Banger 3D, Monster or /newcompute_ work, write a short natural acknowledgement and activate ${BRAIN_SCIENCE_COMMAND} before detailed specialized work.`,
     "mandatory=Physical product or prototype conception is engineering by default, even if the object is ordinary or newly mentioned.",
     "mandatory=The decision to activate /sciencebrain_ is semantic, not keyword-based: infer the domain implied by the user's natural-language request, even when the exact object, field or project name has never appeared in the Brain.",
-    `mandatory=If you understand that the task belongs to software engineering, coding, websites, applications, repository work, debugging, tests, architecture, scripts, API, Rust, TypeScript, Electron or developer tooling, write a short natural acknowledgement and activate ${BRAIN_CODING_COMMAND} before any detailed specialized answer or questionnaire.`,
-    "mandatory=Clarifying-question CodeActs are specialized-catalog tools; while active=general, do not open a questionnaire before the required Brain segment has been activated.",
+    `mandatory=If the task is already clear and belongs to software engineering, coding, websites, applications, repository work, debugging, tests, architecture, scripts, API, Rust, TypeScript, Electron or developer tooling, write a short natural acknowledgement and activate ${BRAIN_CODING_COMMAND} before detailed specialized work.`,
+    `questionnaire_rule=${BRAIN_QUESTIONNAIRE_COMMAND} is a General Brain CodeAct too: use it only when guessing would hurt the result; skip it for trivial tasks or obvious safe defaults.`,
     `sciencebrain_activation_format=${BRAIN_SCIENCE_COMMAND} segment="science" reason="short LLM-authored reason" output="inject_brain_catalog"`,
     `codingbrain_activation_format=${BRAIN_CODING_COMMAND} segment="coding" reason="short LLM-authored reason" output="inject_brain_catalog"`
   ].join("\n");
@@ -15127,7 +15127,7 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
     "",
     `Contexte InGen: ${command} vient d'etre active. Le catalogue ${catalog} est maintenant injecte. Continue la demande utilisateur avec ce Brain actif; ne reactive pas ${command} sauf si une nouvelle demande l'exige.`,
     agentLoopNarrationContractManifest(),
-    `questionnaire_pause=If useful questions are needed before acting, do not write a long checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, intro, q1/q2/q3/q4/q5 maximum and three contextual expert option cards per question via q1_options/q2_options/q3_options/q4_options/q5_options. The intro frames the project goal in 2-3 short French sentences. Each option must follow "Label (Tag) - 1-2 useful French sentences: benefit, tradeoff, when to choose it"; use concise tags such as Recommended, Fast, Quality, Ambitious, Cheaper, Safer or Riskier when useful, mark "(Recommended)" when it is the best starting point, and include a more ambitious/quality/longer/costlier path when relevant. For color-choice questions, include bounded preview tokens such as color:#38bdf8 or colors:#38bdf8,#a855f7 inside the option label; never include arbitrary CSS or JS. Avoid vague meta choices; the host always adds the fourth Other option with a free-text field.`
+    `questionnaire_pause=If useful questions are needed before acting, do not write a checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, optional intro, q1..q5 max, one question per page, and three concrete expert options in qN_options. Use only if guessing would hurt the result; host adds Other automatically.`
   ];
   if (segment === "coding") {
     lines.push(
