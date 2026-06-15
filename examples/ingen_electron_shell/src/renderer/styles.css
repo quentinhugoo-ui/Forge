@@ -60,11 +60,11 @@ button {
   --canvas-files-pane-width: clamp(360px, calc(var(--workspace-total-width) * 0.34), 560px);
   --canvas-options-rail-width: clamp(250px, 15vw, 320px);
   --workspace-width: calc(100vw - var(--workspace-left) - var(--workspace-right));
-  --chat-width: min(780px, calc(var(--workspace-width) - 64px));
+  --chat-width: min(920px, calc(var(--workspace-width) - 24px));
   --chat-left: calc(var(--workspace-left) + ((var(--workspace-width) - var(--chat-width)) / 2));
   --questionnaire-width: min(756px, calc(var(--chat-width) - 8px));
   --questionnaire-left: calc(var(--chat-left) + ((var(--chat-width) - var(--questionnaire-width)) / 2));
-  --bottom-width: min(764px, calc(var(--workspace-width) - 80px));
+  --bottom-width: min(904px, calc(var(--workspace-width) - 24px));
   --bottom-left: calc(var(--workspace-left) + ((var(--workspace-width) - var(--bottom-width)) / 2));
   --composer-bottom: 33px;
   --bottom-controls-bottom: 12px;
@@ -175,17 +175,17 @@ button {
   --workspace-header-left: 0px;
   --workspace-right: 0px;
   --workspace-width: 100vw;
-  --chat-width: var(--widget-chat-width, min(780px, calc(100vw - 64px)));
+  --chat-width: var(--widget-chat-width, min(920px, calc(100vw - 24px)));
   --chat-left: var(--widget-chat-left, calc((100vw - var(--chat-width)) / 2));
-  --bottom-width: var(--widget-bottom-width, min(764px, calc(100vw - 80px)));
+  --bottom-width: var(--widget-bottom-width, min(904px, calc(100vw - 24px)));
   --bottom-left: var(--widget-bottom-left, calc((100vw - var(--bottom-width)) / 2));
   background: transparent;
 }
 
 .shell--widget-minimizing {
-  --chat-width: var(--widget-chat-width, min(780px, calc(var(--workspace-width) - 64px)));
+  --chat-width: var(--widget-chat-width, min(920px, calc(var(--workspace-width) - 24px)));
   --chat-left: var(--widget-chat-left, calc(var(--workspace-left) + ((var(--workspace-width) - var(--chat-width)) / 2)));
-  --bottom-width: var(--widget-bottom-width, min(764px, calc(var(--workspace-width) - 80px)));
+  --bottom-width: var(--widget-bottom-width, min(904px, calc(var(--workspace-width) - 24px)));
   --bottom-left: var(--widget-bottom-left, calc(var(--workspace-left) + ((var(--workspace-width) - var(--bottom-width)) / 2)));
   background: transparent;
 }
@@ -6993,7 +6993,7 @@ ol.assistantText__list li::before {
   min-height: 66px;
   max-height: 360px;
   height: 66px;
-  padding: 14px 48px 30px 8px;
+  padding: 14px 12px 34px 8px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -11183,16 +11183,16 @@ ol.assistantText__list li::before {
     --right-panel-gutter: 20px;
     --workspace-gap: 18px;
     --workspace-header-left: max(0px, calc(var(--workspace-left) - 16px));
-    --chat-width: min(430px, calc(var(--workspace-width) - 24px));
-    --bottom-width: min(430px, calc(var(--workspace-width) - 24px));
+    --chat-width: min(520px, calc(var(--workspace-width) - 24px));
+    --bottom-width: min(520px, calc(var(--workspace-width) - 24px));
     --composer-bottom: 30px;
   }
 
   .shell.shell--left-collapsed {
     --left-panel-offset: 0px;
     --main-left: 20px;
-    --chat-width: min(620px, calc(var(--workspace-width) - 24px));
-    --bottom-width: min(620px, calc(var(--workspace-width) - 24px));
+    --chat-width: min(720px, calc(var(--workspace-width) - 24px));
+    --bottom-width: min(720px, calc(var(--workspace-width) - 24px));
   }
 
   .titlebar {
@@ -11311,7 +11311,7 @@ ol.assistantText__list li::before {
   .composer__input {
     min-height: 60px;
     height: 60px;
-    padding: 13px 44px 26px 7px;
+    padding: 13px 12px 30px 7px;
   }
 
   .bottomControls {
@@ -11335,8 +11335,8 @@ ol.assistantText__list li::before {
   min-height: 82px;
   height: auto;
   padding: 8px;
-  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
-  transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
+  transform: none;
+  transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
 .shell--widget-mode .composer {
@@ -11374,8 +11374,8 @@ ol.assistantText__list li::before {
   grid-template-columns: max-content 34px minmax(0, 1fr) max-content 30px;
   gap: 7px;
   width: var(--chat-width);
-  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
-  transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
+  transform: none;
+  transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
 .shell--widget-mode .bottomControls {
@@ -11385,8 +11385,8 @@ ol.assistantText__list li::before {
 
 .shell--widget-minimizing-canvas .composer,
 .shell--widget-minimizing-canvas .bottomControls {
-  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
-  transition: transform var(--widget-canvas-exit-motion), left var(--widget-canvas-exit-motion), width var(--widget-canvas-exit-motion);
+  transform: none;
+  transition: left var(--widget-canvas-exit-motion), width var(--widget-canvas-exit-motion);
 }
 
 .shell--widget-minimizing .bottomControls code,
