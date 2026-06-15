@@ -69,5 +69,13 @@ describe("Coding Brain live preview CodeAct", () => {
     expect(mainSource).toContain("document_write_text avec path=");
     expect(mainSource).toContain("Interdit dans ce tour: bloc de code Markdown");
     expect(mainSource).toContain("agentActionLoopInitialCodingVisualForcedContinuation");
+    expect(mainSource).toContain("function shouldForceCodingLivePreviewAfterWrite");
+    expect(mainSource).toContain("function agentActionCodingLivePreviewForcedContinuationUserText");
+    expect(mainSource).toContain("CODING_VISUAL_PREVIEW_FORCED_CONTINUATION v1");
+    expect(mainSource).toContain("agentActionLoopCodingLivePreviewForcedContinuation");
+    expect(mainSource).toContain('state.lastResult.action === "document_write_text"');
+    expect(mainSource).toContain("Pour ce coding visuel, l'action suivante doit etre document_write_text");
+    expect(mainSource).toContain("Le fichier local visuel a ete ecrit, mais le preview live n'a pas encore ete ouvert");
+    expect(mainSource).toContain('state.finalStatus === "completed"');
   });
 });

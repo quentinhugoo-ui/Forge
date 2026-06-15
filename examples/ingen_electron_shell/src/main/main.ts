@@ -6400,6 +6400,9 @@ function ensureAgentActionLoopFinalSummary(message: TranscriptMessage, state: Ag
   if (state.toolSteps === 0 || extractAgentActionJsonRequest(message.text) || textHasAgentActionFinalSummary(message.text)) {
     return message;
   }
+  if (state.finalStatus === "completed") {
+    return message;
+  }
   const text = `${removeAgentActionJsonFragments(message.text).trimEnd()}\n\n${agentActionLoopFinalSummaryText(state)}`.trim();
   return {
     ...message,
@@ -6576,10 +6579,28 @@ function textLooksLikeFilesystemMutationGoal(text: string): boolean {
 }
 
 function agentActionStepNeedsMutationFollowUp(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): boolean {
-  if (!result.accepted || !agentActionRequestIsDiscovery(request) || !textLooksLikeFilesystemMutationGoal(originalUserText)) {
+  if (!result.accepted || !agentActionRequestIsDiscovery(request)) {
+    return false;
+  }
+  if (textLooksLikeVisualCodingArtifactGoal(originalUserText)) {
+    return true;
+  }
+  if (!textLooksLikeFilesystemMutationGoal(originalUserText)) {
     return false;
   }
   return Boolean(result.items?.length || result.matches?.length || result.stdoutPreview?.trim());
+}
+
+function agentActionLastResultIsDocumentWrite(state: AgentActionLoopState): boolean {
+  return state.lastResult?.accepted === true && state.lastResult.action === "document_write_text";
+}
+
+function shouldForceCodingLivePreviewAfterWrite(originalUserText: string, assistantText: string, state: AgentActionLoopState): boolean {
+  return (
+    textLooksLikeVisualCodingArtifactGoal(originalUserText) &&
+    agentActionLastResultIsDocumentWrite(state) &&
+    !assistantText.includes(BRAIN_CODING_LIVE_PREVIEW_COMMAND)
+  );
 }
 
 function agentActionShouldRunFileOrganizationFallback(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): boolean {
@@ -6588,6 +6609,7 @@ function agentActionShouldRunFileOrganizationFallback(originalUserText: string, 
 
 function agentActionLoopContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
   const mustContinueAfterDiscovery = agentActionStepNeedsMutationFollowUp(originalUserText, request, result);
+  const mustCreateVisualArtifact = mustContinueAfterDiscovery && textLooksLikeVisualCodingArtifactGoal(originalUserText);
   return [
     AGENT_ACTION_RESULT_PREFIX,
     `step=${step + 1}`,
@@ -6599,6 +6621,9 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
     mustContinueAfterDiscovery
       ? "OBLIGATION: l'objectif utilisateur implique une modification locale; une action de lecture seule ne suffit pas. Tu dois maintenant choisir la prochaine action concrete et emettre exactement une ligne AGENT_ACTION_JSON."
       : "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
+    mustCreateVisualArtifact
+      ? "Pour ce coding visuel, l'action suivante doit etre document_write_text avec un vrai fichier HTML/JS/CSS local complet; apres acceptation, tu ouvriras /coding_live_preview_ avec le chemin verifie."
+      : "",
     "Pour ranger/organiser un bureau: apres la liste, cree les dossiers utiles si necessaire, puis deplace ou copie les elements pertinents. Ne t'arrete pas apres un simple inventaire.",
     "Principe universel d'agent local: apres chaque outil, lis le resultat, verifie que l'action demandee est vraiment faite, puis continue ou essaie une autre action locale si le resultat ne suffit pas.",
     "Style de progression: varie les ouvertures, evite de commencer chaque paragraphe par 'Je vais', et prefere le present concret: constat bref, decision, action.",
@@ -6612,6 +6637,7 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
 }
 
 function agentActionForcedContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, previousAssistantText: string, step: number): string {
+  const mustCreateVisualArtifact = textLooksLikeVisualCodingArtifactGoal(originalUserText);
   return [
     "AGENT_ACTION_FORCED_CONTINUATION v1",
     `step=${step + 1}`,
@@ -6621,7 +6647,9 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
     "",
     "Le loop ne doit pas s'arreter ici: la derniere action etait seulement une action de decouverte, pas une modification.",
     "Ecris un court paragraphe de progression, puis exactement une ligne AGENT_ACTION_JSON qui execute la prochaine action locale concrete.",
-    "Pour organiser un bureau, l'action suivante doit etre par exemple create_directory, move_path, copy_path ou rename_path selon les elements listes.",
+    mustCreateVisualArtifact
+      ? "Pour ce coding visuel, l'action suivante doit etre document_write_text avec path=\"nom-pertinent.html\" et content contenant le fichier complet. Ne conclus pas avant AGENT_ACTION_RESULT."
+      : "Pour organiser un bureau, l'action suivante doit etre par exemple create_directory, move_path, copy_path ou rename_path selon les elements listes.",
     "Principe universel: ne considere jamais une action comme reussie sans resultat d'outil accepte; si un outil echoue, utilise le message d'erreur pour tenter une variante plus adaptee.",
     "Style: ne commence pas par 'Je vais'. Varie avec une observation ou une decision concrete, puis passe directement a l'action.",
     "La ligne AGENT_ACTION_JSON doit commencer en colonne 1. Ne donne pas de resume final dans ce tour.",
@@ -6630,6 +6658,22 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
     "",
     `Objectif utilisateur initial:\n${originalUserText}`
   ].join("\n");
+}
+
+function agentActionCodingLivePreviewForcedContinuationUserText(originalUserText: string, state: AgentActionLoopState, previousAssistantText: string): string {
+  const lastPath = state.lastResult?.path || state.lastResult?.toPath || "";
+  return [
+    "CODING_VISUAL_PREVIEW_FORCED_CONTINUATION v1",
+    "",
+    "Le fichier local visuel a ete ecrit, mais le preview live n'a pas encore ete ouvert. Le travail n'est donc pas termine cote experience utilisateur.",
+    "Ecris une courte phrase naturelle, puis emets le CodeAct /coding_live_preview_ avec le chemin absolu verifie et kind=\"html\" si c'est un fichier HTML.",
+    lastPath ? `path_verifie=${JSON.stringify(lastPath)}` : "",
+    "Interdit dans ce tour: nouveau bloc de code Markdown, resume final, ou dire que l'apercu est ouvert sans /coding_live_preview_.",
+    "",
+    `Derniere reponse assistant sans preview:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
+    "",
+    `Objectif utilisateur initial:\n${originalUserText}`
+  ].filter(Boolean).join("\n");
 }
 
 function agentActionInitialCodingVisualForcedContinuationUserText(originalUserText: string, previousAssistantText: string): string {
@@ -7011,6 +7055,7 @@ async function executeAssistantAgentActionLoop(params: {
   let loopState = createAgentActionLoopState(params.originalUserText);
   let step = 0;
   let initialCodingVisualActionForced = false;
+  let codingLivePreviewForced = false;
   while (true) {
     throwIfAssistantRunCancelled(params.assistantRun);
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
@@ -7054,6 +7099,37 @@ async function executeAssistantAgentActionLoop(params: {
             agentActionLoopInitialCodingVisualForcedContinuation: true,
             previousProofHash: assistantMessage.proofHash,
             continuationProofHash: forcedContinuation.proofHash
+          })
+        };
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        continue;
+      }
+      if (!codingLivePreviewForced && shouldForceCodingLivePreviewAfterWrite(params.originalUserText, assistantMessage.text, loopState)) {
+        codingLivePreviewForced = true;
+        const previewLiveSink = createAssistantLiveTextSink({
+          baseTranscript: params.baseTranscript,
+          assistantMessageId: assistantMessage.id,
+          agentEvents: params.agentEvents,
+          commitTranscript: params.commitTranscript,
+          assistantRun: params.assistantRun
+        });
+        const previewContinuation = await buildAssistantTranscriptMessage(
+          agentActionCodingLivePreviewForcedContinuationUserText(params.originalUserText, loopState, assistantMessage.text),
+          params.providerAttachments,
+          params.userMessageId,
+          params.moduleId,
+          params.baseTranscript,
+          previewLiveSink,
+          assistantMessage.id
+        );
+        throwIfAssistantRunCancelled(params.assistantRun);
+        assistantMessage = {
+          ...previewContinuation,
+          id: assistantMessage.id,
+          proofHash: hashJson({
+            agentActionLoopCodingLivePreviewForcedContinuation: true,
+            previousProofHash: assistantMessage.proofHash,
+            continuationProofHash: previewContinuation.proofHash
           })
         };
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));

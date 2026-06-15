@@ -1259,6 +1259,7 @@ interface AssistantMacroListItem {
 interface TranscriptCodeActEvent {
   command: TranscriptCodeActCommand;
   text: string;
+  line?: string;
   detail?: string;
   path?: string;
   toPath?: string;
@@ -1270,6 +1271,9 @@ const BRAIN_CODEACT_COMMANDS_BY_LENGTH = [...BRAIN_CODEACT_COMMANDS].sort((left,
 const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS.map((entry) => [entry.command, entry.description])
 );
+
+const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "registered"] as const;
+const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", "revised"] as const;
 
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
@@ -1311,12 +1315,72 @@ function contextCompactionStateFromLine(line: string): TranscriptContextCompacti
 function transcriptCodeActEvent(command: TranscriptCodeActCommand, line = ""): TranscriptCodeActEvent {
   const event: TranscriptCodeActEvent = {
     command,
-    text: codeActEventText(command)
+    text: domainBrainEventText(command, line) || codeActEventText(command),
+    line
   };
   if (command === CONTEXT_COMPACTION_COMMAND) {
     event.compactionState = contextCompactionStateFromLine(line);
   }
   return event;
+}
+
+function stableEventVariantIndex(seed: string, size: number): number {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return size > 0 ? hash % size : 0;
+}
+
+function normalizeBrainEventName(value: string): string {
+  const compact = value
+    .trim()
+    .replace(/^["'`]+|["'`,;]+$/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!compact) {
+    return "";
+  }
+  if (/[A-Z]/.test(compact.slice(1))) {
+    return compact;
+  }
+  return compact.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
+}
+
+function codeActSlotValue(line: string, slot: string): string {
+  const escapedSlot = slot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\s)${escapedSlot}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s]+)`).exec(line);
+  return match ? unquoteCodeActSlotValue(match[1] ?? "") : "";
+}
+
+function modifyNamedBrainNameFromLine(line: string): string {
+  const commandMatch = /\/modify(?:"([^"]+)"|'([^']+)')brain_/.exec(line);
+  return normalizeBrainEventName(commandMatch?.[1] ?? commandMatch?.[2] ?? codeActSlotValue(line, "brain_name"));
+}
+
+function newBrainNameFromLine(line: string): string {
+  return normalizeBrainEventName(codeActSlotValue(line, "brain_name") || codeActSlotValue(line, "title"));
+}
+
+function stripBrainSuffix(value: string): string {
+  return value.replace(/\s*brain$/i, "").trim();
+}
+
+function domainBrainEventText(command: TranscriptCodeActCommand, line = ""): string {
+  if (command === BRAIN_NEWBRAIN_COMMAND) {
+    const verb = NEW_BRAIN_EVENT_VERBS[stableEventVariantIndex(line || command, NEW_BRAIN_EVENT_VERBS.length)] ?? "created";
+    const name = stripBrainSuffix(newBrainNameFromLine(line));
+    return name ? `New "${name}" Brain ${verb}` : `New specialized Brain ${verb}`;
+  }
+  if (command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND) {
+    const verb = MODIFY_BRAIN_EVENT_VERBS[stableEventVariantIndex(line || command, MODIFY_BRAIN_EVENT_VERBS.length)] ?? "modified";
+    const name = modifyNamedBrainNameFromLine(line);
+    if (!name) {
+      return `Specialized Brain ${verb}`;
+    }
+    return /brain$/i.test(name) ? `${name} ${verb}` : `${name} Brain ${verb}`;
+  }
+  return "";
 }
 
 function dynamicComputeLabel(command: string): string {
@@ -1358,6 +1422,9 @@ function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined
   if (BRAIN_CODEACT_COMMAND_SET.has(trimmed)) {
     return trimmed as BrainCodeActCommand;
   }
+  if (/^\/modify(?:"[^"]+"|'[^']+')brain_$/.test(trimmed)) {
+    return BRAIN_MODIFY_NAMED_BRAIN_COMMAND;
+  }
   if (isDynamicComputeCommand(trimmed)) {
     return trimmed;
   }
@@ -1380,13 +1447,16 @@ function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined 
   if (directCommand) {
     return transcriptCodeActEvent(directCommand, trimmed);
   }
+  if (/\/modify(?:"[^"]+"|'[^']+')brain_/.test(trimmed)) {
+    return transcriptCodeActEvent(BRAIN_MODIFY_NAMED_BRAIN_COMMAND, trimmed);
+  }
   const containedCommand = BRAIN_CODEACT_COMMANDS_BY_LENGTH.find((command) => trimmed.includes(command));
   if (containedCommand) {
-    return transcriptCodeActEvent(containedCommand);
+    return transcriptCodeActEvent(containedCommand, trimmed);
   }
   const dynamicCompute = /\/compute_[a-zA-Z0-9][a-zA-Z0-9_]*_/.exec(trimmed)?.[0];
   if (dynamicCompute && isDynamicComputeCommand(dynamicCompute)) {
-    return transcriptCodeActEvent(dynamicCompute);
+    return transcriptCodeActEvent(dynamicCompute, trimmed);
   }
   return undefined;
 }

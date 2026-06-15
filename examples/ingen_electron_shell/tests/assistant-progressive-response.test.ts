@@ -205,8 +205,16 @@ describe("assistant progressive response feed", () => {
   it("renders domain Brain CodeActs with the blue Brain event treatment", () => {
     expect(animationSource).toContain("BRAIN_NEWBRAIN_COMMAND");
     expect(animationSource).toContain("BRAIN_MODIFY_NAMED_BRAIN_COMMAND");
-    expect(animationSource).toContain('[BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"]');
-    expect(animationSource).toContain('[BRAIN_MODIFY_NAMED_BRAIN_COMMAND, "Specialized Brain update prepared"]');
+    expect(animationSource).toContain('const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "registered"]');
+    expect(animationSource).toContain('const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", "revised"]');
+    expect(animationSource).toContain("function stableEventVariantIndex");
+    expect(animationSource).toContain("function newBrainNameFromLine");
+    expect(animationSource).toContain("function modifyNamedBrainNameFromLine");
+    expect(animationSource).toContain("function domainBrainEventText");
+    expect(animationSource).toContain('`New "${name}" Brain ${verb}`');
+    expect(animationSource).toContain("`${name} ${verb}`");
+    expect(animationSource).toContain("/^\\/modify(?:\"[^\"]+\"|'[^']+')brain_$/.test(trimmed)");
+    expect(animationSource).toContain("/\\/modify(?:\"[^\"]+\"|'[^']+')brain_/.test(trimmed)");
     expect(animationSource).toContain("function isBrainStyledCommand");
     expect(animationSource).toContain("command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND");
     expect(animationSource).toContain('<BrainSegmentCodeActIcon phase="changed" />');
