@@ -8912,9 +8912,9 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
-  inset: 50% auto auto 56%;
-  width: min(81.90379673254289vw, 101.67367870246703vh, 1073.6889853795875px);
-  height: min(81.90379673254289vw, 101.67367870246703vh, 1073.6889853795875px);
+  inset: 50% auto auto 57%;
+  width: min(84.36091063451918vw, 104.72388906354104vh, 1105.8996549409751px);
+  height: min(84.36091063451918vw, 104.72388906354104vh, 1105.8996549409751px);
   overflow: visible;
   transform: translate3d(-50%, -50%, 0);
 }
@@ -8941,7 +8941,7 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 1073.6889853795875px);
+  width: min(100%, 1105.8996549409751px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
