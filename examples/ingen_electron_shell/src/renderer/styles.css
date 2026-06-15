@@ -10381,6 +10381,10 @@ ol.assistantText__list li::before {
   padding: 8px 10px;
 }
 
+.brainMemoryIdentity:focus-within {
+  z-index: 20;
+}
+
 .brainMemoryIdentity--personality {
   display: grid;
   gap: 8px;
@@ -10686,7 +10690,7 @@ ol.assistantText__list li::before {
 
 .brainMemoryLocationSuggestions {
   position: absolute;
-  z-index: 6;
+  z-index: 30;
   top: calc(100% + 7px);
   left: 0;
   display: grid;
