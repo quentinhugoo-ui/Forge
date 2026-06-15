@@ -169,7 +169,7 @@ export const SIDEBAR_COMMAND_KIND = [
   "cancel_archive",
 ] as const;
 
-export type PanelsChatBottomCommandKind = "refresh_probes" | "activate_control" | "attach_files" | "attach_dropped_files" | "chat_text_edited" | "send_chat" | "send_parallel_chat_batch" | "assistant_write_complete" | "update_brain_identity" | "new_session" | "select_llm" | "open_llm_providers" | "cycle_llm_model" | "cycle_llm_reasoning" | "permission_mode_selected" | "stage_attachment_for_edit" | "upload_preview_scroll";
+export type PanelsChatBottomCommandKind = "refresh_probes" | "activate_control" | "attach_files" | "attach_dropped_files" | "chat_text_edited" | "send_chat" | "send_parallel_chat_batch" | "stop_assistant" | "assistant_write_complete" | "update_brain_identity" | "new_session" | "select_llm" | "open_llm_providers" | "cycle_llm_model" | "cycle_llm_reasoning" | "permission_mode_selected" | "stage_attachment_for_edit" | "upload_preview_scroll";
 export const PANELS_CHAT_BOTTOM_COMMAND_KIND = [
   "refresh_probes",
   "activate_control",
@@ -178,6 +178,7 @@ export const PANELS_CHAT_BOTTOM_COMMAND_KIND = [
   "chat_text_edited",
   "send_chat",
   "send_parallel_chat_batch",
+  "stop_assistant",
   "assistant_write_complete",
   "update_brain_identity",
   "new_session",
@@ -529,6 +530,7 @@ export interface ComposerSnapshot {
   permissionMode: "ask-permissions" | "auto-accept-edits" | "full-autonomy" | "self-directed";
   permissionModeOpen: boolean;
   selectedProvider: "openai" | "anthropic" | "openrouter";
+  assistantBusy?: boolean;
   providers: LlmProviderState[];
   modelLabel: string;
   reasoningLabel: string;

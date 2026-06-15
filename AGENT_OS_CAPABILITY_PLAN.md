@@ -122,7 +122,7 @@ Every task must use the same loop:
 5. Reinject: send the exact compact tool result back to the LLM on the next round.
 6. Verify: check the goal through an independent observation.
 7. Retry: if the result is insufficient, choose another safe route.
-8. Stop: conclude only when verified, approval-blocked, impossible with current tools or max-step bounded.
+8. Stop: conclude only when verified, approval-blocked, impossible with current tools, failed after a real retry, or explicitly stopped by the user.
 9. Summarize: final answer states what changed, how it was verified, what failed and what remains.
 
 The loop must never claim success from intention alone. It must never show fake tool events. Tool events are rendered by the app from real runtime events.
@@ -188,7 +188,7 @@ Acceptance:
 - Read-only discovery does not satisfy a mutation request.
 - The loop tries a safe alternative before blocking.
 
-Status: implemented for the planned scope. The normal path now carries `AgentActionLoopState`, explicit terminal outcomes, result observations, retry/approval accounting, proof hashes and mandatory English final summaries after tool-using tasks. Deterministic desktop organization is quarantined behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1` as compatibility behavior, while normal mutation follow-up stays inside the universal loop and blocks with a final status when the model stops without the required next action.
+Status: implemented for the planned scope. The normal path now carries `AgentActionLoopState`, explicit terminal outcomes, result observations, retry/approval accounting, proof hashes and mandatory English final summaries after tool-using tasks. The runtime no longer stops on a fixed local-action step ceiling; it continues until the model reaches the objective, reports a real block/approval/failure condition, or the user stops the active run. Deterministic desktop organization is quarantined behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1` as compatibility behavior, while normal mutation follow-up stays inside the universal loop and blocks with a final status when the model stops without the required next action.
 
 ### 4. Windows Execution Layer
 

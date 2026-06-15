@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "5a93fe57558c70ffc4c0c5f8d64fd238d8bbd784bb0463a9f5b80bbe493437b9"
+    "ipc_manifest_hash": "3aab4ad859658934c94a4e05baef25a866cf662506432d3c14eb79c5a67807b5"
   },
   "checks": [
     {
@@ -85,8 +85,11 @@
       "severity": "blocker",
       "evidence": {
         "rendererFiles": [
+          "agent-action-events.ts",
           "App.tsx",
           "assets",
+          "assistant-geo-entities.ts",
+          "brain-blob-cache.ts",
           "brain-blob.tsx",
           "brain-user-memory-store.ts",
           "BrainCanvas.tsx",
@@ -146,5 +149,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "072b26cd17e8480d8304383becff66933fcc536df35be2c764d66932f2ff6dfd"
+  "proof_hash": "4e59f3377df6d53151459668af2fb82d6be958d5923f8c7b1a0cd88ac1854c35"
 }

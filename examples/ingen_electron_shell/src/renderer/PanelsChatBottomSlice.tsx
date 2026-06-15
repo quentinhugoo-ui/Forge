@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Square, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
 import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
@@ -2857,7 +2857,7 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
         <span className="transcriptCodeActEvent__icon transcriptCodeActFileEvent__icon" aria-hidden="true">
           <Pencil size={13} strokeWidth={1.85} />
         </span>
-        <span className="transcriptCodeActFileEvent__label">Modification de</span>
+        <span className="transcriptCodeActFileEvent__label">Modified</span>
         <span className="transcriptCodeActFileEvent__fileCard" title={fileModification.path}>
           {fileModification.fileName}
         </span>
@@ -3732,6 +3732,7 @@ export function PanelsChatBottomSlice({
   const composerResetFenceRef = useRef(false);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
   const composerSendBusyRef = useRef(0);
+  const sendEchoBaselineRef = useRef<number | null>(null);
   const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
   const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
   const selfDirectedRunRef = useRef<SelfDirectedRunState>({
@@ -3889,20 +3890,43 @@ export function PanelsChatBottomSlice({
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
+  // The send spinner runs from Enter until the user's message lands in the
+  // transcript (canvas), not merely until the wave drains or dispatch resolves.
+  const transcriptUserMessageCount = useMemo(() => {
+    let count = snapshot.transcript.reduce((total, message) => total + (message.role === "user" ? 1 : 0), 0);
+    for (const lane of snapshot.parallelLanes) {
+      count += lane.transcript.reduce((total, message) => total + (message.role === "user" ? 1 : 0), 0);
+    }
+    return count;
+  }, [snapshot.transcript, snapshot.parallelLanes]);
+  const transcriptUserMessageCountRef = useRef(transcriptUserMessageCount);
+  useEffect(() => {
+    transcriptUserMessageCountRef.current = transcriptUserMessageCount;
+  }, [transcriptUserMessageCount]);
   const beginComposerSendBusy = useCallback(() => {
     if (composerSendBusyRef.current > 0) {
       return false;
     }
     composerSendBusyRef.current += 1;
     setComposerSendBusyCount(composerSendBusyRef.current);
+    sendEchoBaselineRef.current = transcriptUserMessageCountRef.current;
     return true;
   }, []);
   const endComposerSendBusy = useCallback(() => {
+    sendEchoBaselineRef.current = null;
     composerSendBusyRef.current = Math.max(0, composerSendBusyRef.current - 1);
     setComposerSendBusyCount(composerSendBusyRef.current);
   }, []);
+  // Release the spinner the moment the sent message echoes into the transcript.
+  useEffect(() => {
+    if (sendEchoBaselineRef.current !== null && transcriptUserMessageCount > sendEchoBaselineRef.current) {
+      endComposerSendBusy();
+    }
+  }, [transcriptUserMessageCount, endComposerSendBusy]);
+  // Dispatch failures must still release the spinner even though success now
+  // waits for the transcript echo above.
   const dispatchTrackedComposerSend = useCallback((command: Omit<PanelsChatBottomCommand, "version" | "requestId">) => {
-    void dispatch(command).finally(endComposerSendBusy);
+    void dispatch(command).catch(endComposerSendBusy);
   }, [dispatch, endComposerSendBusy]);
   const attachFiles = () => void dispatch({ kind: "attach_files" });
   const attachDroppedFiles = (filePaths: string[]) => {
@@ -4053,6 +4077,12 @@ export function PanelsChatBottomSlice({
     ? filledParallelPrompts.map((prompt) => prompt.value).join("\n")
     : draft;
   const canSend = Boolean(submitText.trim() || uploadPreviews.length > 0);
+  const assistantStopActive = composerSendBusy || Boolean(snapshot.composer.assistantBusy) || selfDirectedDrafting;
+  const stopAssistant = useCallback(() => {
+    cancelSelfDirectedDraft();
+    endComposerSendBusy();
+    void dispatch({ kind: "stop_assistant" });
+  }, [cancelSelfDirectedDraft, dispatch, endComposerSendBusy]);
   const openSelfDirectedDetails = () => {
     setSelfDirectedMenuStage("console");
   };
@@ -4122,12 +4152,16 @@ export function PanelsChatBottomSlice({
     });
   };
   const sendComposer = (parallelIndex?: number) => {
+    if (assistantStopActive) {
+      stopAssistant();
+      return;
+    }
     if (parallelMode && parallelPrompts && parallelIndex === undefined && filledParallelPrompts.length > 0) {
       if (!beginComposerSendBusy()) {
         return;
       }
       const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
-      const commit = (trackDispatchCompletion: boolean) => {
+      const commit = () => {
         try {
           for (const prompt of filledParallelPrompts) {
             onParallelPromptChange?.(prompt.index, "");
@@ -4140,11 +4174,7 @@ export function PanelsChatBottomSlice({
             })),
             moduleId: composerModule ?? undefined
           };
-          if (trackDispatchCompletion) {
-            dispatchTrackedComposerSend(command);
-          } else {
-            void dispatch(command);
-          }
+          dispatchTrackedComposerSend(command);
         } catch (error) {
           endComposerSendBusy();
           throw error;
@@ -4152,9 +4182,9 @@ export function PanelsChatBottomSlice({
       };
       const burst = burstRef.current;
       if (sessionIsNew && burst) {
-        burst.fire(composerRef.current, () => commit(false), endComposerSendBusy);
+        burst.fire(composerRef.current, commit);
       } else {
-        commit(true);
+        commit();
       }
       return;
     }
@@ -4172,7 +4202,7 @@ export function PanelsChatBottomSlice({
       composerResetFenceRef.current = true;
       setDraft("");
     }
-    const commit = (trackDispatchCompletion: boolean) => {
+    const commit = () => {
       try {
         if (parallelMode && parallelPrompts && onParallelPromptChange) {
           onParallelPromptChange(targetParallelIndex, "");
@@ -4186,11 +4216,7 @@ export function PanelsChatBottomSlice({
           moduleId: composerModule ?? undefined,
           parallelSessionIndex: parallelMode ? targetParallelIndex : undefined
         };
-        if (trackDispatchCompletion) {
-          dispatchTrackedComposerSend(command);
-        } else {
-          void dispatch(command);
-        }
+        dispatchTrackedComposerSend(command);
       } catch (error) {
         endComposerSendBusy();
         throw error;
@@ -4202,9 +4228,9 @@ export function PanelsChatBottomSlice({
     const sessionIsNew = !targetTranscript.some((message) => message.role === "user" || message.role === "assistant");
     const burst = burstRef.current;
     if (sessionIsNew && burst) {
-      burst.fire(composerRef.current, () => commit(false), endComposerSendBusy);
+      burst.fire(composerRef.current, commit);
     } else {
-      commit(true);
+      commit();
     }
   };
 
@@ -4313,7 +4339,11 @@ export function PanelsChatBottomSlice({
         aria-label="Chat composer"
         onSubmit={(event) => {
           event.preventDefault();
-          sendComposer();
+          if (assistantStopActive) {
+            stopAssistant();
+          } else {
+            sendComposer();
+          }
         }}
       >
         <div
@@ -4371,7 +4401,9 @@ export function PanelsChatBottomSlice({
                     emitChatKeyColor(event);
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
-                      sendComposer(index);
+                      if (!assistantStopActive) {
+                        sendComposer(index);
+                      }
                     }
                   }}
                 />
@@ -4398,7 +4430,9 @@ export function PanelsChatBottomSlice({
               emitChatKeyColor(event);
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                sendComposer();
+                if (!assistantStopActive) {
+                  sendComposer();
+                }
               }
             }}
           />
@@ -4424,18 +4458,23 @@ export function PanelsChatBottomSlice({
           type="submit"
           className={[
             "composer__send",
-            !canSend && !composerSendBusy ? "composer__send--empty" : ""
+            assistantStopActive ? "composer__send--stop" : "",
+            !canSend && !assistantStopActive ? "composer__send--empty" : ""
           ].filter(Boolean).join(" ")}
-          aria-label={composerSendBusy ? "Sending message" : "Send message"}
-          aria-busy={composerSendBusy}
-          disabled={!canSend || composerSendBusy}
+          aria-label={assistantStopActive ? "Stop assistant" : "Send message"}
+          aria-busy={assistantStopActive}
+          disabled={!canSend && !assistantStopActive}
         >
-          <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
-            />
-          </svg>
+          {assistantStopActive ? (
+            <Square className="sendGlyph" size={15} strokeWidth={2.6} aria-hidden="true" />
+          ) : (
+            <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
+              />
+            </svg>
+          )}
         </button>
       </form>
 

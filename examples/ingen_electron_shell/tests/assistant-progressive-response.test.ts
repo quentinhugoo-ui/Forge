@@ -74,7 +74,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function emitAgentLoopDiagnosticSummary");
     expect(mainSource).toContain('outcome: "completed"');
     expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
-    expect(mainSource).toContain('outcome: "max_steps"');
+    expect(mainSource).not.toContain('outcome: "max_steps"');
     expect(mainSource).toContain("tool_steps=");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
@@ -106,10 +106,23 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function createAssistantLiveTextSink");
     expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
-    expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
+    expect(mainSource).toContain("shouldStop: (text) => Boolean(params.assistantRun?.cancelled || extractAgentActionJsonRequest(text))");
     expect(mainSource).toContain("liveTextSink");
     expect(mainSource).toContain("continuationLiveSink");
     expect(mainSource).toContain('kind: "text_delta"');
+  });
+
+  it("lets the composer stop an active assistant run", () => {
+    expect(animationSource).toContain("snapshot.composer.assistantBusy");
+    expect(animationSource).toContain("assistantStopActive");
+    expect(animationSource).toContain('kind: "stop_assistant"');
+    expect(animationSource).toContain("Stop assistant");
+    expect(animationSource).toContain("composer__send--stop");
+    expect(animationSource).toContain("disabled={!canSend && !assistantStopActive}");
+    expect(mainSource).toContain("interface AssistantRunControl");
+    expect(mainSource).toContain("stopActiveAssistantRunControl");
+    expect(mainSource).toContain("throwIfAssistantRunCancelled");
+    expect(mainSource).toContain('text: "Stopped by user."');
   });
 
   it("injects the heavy local action manifest lazily", () => {
@@ -169,12 +182,12 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("agentActionLoopFailureContinuationStep");
     expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
     expect(mainSource).toContain("compactAgentActionResult(result)");
-    expect(mainSource).toContain("AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS");
-    expect(mainSource).toContain("AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS");
-    expect(mainSource).toContain("function agentActionLoopMaxStepsForObjective");
+    expect(mainSource).not.toContain("AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS");
+    expect(mainSource).not.toContain("AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS");
+    expect(mainSource).not.toContain("function agentActionLoopMaxStepsForObjective");
     expect(mainSource).toContain("function agentActionShouldRunFileOrganizationFallback");
-    expect(mainSource).toContain("La limite de boucle approche");
-    expect(mainSource).toContain("No further action was executed after this guard fired.");
+    expect(mainSource).not.toContain("La limite de boucle approche");
+    expect(mainSource).not.toContain("No further action was executed after this guard fired.");
     expect(mainSource).toContain("function agentActionSelectedCapabilityContext");
     expect(mainSource).toContain("agentActionCapabilityDetailManifest(agentActionHostConfig(), capabilityId)");
     expect(mainSource).toContain("AGENT_ACTION_COMPACTION_STATE v1");
@@ -202,7 +215,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function ensureAgentActionLoopFinalSummary");
     expect(mainSource).toContain("Final summary: agent loop ${state.finalStatus}");
     expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback");
-    expect(mainSource).toContain("Final summary: agent loop max_steps; incomplete after ${maxSteps} local-action steps.");
+    expect(mainSource).not.toContain("Final summary: agent loop max_steps");
+    expect(mainSource).toContain("while (true)");
+    expect(mainSource).toContain("stopActiveAssistantRunControl");
+    expect(mainSource).toContain('case "stop_assistant"');
     expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
     expect(mainSource).not.toContain('outcome: "deterministic_fallback"');
   });

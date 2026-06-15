@@ -288,7 +288,7 @@ export const AGENT_ACTION_BENCHMARK_SUITE: readonly AgentActionBenchmarkCase[] =
     expectedOutcome: "success",
     approval: "none",
     evidence: ["runtime_event"],
-    observedState: "final answer states completed, blocked or max_steps with last tool result",
+    observedState: "final answer states completed, blocked, failed_after_retries, needs_approval or cancelled with last tool result",
     proofRule: "Every tool-using loop must end with a final summary when no next action remains."
   }
 ] as const;

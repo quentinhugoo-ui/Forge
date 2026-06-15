@@ -3684,6 +3684,61 @@ interface ProviderLiveTextSink {
   shouldStop?: (text: string) => boolean;
 }
 
+interface AssistantRunControl {
+  id: string;
+  sessionId: string;
+  cancelled: boolean;
+  cancelledAt?: string;
+}
+
+class AssistantRunCancelledError extends Error {
+  constructor() {
+    super("Assistant run stopped by user.");
+    this.name = "AssistantRunCancelledError";
+  }
+}
+
+let activeAssistantRunControl: AssistantRunControl | undefined;
+
+function startAssistantRunControl(sessionId: string): AssistantRunControl {
+  if (activeAssistantRunControl && !activeAssistantRunControl.cancelled) {
+    activeAssistantRunControl.cancelled = true;
+    activeAssistantRunControl.cancelledAt = new Date().toISOString();
+  }
+  const run: AssistantRunControl = {
+    id: `assistant-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    sessionId,
+    cancelled: false
+  };
+  activeAssistantRunControl = run;
+  emitPanelsChatBottomSnapshotEvent("assistant_run_started", sessionId);
+  return run;
+}
+
+function finishAssistantRunControl(run: AssistantRunControl): void {
+  if (activeAssistantRunControl?.id === run.id) {
+    activeAssistantRunControl = undefined;
+  }
+  emitPanelsChatBottomSnapshotEvent("assistant_run_finished", run.sessionId);
+}
+
+function stopActiveAssistantRunControl(): boolean {
+  const run = activeAssistantRunControl;
+  if (!run || run.cancelled) {
+    return false;
+  }
+  run.cancelled = true;
+  run.cancelledAt = new Date().toISOString();
+  emitPanelsChatBottomSnapshotEvent("assistant_run_cancelled", run.sessionId);
+  return true;
+}
+
+function throwIfAssistantRunCancelled(run?: AssistantRunControl): void {
+  if (run?.cancelled) {
+    throw new AssistantRunCancelledError();
+  }
+}
+
 interface AssistantProviderRunParams {
   profile: ProviderRuntimeProfile;
   rawUserText: string;
@@ -5774,8 +5829,6 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
-const AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS = 6;
-const AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS = 24;
 const AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK = process.env.INGEN_AGENT_ACTION_COMPAT_FALLBACK === "1";
 const AGENT_ACTION_RESULT_ITEM_LIMIT = 10;
 const AGENT_ACTION_RESULT_MATCH_LIMIT = 8;
@@ -5987,11 +6040,13 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "document_inspect" ||
         params.request.action === "document_pdf_extract_text" ||
         params.request.action === "document_media_metadata" ||
+        params.request.action === "document_toolchain_inspect" ||
         params.request.action === "dev_repo_status" ||
         params.request.action === "dev_git_diff" ||
         params.request.action === "cloud_cli_inspect" ||
         params.request.action === "cloud_cli_run_readonly" ||
         params.request.action === "windows_setting_inspect" ||
+        params.request.action === "windows_sensitive_inspect" ||
         params.request.action === "process_service_inspect" ||
         params.request.action === "package_inspect" ||
         params.request.action === "ci_checks_inspect" ||
@@ -6306,11 +6361,13 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "browser_inspect_url" ||
     request.action === "browser_playwright_inspect" ||
     request.action === "document_inspect" ||
+    request.action === "document_toolchain_inspect" ||
     request.action === "dev_repo_status" ||
     request.action === "dev_git_diff" ||
     request.action === "cloud_cli_inspect" ||
     request.action === "cloud_cli_run_readonly" ||
     request.action === "windows_setting_inspect" ||
+    request.action === "windows_sensitive_inspect" ||
     request.action === "process_service_inspect" ||
     request.action === "package_inspect" ||
     request.action === "ci_checks_inspect" ||
@@ -6329,10 +6386,6 @@ function agentActionStepNeedsMutationFollowUp(originalUserText: string, request:
     return false;
   }
   return Boolean(result.items?.length || result.matches?.length || result.stdoutPreview?.trim());
-}
-
-function agentActionLoopMaxStepsForObjective(originalUserText: string): number {
-  return textLooksLikeFilesystemMutationGoal(originalUserText) ? AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS : AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS;
 }
 
 function agentActionShouldRunFileOrganizationFallback(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): boolean {
@@ -6631,8 +6684,10 @@ async function applyDeterministicOrganizationFallback(params: {
   request: AgentActionRequest;
   result: AgentActionResult;
   agentEvents: AgentRuntimeEventQueue;
+  assistantRun?: AssistantRunControl;
   commitProgress?: (assistantMessage: TranscriptMessage) => void;
 }): Promise<TranscriptMessage> {
+  throwIfAssistantRunCancelled(params.assistantRun);
   if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
     return params.assistantMessage;
   }
@@ -6666,6 +6721,7 @@ async function applyDeterministicOrganizationFallback(params: {
   const results: AgentActionResult[] = [];
   params.commitProgress?.(assistantMessage);
   for (const [index, request] of requests.entries()) {
+    throwIfAssistantRunCancelled(params.assistantRun);
     const toolCall = emitAgentRuntimeToolCallStarted({
       agentEvents: params.agentEvents,
       messageId: params.assistantMessage.id,
@@ -6683,7 +6739,9 @@ async function applyDeterministicOrganizationFallback(params: {
     };
     params.commitProgress?.(assistantMessage);
     await waitAgentActionVisualStep();
+    throwIfAssistantRunCancelled(params.assistantRun);
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
+    throwIfAssistantRunCancelled(params.assistantRun);
     emitAgentRuntimeToolResult({
       agentEvents: params.agentEvents,
       messageId: params.assistantMessage.id,
@@ -6719,12 +6777,14 @@ async function executeAssistantAgentActionLoop(params: {
   userMessageId: string;
   moduleId: string;
   agentEvents: AgentRuntimeEventQueue;
+  assistantRun?: AssistantRunControl;
   commitTranscript: (transcript: TranscriptMessage[]) => void;
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
   let loopState = createAgentActionLoopState(params.originalUserText);
-  const maxSteps = agentActionLoopMaxStepsForObjective(params.originalUserText);
-  for (let step = 0; step < maxSteps; step += 1) {
+  let step = 0;
+  while (true) {
+    throwIfAssistantRunCancelled(params.assistantRun);
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
       if (loopState.toolSteps > 0) {
@@ -6753,7 +6813,9 @@ async function executeAssistantAgentActionLoop(params: {
       proofHash: hashJson({ agentActionLoopPendingStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request })
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+    throwIfAssistantRunCancelled(params.assistantRun);
     const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
+    throwIfAssistantRunCancelled(params.assistantRun);
     emitAgentRuntimeToolResult({
       agentEvents: params.agentEvents,
       messageId: assistantMessage.id,
@@ -6768,33 +6830,34 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
-      if (step + 1 < maxSteps) {
-        const failureLiveSink = createAssistantLiveTextSink({
-          baseTranscript: params.baseTranscript,
-          assistantMessageId: assistantMessage.id,
-          agentEvents: params.agentEvents,
-          commitTranscript: params.commitTranscript,
-          prefixText: assistantMessage.text
-        });
-        const failureContinuation = await buildAssistantTranscriptMessage(
-          agentActionFailureContinuationUserText(params.originalUserText, extracted.request, result, step),
-          params.providerAttachments,
-          params.userMessageId,
-          params.moduleId,
-          transcriptWithMessage(params.baseTranscript, assistantMessage),
-          failureLiveSink,
-          assistantMessage.id
-        );
-        assistantMessage = {
-          ...failureContinuation,
-          id: assistantMessage.id,
-          text: [assistantMessage.text, failureContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
-          proofHash: hashJson({ agentActionLoopFailureContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: failureContinuation.proofHash })
-        };
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
-        if (extractAgentActionJsonRequest(assistantMessage.text)) {
-          continue;
-        }
+      const failureLiveSink = createAssistantLiveTextSink({
+        baseTranscript: params.baseTranscript,
+        assistantMessageId: assistantMessage.id,
+        agentEvents: params.agentEvents,
+        commitTranscript: params.commitTranscript,
+        prefixText: assistantMessage.text,
+        assistantRun: params.assistantRun
+      });
+      const failureContinuation = await buildAssistantTranscriptMessage(
+        agentActionFailureContinuationUserText(params.originalUserText, extracted.request, result, step),
+        params.providerAttachments,
+        params.userMessageId,
+        params.moduleId,
+        transcriptWithMessage(params.baseTranscript, assistantMessage),
+        failureLiveSink,
+        assistantMessage.id
+      );
+      throwIfAssistantRunCancelled(params.assistantRun);
+      assistantMessage = {
+        ...failureContinuation,
+        id: assistantMessage.id,
+        text: [assistantMessage.text, failureContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
+        proofHash: hashJson({ agentActionLoopFailureContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: failureContinuation.proofHash })
+      };
+      params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+      if (extractAgentActionJsonRequest(assistantMessage.text)) {
+        step += 1;
+        continue;
       }
       loopState = agentActionLoopWithStatus(loopState, agentActionLoopOutcomeAfterFailure(loopState, result));
       assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
@@ -6818,6 +6881,7 @@ async function executeAssistantAgentActionLoop(params: {
         request: extracted.request,
         result,
         agentEvents: params.agentEvents,
+        assistantRun: params.assistantRun,
         commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
       });
       if (fallbackMessage.text !== assistantMessage.text) {
@@ -6837,7 +6901,8 @@ async function executeAssistantAgentActionLoop(params: {
       assistantMessageId: assistantMessage.id,
       agentEvents: params.agentEvents,
       commitTranscript: params.commitTranscript,
-      prefixText: assistantMessage.text
+      prefixText: assistantMessage.text,
+      assistantRun: params.assistantRun
     });
     const continuation = await buildAssistantTranscriptMessage(
       agentActionLoopContinuationUserText(params.originalUserText, extracted.request, result, step),
@@ -6848,6 +6913,7 @@ async function executeAssistantAgentActionLoop(params: {
       continuationLiveSink,
       assistantMessage.id
     );
+    throwIfAssistantRunCancelled(params.assistantRun);
     assistantMessage = {
       ...continuation,
       id: assistantMessage.id,
@@ -6860,7 +6926,8 @@ async function executeAssistantAgentActionLoop(params: {
         assistantMessageId: assistantMessage.id,
         agentEvents: params.agentEvents,
         commitTranscript: params.commitTranscript,
-        prefixText: assistantMessage.text
+        prefixText: assistantMessage.text,
+        assistantRun: params.assistantRun
       });
       const forcedContinuation = await buildAssistantTranscriptMessage(
         agentActionForcedContinuationUserText(params.originalUserText, extracted.request, result, continuation.text, step),
@@ -6871,6 +6938,7 @@ async function executeAssistantAgentActionLoop(params: {
         forcedLiveSink,
         assistantMessage.id
       );
+      throwIfAssistantRunCancelled(params.assistantRun);
       assistantMessage = {
         ...forcedContinuation,
         id: assistantMessage.id,
@@ -6885,6 +6953,7 @@ async function executeAssistantAgentActionLoop(params: {
             request: extracted.request,
             result,
             agentEvents: params.agentEvents,
+            assistantRun: params.assistantRun,
             commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
           });
         } else {
@@ -6892,52 +6961,11 @@ async function executeAssistantAgentActionLoop(params: {
           assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
         }
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        return assistantMessage;
       }
     }
+    step += 1;
   }
-  const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  const lastObservation = loopState.observations.at(-1);
-  if (
-    lastObservation?.request &&
-    loopState.lastResult &&
-    agentActionShouldRunFileOrganizationFallback(params.originalUserText, lastObservation.request, loopState.lastResult)
-  ) {
-    const fallbackMessage = await applyDeterministicOrganizationFallback({
-      assistantMessage: {
-        ...assistantMessage,
-        text: `${strippedText}\n\nLa limite de boucle approche, mais la derniere liste contient encore des elements classables. Je bascule sur le fallback fichier borne pour terminer les deplacements evidents avec verification.`
-      },
-      originalUserText: params.originalUserText,
-      request: lastObservation.request,
-      result: loopState.lastResult,
-      agentEvents: params.agentEvents,
-      commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
-    });
-    params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
-    emitAgentLoopDiagnosticSummary({
-      agentEvents: params.agentEvents,
-      messageId: fallbackMessage.id,
-      outcome: "completed",
-      toolSteps: loopState.toolSteps,
-      loopState: agentActionLoopWithStatus(loopState, "completed")
-    });
-    return fallbackMessage;
-  }
-  loopState = agentActionLoopWithStatus(loopState, "max_steps");
-  emitAgentLoopDiagnosticSummary({
-    agentEvents: params.agentEvents,
-    messageId: assistantMessage.id,
-    outcome: "max_steps",
-    toolSteps: loopState.toolSteps,
-    loopState
-  });
-  return {
-    ...assistantMessage,
-    text: `${strippedText}\n\nFinal summary: agent loop max_steps; incomplete after ${maxSteps} local-action steps. No further action was executed after this guard fired.`,
-    proofHash: hashJson({ agentActionLoopMaxSteps: maxSteps, previousProofHash: assistantMessage.proofHash, loopState })
-  };
 }
 
 async function buildAssistantTranscriptMessage(
@@ -13551,6 +13579,7 @@ function createAssistantLiveTextSink(params: {
   agentEvents: AgentRuntimeEventQueue;
   commitTranscript: (transcript: TranscriptMessage[]) => void;
   prefixText?: string;
+  assistantRun?: AssistantRunControl;
 }): ProviderLiveTextSink {
   let lastText = "";
   return {
@@ -13581,7 +13610,7 @@ function createAssistantLiveTextSink(params: {
       params.commitTranscript(transcriptWithReplacedMessage(params.baseTranscript, liveMessage));
       emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.agentEvents.sessionId);
     },
-    shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))
+    shouldStop: (text) => Boolean(params.assistantRun?.cancelled || extractAgentActionJsonRequest(text))
   };
 }
 
@@ -14821,6 +14850,7 @@ function panelsChatBottomSnapshot(): PanelsChatBottomSnapshot {
       permissionMode: panelsChatBottomState.permissionMode,
       permissionModeOpen: panelsChatBottomState.permissionModeOpen,
       selectedProvider: panelsChatBottomState.selectedProvider,
+      assistantBusy: Boolean(activeAssistantRunControl && !activeAssistantRunControl.cancelled),
       providers: (Object.values(providerRuntime).map((profile) => ({
         provider: profile.composerProvider,
         label: profile.label,
@@ -15455,14 +15485,28 @@ async function submitChatDraftForSession(
 ): Promise<void> {
   session.working = true;
   session.date = todayIsoDate();
+  const assistantRun = startAssistantRunControl(session.sessionId);
   let latestCommittedTranscript = transcript;
   const trackedCommitTranscript = (nextTranscript: TranscriptMessage[]) => {
     latestCommittedTranscript = nextTranscript;
     commitTranscript(nextTranscript);
   };
   try {
-    await submitChatDraftForSessionInner(draft, moduleId, pendingUploadItems, session, transcript, parallelSessionIndex, internalPrompt, replaceAssistantMessageId, trackedCommitTranscript);
+    await submitChatDraftForSessionInner(draft, moduleId, pendingUploadItems, session, transcript, parallelSessionIndex, internalPrompt, replaceAssistantMessageId, assistantRun, trackedCommitTranscript);
+  } catch (error) {
+    if (!(error instanceof AssistantRunCancelledError)) {
+      throw error;
+    }
+    const cancelledMessage: TranscriptMessage = {
+      id: `assistant-cancelled-${Date.now()}`,
+      role: "assistant",
+      text: "Stopped by user.",
+      proofHash: hashJson({ assistantRunCancelled: assistantRun.id, sessionId: assistantRun.sessionId, cancelledAt: assistantRun.cancelledAt ?? new Date().toISOString() })
+    };
+    latestCommittedTranscript = transcriptWithMessage(latestCommittedTranscript, cancelledMessage);
+    commitTranscript(latestCommittedTranscript);
   } finally {
+    finishAssistantRunControl(assistantRun);
     session.working = transcriptHasOpenQuestionnaire(latestCommittedTranscript);
     session.date = todayIsoDate();
   }
@@ -15477,8 +15521,10 @@ async function submitChatDraftForSessionInner(
   parallelSessionIndex: number,
   internalPrompt: boolean,
   replaceAssistantMessageId: string,
+  assistantRun: AssistantRunControl,
   commitTranscript: (transcript: TranscriptMessage[]) => void
 ): Promise<void> {
+  throwIfAssistantRunCancelled(assistantRun);
   const requestSessionId = session.sessionId;
   const requestTranscriptBeforeSend = transcriptWithoutMessage([...transcript], replaceAssistantMessageId);
   const searchArchiveRequest = parseSearchArchiveCodeAct(draft);
@@ -15555,7 +15601,8 @@ async function submitChatDraftForSessionInner(
       baseTranscript: nextTranscript,
       assistantMessageId: liveAssistantMessageId,
       agentEvents,
-      commitTranscript
+      commitTranscript,
+      assistantRun
     });
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
     assistantMessage = await buildAssistantTranscriptMessage(
@@ -15567,6 +15614,7 @@ async function submitChatDraftForSessionInner(
       liveTextSink,
       liveAssistantMessageId
     );
+    throwIfAssistantRunCancelled(assistantRun);
   }
   assistantMessage = await executeAssistantAgentActionLoop({
     assistantMessage,
@@ -15576,10 +15624,13 @@ async function submitChatDraftForSessionInner(
     userMessageId: message.id,
     moduleId,
     agentEvents,
+    assistantRun,
     commitTranscript
   });
+  throwIfAssistantRunCancelled(assistantRun);
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
+  throwIfAssistantRunCancelled(assistantRun);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
@@ -15631,8 +15682,10 @@ async function submitChatDraftForSessionInner(
       userMessageId: message.id,
       moduleId,
       agentEvents,
+      assistantRun,
       commitTranscript
     });
+    throwIfAssistantRunCancelled(assistantRun);
     continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
     continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
     continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);
@@ -15729,6 +15782,9 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       panelsChatBottomState.uploadEditTargetId = "";
       break;
     }
+    case "stop_assistant":
+      stopActiveAssistantRunControl();
+      break;
     case "assistant_write_complete":
       markAssistantWriteComplete(command.value ?? "");
       break;

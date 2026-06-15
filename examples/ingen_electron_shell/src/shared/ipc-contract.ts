@@ -235,7 +235,10 @@ export interface PanelsChatBottomSnapshotEvent {
     | "transcript_committed"
     | "assistant_progressive_seed"
     | "context_compaction_started"
-    | "context_compaction_completed";
+    | "context_compaction_completed"
+    | "assistant_run_started"
+    | "assistant_run_cancelled"
+    | "assistant_run_finished";
   sessionId: string;
   proofHash: string;
 }
@@ -1033,7 +1036,6 @@ export type AgentActionLoopOutcome =
   | "needs_approval"
   | "blocked"
   | "failed_after_retries"
-  | "max_steps"
   | "cancelled";
 
 export interface AgentActionLoopObservation {

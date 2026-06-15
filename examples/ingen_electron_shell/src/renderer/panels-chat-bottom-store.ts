@@ -59,6 +59,7 @@ function fallbackSnapshot(): PanelsChatBottomSnapshot {
       permissionMode: "ask-permissions",
       permissionModeOpen: false,
       selectedProvider: "openai",
+      assistantBusy: false,
       providers: [
         { provider: "openai", label: "Codex", connected: true, active: true, account: "local Codex auth", proof: "provider-store" },
         { provider: "anthropic", label: "Claude", connected: false, active: false, account: "not linked", proof: "unverified" },
