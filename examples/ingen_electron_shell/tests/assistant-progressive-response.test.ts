@@ -105,6 +105,8 @@ describe("assistant progressive response feed", () => {
     expect(brainCanvasSource).toContain('line !== "BRAIN_PERSONALITY_MANIFEST v1"');
     expect(brainCanvasSource).toContain("personalityMacroRowsToManifest");
     expect(brainCanvasSource).not.toContain("value={personalityMemory.manifest}");
+    expect(brainCanvasSource).toContain("Choose how the agent speaks while it works");
+    expect(brainCanvasSource).not.toContain("How the agent sounds when it thinks");
     expect(stylesSource).toContain(".brainPersonalityMacroRow");
     expect(stylesSource).toContain("overflow: hidden;");
     expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");

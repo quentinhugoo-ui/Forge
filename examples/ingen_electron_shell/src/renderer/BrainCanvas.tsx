@@ -1814,7 +1814,7 @@ function PersonalityManifestSpace() {
   return (
     <div className="brainCanvas__space">
       <p className="brainCanvas__spaceIntro">
-        How the agent sounds when it thinks, explains, pivots and works inside loop streams.
+        Choose how the agent speaks while it works, explains decisions, and handles mistakes.
       </p>
       <div className="brainCanvas__rows" role="list">
         <section className="brainMemoryIdentity brainMemoryIdentity--personality" aria-label="Agent personality manifest" role="listitem">
