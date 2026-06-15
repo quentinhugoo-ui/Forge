@@ -8905,8 +8905,8 @@ ol.assistantText__list li::before {
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame {
   inset: 50% auto auto 50%;
-  width: min(70.18vw, 87.12vh, 920px);
-  height: min(70.18vw, 87.12vh, 920px);
+  width: min(79.3034vw, 98.4456vh, 1039.6px);
+  height: min(79.3034vw, 98.4456vh, 1039.6px);
   overflow: visible;
   transform: translate3d(-50%, -50%, 0);
 }
@@ -8933,7 +8933,7 @@ ol.assistantText__list li::before {
 }
 
 .mapsCanvasGrid--earthActive .bangerSphereNativeFrame__fallbackSphere {
-  width: min(100%, 920px);
+  width: min(100%, 1039.6px);
 }
 
 .mapsCanvasGrid--earthActive .parallelCanvasPane:first-child {
