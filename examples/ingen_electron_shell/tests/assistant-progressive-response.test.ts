@@ -254,6 +254,20 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("transcriptCodeActEvent--brainSegment");
   });
 
+  it("gives non-Brain CodeAct events a working and completed visual phase", () => {
+    expect(animationSource).toContain("const isGenericCodeActEvent = !isBrainStyled && !agentCommand");
+    expect(animationSource).toContain('useState<"working" | "complete">');
+    expect(animationSource).toContain("setGenericCodeActPhase(\"working\")");
+    expect(animationSource).toContain("setGenericCodeActPhase(\"complete\")");
+    expect(animationSource).toContain("transcriptCodeActEvent--codeact-${genericCodeActPhase}");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__text");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete,");
+  });
+
   it("keeps loop continuation results compact before reinjection", () => {
     expect(mainSource).toContain("const AGENT_ACTION_RESULT_ITEM_LIMIT = 10");
     expect(mainSource).toContain("const AGENT_ACTION_RESULT_MATCH_LIMIT = 8");
