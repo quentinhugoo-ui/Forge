@@ -16,6 +16,7 @@ import {
   BRAIN_QUESTIONNAIRE_RESULT_SCHEMA,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_CAPABILITIES_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
@@ -110,6 +111,8 @@ export {
   BRAIN_SCIENCE_COMMAND_DESCRIPTION,
   BRAIN_CODING_COMMAND,
   BRAIN_CODING_COMMAND_DESCRIPTION,
+  BRAIN_CAPABILITIES_COMMAND,
+  BRAIN_CAPABILITIES_COMMAND_DESCRIPTION,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
@@ -310,13 +313,16 @@ export type AgentCapabilitySurface = string;
 export type AgentCapabilityApproval = "none" | "prompt" | "confirmed" | "blocked";
 export type AgentCapabilityStatus = "available" | "planned" | "blocked";
 export type AgentCapabilityVerification =
+  | "atlas_hash"
   | "artifact_hash"
   | "browser_state"
   | "command_exit"
   | "event_log"
   | "filesystem"
+  | "manifest_hash"
   | "manual_confirmation"
   | "mcp_result"
+  | "metadata"
   | "package_state"
   | "process_state"
   | "registry_state"
@@ -805,6 +811,7 @@ export interface AgentActionHostManifest {
 }
 
 export type AgentActionKind =
+  | "capabilities"
   | "list"
   | "search"
   | "create_directory"
@@ -874,7 +881,8 @@ export type AgentActionKind =
   | "automation_cancel"
   | "automation_record";
 
-export type AgentActionScope = "workspace" | "computer";
+export type AgentCapabilityScope = "all" | "workspace" | "computer" | "coding" | "browser" | "documents" | "windows" | "cloud" | "automation";
+export type AgentActionScope = "workspace" | "computer" | AgentCapabilityScope;
 export type AgentVirtualizationProvider = "wsl" | "docker" | "hyperv" | "all";
 export type AgentCloudCliProvider = "aws" | "azure" | "gcp" | "github" | "stripe" | "all";
 
@@ -1128,6 +1136,7 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   const candidate = value as Partial<AgentActionRequest>;
   const actions: AgentActionKind[] = [
     "list",
+    "capabilities",
     "search",
     "create_directory",
     "rename_path",
@@ -1199,7 +1208,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   if (!actions.includes(candidate.action as AgentActionKind)) {
     return false;
   }
-  if (candidate.scope !== undefined && candidate.scope !== "workspace" && candidate.scope !== "computer") {
+  const actionScopeValues =
+    candidate.action === "capabilities"
+      ? ["all", "workspace", "computer", "coding", "browser", "documents", "windows", "cloud", "automation"]
+      : ["workspace", "computer"];
+  if (candidate.scope !== undefined && !actionScopeValues.includes(candidate.scope)) {
     return false;
   }
   if (

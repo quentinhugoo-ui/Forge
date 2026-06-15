@@ -1,3 +1,4 @@
+export const AGENT_CAPABILITIES_COMMAND = "/agent_capabilities_";
 export const AGENT_LIST_COMMAND = "/agent_list_";
 export const AGENT_SEARCH_COMMAND = "/agent_search_";
 export const AGENT_CREATE_DIRECTORY_COMMAND = "/agent_create_directory_";
@@ -66,6 +67,7 @@ export const AGENT_AUTOMATION_CANCEL_COMMAND = "/agent_automation_cancel_";
 export const AGENT_AUTOMATION_RECORD_COMMAND = "/agent_automation_record_";
 
 export const AGENT_ACTION_EVENT_COMMANDS = [
+  AGENT_CAPABILITIES_COMMAND,
   AGENT_LIST_COMMAND,
   AGENT_SEARCH_COMMAND,
   AGENT_CREATE_DIRECTORY_COMMAND,
@@ -144,6 +146,7 @@ export interface AgentActionTranscriptEvent {
 }
 
 const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
+  [AGENT_CAPABILITIES_COMMAND, "local action atlas returned"],
   [AGENT_LIST_COMMAND, "file system listing returned"],
   [AGENT_SEARCH_COMMAND, "computer search returned bounded matches"],
   [AGENT_CREATE_DIRECTORY_COMMAND, "directory created"],
@@ -213,6 +216,7 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
 ]);
 
 export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand][] = [
+  ["agent.capabilities", AGENT_CAPABILITIES_COMMAND],
   ["fs.list", AGENT_LIST_COMMAND],
   ["fs.search", AGENT_SEARCH_COMMAND],
   ["fs.create_directory", AGENT_CREATE_DIRECTORY_COMMAND],
@@ -284,6 +288,7 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
 ] as const;
 
 const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
+  ["capabilities", AGENT_CAPABILITIES_COMMAND],
   ["list", AGENT_LIST_COMMAND],
   ["search", AGENT_SEARCH_COMMAND],
   ["create_directory", AGENT_CREATE_DIRECTORY_COMMAND],

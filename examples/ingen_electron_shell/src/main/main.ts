@@ -43,6 +43,7 @@ import {
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
   BRAIN_WORKSPACE_COMMAND,
+  BRAIN_CAPABILITIES_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
   type CanvasSurfaceSummary,
   type CanvasSurfacesCommand,
@@ -3446,7 +3447,7 @@ function providerConversationMessages(
 
 function compactedAgentActionMemory(compactedMessages: PlannedConversationMessage[]): string {
   const actionMessages = compactedMessages.filter((message) =>
-    /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|AGENT_ACTION_SELECTED_CAPABILITY|\/agent_(?:list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.content)
+    /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|AGENT_ACTION_SELECTED_CAPABILITY|\/agent_(?:capabilities|list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.content)
   );
   if (actionMessages.length === 0) {
     return "";
@@ -4701,9 +4702,11 @@ function brainBootManifest(): string {
     .filter((item) => item.command !== BRAIN_QUESTIONNAIRE_COMMAND)
     .map((item) => `${item.command}: ${item.description}`)
     .join(" | ");
+  const actionManifest = agentActionHostPromptManifest(agentActionHostConfig());
   return [
     "BRAIN_BOOT_MANIFEST v1",
     "source=src/brain.rs",
+    "injection_policy=general_brain_once_at_session_start_and_after_compaction; specialized_brains_once_on_switch_and_after_compaction",
     identityMemory,
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
@@ -4714,8 +4717,23 @@ function brainBootManifest(): string {
     "learning_interrupt_markup=[[learn type=anti_pattern|working_pattern|user_preference|domain_rule|skill_candidate|codeact_candidate|research_candidate scope=session|project|domain confidence=0.00..1.00 promote=remember,rule,skill,task,codeact,research]]short candidate observation[[/learn]]",
     "learning_interrupt_rule=During loop stream work, if a repeated avoidable error, stable correction, reusable solution, user preference, domain rule, skill candidate, CodeAct candidate or worthwhile research branch appears, emit exactly one compact [[learn ...]]...[[/learn]] candidate line near the relevant paragraph.",
     "learning_interrupt_guard=Learning interrupts are proposals only: never claim the Brain has persisted them until a user action or verified Brain/CodeAct promotion accepts them. Prefer at most one learning interrupt per turn unless the user asks for more.",
-    `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
+    `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`,
+    "LOCAL_ACTION_ATLAS_BOOT v1",
+    "rule=This full local action atlas is injected at session boot and after conversation compaction only. Do not require the app to semantically guess local tool needs on each turn.",
+    `capabilities_codeact=Emit AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40} whenever a task may involve local files, coding, Windows, browser, documents, cloud CLIs, virtualization or automation and the exact action is not obvious.`,
+    agentActionRoutingHint(),
+    actionManifest
   ].filter(Boolean).join("\n");
+}
+
+function brainRuntimeReminderManifest(): string {
+  return [
+    "BRAIN_RUNTIME_REMINDER v1",
+    "boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction",
+    "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
+    `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
+    "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
+  ].join("\n");
 }
 
 function workspaceContextManifest(): string {
@@ -4790,7 +4808,7 @@ function transcriptHasRecentAgentActionLoop(transcript: TranscriptMessage[] = pa
     .reverse()
     .slice(0, 6)
     .some((message) =>
-      /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|\/agent_(?:list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.text)
+      /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|\/agent_(?:capabilities|list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.text)
     );
 }
 
@@ -4825,7 +4843,7 @@ function agentActionContinuationManifest(): string {
     `token_estimate_selected_capability=${manifest.runtime.promptTokenEstimate.selectedCapabilityDetail}`,
     `installed_tools_delta=${manifest.runtime.installedToolIds.join("|")}`,
     `missing_tools_delta=${manifest.runtime.missingToolIds.join("|")}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    `available=${manifest.runtime.executableActionIds.join(" ")}`,
     `planned_families_delta=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families_delta=${manifest.runtime.blockedFamilies.join("|")}`,
     `approval_gated_families_delta=${manifest.runtime.approvalGatedFamilies.join("|")}`,
@@ -4843,7 +4861,13 @@ function agentActionContextManifest(
   transcript: TranscriptMessage[] = panelsChatBottomState.transcript
 ): string {
   if (shouldInjectFullAgentActionManifest(userText, transcript)) {
-    return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join("\n");
+    return [
+      "AGENT_ACTION_LOCAL_INTENT_REMINDER v1",
+      "full_atlas_location=brain_boot_manifest_or_post_compaction_reinjection",
+      "rule=Use the boot atlas for known routes. If the exact local route is unclear, request a fresh targeted atlas with AGENT_ACTION_JSON capabilities before answering verbally.",
+      agentActionRoutingHint(),
+      agentActionContinuationManifest()
+    ].join("\n");
   }
   if (shouldInjectCompactAgentActionManifest(userText, transcript)) {
     return [agentActionRoutingHint(), agentActionContinuationManifest()].join("\n");
@@ -4913,7 +4937,7 @@ function codexDirectInstructions(
     `@forge:direct:v1 p=Codex lang=fr tools=codeact effort=${reasoning}`,
     "style=francais naturel, concis; reponds directement.",
     "Tu es la surface assistant locale d'InGen. N'invente pas de runtime ni de statut technique.",
-    brainBootManifest(),
+    brainRuntimeReminderManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
     agentActionContextManifest(userText, transcript),
@@ -5618,7 +5642,7 @@ async function runClaudeCodePrint(
     .map((message) => `${message.role === "system" ? "Systeme" : message.role === "user" ? "Utilisateur" : "Assistant"}: ${message.content}`)
     .join("\n\n");
   const promptedUserText = [
-    brainBootManifest(),
+    brainRuntimeReminderManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
     agentActionContextManifest(userText, transcript),
@@ -5799,7 +5823,7 @@ async function runOpenRouterChatCompletion(
       content:
         [
           "Tu es la surface assistant locale d'InGen. Reponds dans la langue de l'utilisateur, clairement et sans inventer de runtime.",
-          brainBootManifest(),
+          brainRuntimeReminderManifest(),
           brainIdentityMemoryManifest(),
           workspaceContextManifest(),
           agentActionContextManifest(userText, transcript),
@@ -5876,6 +5900,7 @@ const AGENT_ACTION_RESULT_MATCH_LIMIT = 8;
 const AGENT_ACTION_RESULT_PREVIEW_BYTES = 6_000;
 const AGENT_ACTION_RESULT_MATCH_TEXT_BYTES = 320;
 const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], AgentActionCapabilityId> = {
+  capabilities: "agent.capabilities",
   list: "fs.list",
   search: "fs.search",
   create_directory: "fs.create_directory",
@@ -6394,6 +6419,7 @@ function emitAgentLoopDiagnosticSummary(params: {
 
 function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
   return (
+    request.action === "capabilities" ||
     request.action === "list" ||
     request.action === "search" ||
     request.action === "run_readonly_command" ||

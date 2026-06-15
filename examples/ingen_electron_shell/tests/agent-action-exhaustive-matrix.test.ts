@@ -96,6 +96,11 @@ async function withTempWorkspace<T>(run: (config: AgentActionHostConfig) => Prom
 }
 
 const SCENARIOS: Record<AgentActionKind, ExhaustiveScenario> = {
+  capabilities: {
+    paragraph: "Je demande l'atlas local pour choisir une route executable sans inventer d'outil.",
+    expectation: "must_accept",
+    request: { action: "capabilities", scope: "all", query: "workspace files and coding", maxResults: 20 }
+  },
   list: {
     paragraph: "Je liste le workspace temporaire pour obtenir un etat de depart borne.",
     expectation: "must_accept",
@@ -492,7 +497,7 @@ describe("agent action exhaustive capability matrix", () => {
       const scenarios = Object.values(SCENARIOS);
       const uniqueActions = new Set(scenarios.map((scenario) => scenario.request.action));
       expect(uniqueActions.size).toBe(scenarios.length);
-      expect(scenarios.length).toBe(68);
+      expect(scenarios.length).toBe(69);
 
       const runtimeEvents: Array<{ kind: "tool_call_started" | "tool_result" | "tool_call_completed"; command: string; accepted?: boolean }> = [];
       const results: AgentActionResult[] = [];

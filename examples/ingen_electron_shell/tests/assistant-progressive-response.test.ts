@@ -151,10 +151,15 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain('text: "Stopped by user."');
   });
 
-  it("injects the heavy local action manifest lazily", () => {
+  it("injects the full local action atlas at boot and keeps per-turn reminders compact", () => {
     expect(mainSource).toContain("function shouldInjectFullAgentActionManifest");
     expect(mainSource).toContain("function shouldInjectCompactAgentActionManifest");
     expect(mainSource).toContain("function agentActionContinuationManifest");
+    expect(mainSource).toContain("function brainRuntimeReminderManifest");
+    expect(mainSource).toContain("LOCAL_ACTION_ATLAS_BOOT v1");
+    expect(mainSource).toContain("full local action atlas is injected at session boot and after conversation compaction only");
+    expect(mainSource).toContain("boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction");
+    expect(mainSource).toContain("capabilities_codeact=");
     expect(mainSource).toContain("manifest.runtime.manifestHash");
     expect(mainSource).toContain("manifest.runtime.atlasHash");
     expect(mainSource).toContain("delta_policy=${manifest.runtime.injectionPolicy}");
@@ -168,8 +173,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("transcriptHasRecentAgentActionLoop(transcript)");
     expect(mainSource).toContain("shouldInjectFullAgentActionManifest(userText, transcript)");
     expect(mainSource).toContain("shouldInjectCompactAgentActionManifest(userText, transcript)");
-    expect(mainSource).toContain("return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
+    expect(mainSource).toContain("full_atlas_location=brain_boot_manifest_or_post_compaction_reinjection");
+    expect(mainSource).toContain("agentActionContinuationManifest()");
     expect(mainSource).toContain("[agentActionRoutingHint(), agentActionContinuationManifest()].join(\"\\n\")");
+    expect(mainSource).not.toContain("return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
     expect(mainSource).toContain(": \"\"");
     expect(mainSource).toContain("agentActionContextManifest(userText, transcript)");
   });

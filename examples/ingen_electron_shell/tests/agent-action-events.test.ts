@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_CAPABILITIES_COMMAND,
   AGENT_BROWSER_DOWNLOAD_COMMAND,
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_OPEN_COMMAND,
@@ -72,6 +73,8 @@ describe("agent action transcript events", () => {
   });
 
   it("maps structured action kinds and tool ids to event commands", () => {
+    expect(agentActionEventFromLine('AGENT_ACTION action="capabilities" query="disk space"')?.command).toBe(AGENT_CAPABILITIES_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="agent.capabilities"')?.command).toBe(AGENT_CAPABILITIES_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="list" path="."')?.command).toBe(AGENT_LIST_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="fs.copy" path="a" toPath="b"')?.command).toBe(AGENT_COPY_PATH_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="shell.readonly" command="rg"')?.command).toBe(AGENT_READONLY_SHELL_COMMAND);

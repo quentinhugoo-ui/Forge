@@ -20,10 +20,16 @@ describe("Coding Brain live preview CodeAct", () => {
     expect(brainSource).toContain("the live visual is opening in the conversation");
     expect(brainSource).toContain("create or modify a real local file first through AGENT_ACTION_JSON");
     expect(brainSource).toContain("Windows/local action tools remain available in Coding Brain");
+    expect(brainSource).toContain('pub const BRAIN_CAPABILITIES_COMMAND: &str = "/capabilities_";');
+    expect(brainSource).toContain("Use /capabilities_ when coding work may need local files");
+    expect(brainSource).toContain("Use /capabilities_ when scientific/engineering work may require local files");
+    expect(brainSource).toContain("brain_capabilities_codeact_template()");
     expect(brainSource).toContain("copy-paste instructions");
     expect(brainSource).toContain("do not paste implementation code in the same Brain-switch message");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND");
+    expect(generatedSource).toContain("BRAIN_CAPABILITIES_COMMAND");
     expect(generatedSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION");
+    expect(generatedSource).toContain("BRAIN_CAPABILITIES_COMMAND_DESCRIPTION");
     expect(ipcSource).toContain("BRAIN_CODING_LIVE_PREVIEW_COMMAND");
     expect(mainSource).toContain("visual_artifact_rule=");
     expect(mainSource).toContain("AGENT_ACTION_JSON first");

@@ -138,6 +138,7 @@ Deliverables:
 - Extensible `AgentCapabilityAtlasEntry`.
 - `createAgentCapabilityAtlas(config)`.
 - Compact `capability_atlas=` prompt summary.
+- Executable read-only `/capabilities_` CodeAct available from General, Science and Coding Brain.
 - Explicit distinction between executable actions and non-executable atlas knowledge.
 - Tests for Office COM, browser CDP, WMI, scheduler, settings, credentials, WSL and RPA.
 
@@ -149,6 +150,8 @@ Acceptance:
 - Planned entries do not become direct `AGENT_ACTION_JSON` actions.
 
 Status: implemented in commit `58d53fcbf`.
+
+Update 2026-06-15: `/capabilities_` is now a real read-only `AGENT_ACTION_JSON {"action":"capabilities"}` backend, not just prompt text. It returns a scoped/ranked atlas slice with manifest hash, atlas hash, installed/missing tools, planned/blocked/approval-gated families and proof hash. Renderer events map it to `/agent_capabilities_` so the readable loop stream shows an atlas event instead of raw JSON.
 
 ### 2. Runtime Manifest And Prompt Injection
 
@@ -168,7 +171,7 @@ Acceptance:
 - The manifest says which capabilities are available, planned, blocked or approval-gated.
 - Context compaction preserves the active goal, recent tool results, capability constraints and proof trail.
 
-Status: implemented for the planned scope. The manifest carries runtime hashes, atlas hashes, delta policy, installed/missing tool detection, prompt token estimates, selected-capability detail on tool-result continuation and agent-action compaction state.
+Status: implemented for the planned scope. The manifest carries runtime hashes, atlas hashes, delta policy, installed/missing tool detection, prompt token estimates, selected-capability detail on tool-result continuation and agent-action compaction state. The full local action atlas is injected in the Brain boot system message once at session start and after conversation compaction; normal provider calls use only a compact runtime reminder that points the LLM to `/capabilities_` when it needs a fresh targeted atlas. Science and Coding Brain catalogs mention `/capabilities_` but are still injected only on segment switch and after compaction.
 
 ### 3. Universal Agent Loop
 

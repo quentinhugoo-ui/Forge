@@ -88,6 +88,7 @@ const AGENT_ACTION_TOOL_DETECTION_COMMANDS: readonly { id: string; command: stri
 ];
 let agentActionToolDetectionCache: { platform: NodeJS.Platform; tools: AgentActionInstalledTool[] } | undefined;
 const AGENT_ACTION_EVENT_HINTS = [
+  "agent.capabilities:/agent_capabilities_",
   "fs.list:/agent_list_",
   "fs.search:/agent_search_",
   "fs.create_directory:/agent_create_directory_",
@@ -159,6 +160,7 @@ const AGENT_ACTION_EVENT_HINTS = [
 ];
 
 const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
+  capabilities: "/agent_capabilities_",
   list: "/agent_list_",
   search: "/agent_search_",
   create_directory: "/agent_create_directory_",
@@ -521,7 +523,8 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text document.toolchain_inspect document.toolchain_install dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.github_pr_review_submit ci.rerun_failed windows.sensitive_inspect windows.sensitive_apply",
+    "discovery=If a task might involve the computer, files, apps, code, browser, OS, documents, automation or an unknown local capability and the exact route is not obvious, emit AGENT_ACTION_JSON {\"action\":\"capabilities\",\"scope\":\"all\",\"query\":\"short task\"} before answering verbally.",
+    "families=agent.capabilities fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text document.toolchain_inspect document.toolchain_install dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.github_pr_review_submit ci.rerun_failed windows.sensitive_inspect windows.sensitive_apply",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "computer_use=Inspect GUI/UIA first, then act once with confirmed:true, then verify by foreground/UI state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
@@ -1099,6 +1102,24 @@ function actionCapability(entry: AgentActionCapability): AgentActionCapability {
 
 function createExecutableActionCapabilities(): AgentActionCapability[] {
   return [
+    actionCapability({
+      id: "agent.capabilities",
+      family: "agent.capabilities",
+      surface: "agent_runtime",
+      title: "Discover local action atlas",
+      status: "available",
+      risk: "read",
+      operations: ["return available local actions", "rank atlas entries by scope/topic", "surface blocked/planned boundaries"],
+      underlyingTools: ["InGen runtime manifest", "capability atlas"],
+      fallbacks: ["scope:\"all\"", "narrow scope by task family"],
+      verification: ["manifest_hash", "atlas_hash"],
+      approval: "none",
+      executableActionIds: ["agent.capabilities"],
+      requiresApproval: false,
+      writes: false,
+      description: "Read-only CodeAct for discovering the full or targeted local action atlas before choosing a concrete Windows/local tool route.",
+      notes: "Use this when the model knows a task may need the computer but is unsure which AGENT_ACTION_JSON action to emit."
+    }),
     actionCapability({
       id: "fs.list",
       family: "filesystem.discovery",
@@ -2345,6 +2366,138 @@ export function agentActionCapabilityDetailManifest(config: AgentActionHostConfi
     capability ? capabilityDetailLines(capability).join("\n") : `missing_selector=${selector}`,
     "rule=Use this detail as context only. Execute only real available AGENT_ACTION_JSON actions and wait for AGENT_ACTION_RESULT."
   ].join("\n");
+}
+
+function capabilityScopeFromRequest(request: AgentActionRequest): string {
+  const value = typeof request.scope === "string" ? request.scope.trim().toLowerCase() : "";
+  return value || "all";
+}
+
+function capabilityQueryTokens(request: AgentActionRequest): string[] {
+  return `${request.query ?? ""} ${capabilityScopeFromRequest(request)}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9_.-]+/)
+    .filter((token) => token.length >= 2);
+}
+
+function capabilityMatchesScope(entry: AgentCapabilityAtlasEntry, scope: string): boolean {
+  if (entry.id === "agent.capabilities") {
+    return true;
+  }
+  if (!scope || scope === "all") {
+    return true;
+  }
+  if (scope === "coding") {
+    return /dev|git|github|ci|package|document|browser|shell|virtualization|fs\./i.test(`${entry.family} ${entry.id} ${entry.surface}`);
+  }
+  if (scope === "documents") {
+    return entry.family.startsWith("document") || entry.surface.includes("document");
+  }
+  if (scope === "windows") {
+    return /windows|computer|shell|package|process|service|setting|sensitive/i.test(`${entry.family} ${entry.surface}`);
+  }
+  if (scope === "browser") {
+    return entry.family.startsWith("browser") || entry.surface.includes("browser");
+  }
+  if (scope === "cloud") {
+    return entry.family.startsWith("cloud") || entry.surface.includes("cloud");
+  }
+  if (scope === "automation") {
+    return entry.family.startsWith("automation") || entry.surface.includes("automation");
+  }
+  if (scope === "workspace" || scope === "computer") {
+    return true;
+  }
+  return entry.family.includes(scope) || entry.id.includes(scope) || entry.surface.includes(scope);
+}
+
+function rankedCapabilitiesForRequest(config: AgentActionHostConfig, request: AgentActionRequest): AgentCapabilityAtlasEntry[] {
+  const manifest = createAgentActionHostManifest(config);
+  const scope = capabilityScopeFromRequest(request);
+  const tokens = capabilityQueryTokens(request);
+  const scored = manifest.capabilityAtlas
+    .filter((entry) => capabilityMatchesScope(entry, scope))
+    .map((entry) => {
+      const haystack = [
+        entry.id,
+        entry.family,
+        entry.surface,
+        entry.title,
+        entry.operations.join(" "),
+        entry.underlyingTools.join(" "),
+        entry.fallbacks.join(" "),
+        entry.notes
+      ].join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 2 : 0), 0);
+      const statusScore = entry.status === "available" ? 8 : entry.status === "planned" ? 1 : 0;
+      const writePenalty = entry.risk === "destructive" || entry.approval === "blocked" ? -2 : 0;
+      return { entry, score: statusScore + tokenScore + writePenalty };
+    })
+    .sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id));
+  const maxResults = Math.max(1, Math.min(120, Math.round(request.maxResults ?? (scope === "all" ? 80 : 40))));
+  return scored.slice(0, maxResults).map((item) => item.entry);
+}
+
+function capabilitiesAction(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult {
+  const manifest = createAgentActionHostManifest(config);
+  const scope = capabilityScopeFromRequest(request);
+  const selected = rankedCapabilitiesForRequest(config, request);
+  const payload = {
+    schema: "ingen.agent.capabilities.result.v1",
+    scope,
+    query: request.query ?? "",
+    manifestHash: manifest.runtime.manifestHash,
+    atlasHash: manifest.runtime.atlasHash,
+    availableActions: manifest.runtime.executableActionIds,
+    installedTools: manifest.runtime.installedToolIds,
+    missingTools: manifest.runtime.missingToolIds,
+    plannedFamilies: manifest.runtime.plannedFamilies,
+    blockedFamilies: manifest.runtime.blockedFamilies,
+    approvalGatedFamilies: manifest.runtime.approvalGatedFamilies,
+    capabilities: selected.map((entry) => ({
+      id: entry.id,
+      family: entry.family,
+      surface: entry.surface,
+      status: entry.status,
+      risk: entry.risk,
+      approval: entry.approval,
+      writes: entry.writes,
+      operations: entry.operations,
+      fallbacks: entry.fallbacks,
+      verification: entry.verification,
+      executableActions: entry.executableActionIds ?? [],
+      notes: entry.notes
+    })),
+    format: "Emit one short progress paragraph, then AGENT_ACTION_JSON with one executable action from availableActions. Wait for AGENT_ACTION_RESULT before claiming success.",
+    fullAtlasRefresh: "AGENT_ACTION_JSON {\"action\":\"capabilities\",\"scope\":\"all\",\"maxResults\":120}",
+    proofHash: ""
+  };
+  payload.proofHash = hashJson({ ...payload, proofHash: "" });
+  return result(config, request, {
+    accepted: true,
+    routeId: "agent.capabilities",
+    value: JSON.stringify(payload),
+    verification: verificationResult([
+      verificationProbe({
+        id: "capabilities.atlas_hash",
+        kind: "artifact_hash",
+        target: "agent_action_capability_atlas",
+        expectation: "capability atlas hash available",
+        actual: manifest.runtime.atlasHash,
+        passed: /^[a-f0-9]{64}$/.test(manifest.runtime.atlasHash)
+      }),
+      verificationProbe({
+        id: "capabilities.selection",
+        kind: "metadata",
+        target: scope,
+        expectation: "at least one capability returned",
+        actual: String(selected.length),
+        passed: selected.length > 0
+      })
+    ])
+  });
 }
 
 function uniqueSortedFamilies(entries: AgentCapabilityAtlasEntry[]): string[] {
@@ -8135,6 +8288,8 @@ async function automationRecordAction(config: AgentActionHostConfig, request: Ag
 async function executeAgentActionRequestInner(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
+      case "capabilities":
+        return capabilitiesAction(config, request);
       case "list":
         return await listAction(config, request);
       case "search":

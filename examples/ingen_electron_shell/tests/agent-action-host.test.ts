@@ -54,6 +54,7 @@ describe("agent action host", () => {
     expect(manifest.schema).toBe("ingen.agent_action_host.manifest.v1");
     expect(manifest.permissions.sandbox).toBe("workspace_or_confirmed_computer");
     expect(manifest.permissions.recursiveDelete).toBe("confirmed_with_absolute_path_guard");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("agent.capabilities");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.search");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.delete_tree");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.full");
@@ -111,7 +112,8 @@ describe("agent action host", () => {
       cwd: "C:\\repo",
       platform: "win32"
     });
-    expect(promptManifest).toContain("events=fs.list:/agent_list_");
+    expect(promptManifest).toContain("events=agent.capabilities:/agent_capabilities_");
+    expect(promptManifest).toContain("fs.list:/agent_list_");
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
     expect(promptManifest).toContain("dev.github_pr_create:/agent_github_pr_create_");
@@ -168,6 +170,7 @@ describe("agent action host", () => {
     expect(summary.windowsExecutionHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.verificationHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.executableActionIds).toEqual([
+      "agent.capabilities",
       "fs.list",
       "fs.search",
       "fs.create_directory",
@@ -482,7 +485,7 @@ describe("agent action host", () => {
   it("keeps a compact stable routing hint separate from the runtime manifest", () => {
     const hint = agentActionRoutingHint();
     expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
-    expect(hint).toContain("families=fs.list fs.search");
+    expect(hint).toContain("families=agent.capabilities fs.list fs.search");
     expect(hint).toContain("windows_reach=shell.full can invoke PowerShell");
     expect(hint).toContain("computer_use=Inspect GUI/UIA first");
     expect(hint).toContain("retry=If a tool fails");
@@ -580,7 +583,37 @@ describe("agent action host", () => {
   });
 
   it("adds path metadata to transcript event commands", () => {
+    expect(agentActionEventCommandForRequest({ action: "capabilities", scope: "all", query: "disk space" })).toBe("/agent_capabilities_");
     expect(agentActionEventCommandForRequest({ action: "copy_path", path: "a.txt", toPath: "b.txt" })).toBe('/agent_copy_path_ path="a.txt" toPath="b.txt"');
+  });
+
+  it("executes a read-only capabilities CodeAct with runtime proof", async () => {
+    await withTempWorkspace(async (config) => {
+      const result = await executeAgentActionRequest(config, {
+        action: "capabilities",
+        scope: "coding",
+        query: "create a visual html animation",
+        maxResults: 12
+      });
+      expect(result.accepted).toBe(true);
+      expect(result.routeId).toBe("agent.capabilities");
+      expect(result.verification?.passed).toBe(true);
+      expect(result.value).toBeTruthy();
+      const payload = JSON.parse(result.value ?? "{}") as {
+        schema?: string;
+        scope?: string;
+        atlasHash?: string;
+        capabilities?: { id: string; status: string; executableActions: string[] }[];
+        proofHash?: string;
+      };
+      expect(payload.schema).toBe("ingen.agent.capabilities.result.v1");
+      expect(payload.scope).toBe("coding");
+      expect(payload.atlasHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(payload.proofHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(payload.capabilities?.length).toBeGreaterThan(0);
+      expect(payload.capabilities?.some((capability) => capability.id === "agent.capabilities")).toBe(true);
+      expect(payload.capabilities?.some((capability) => capability.status === "available")).toBe(true);
+    });
   });
 
   it("copies and recursively deletes confirmed directory trees", async () => {
