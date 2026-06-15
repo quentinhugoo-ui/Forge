@@ -11071,26 +11071,6 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.show();
   window.focus();
   animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
-  if (!widgetTaskbarHidden) {
-    armNativeWidgetTaskbarAutoHide(window);
-  }
-}
-
-function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
-  if (window.isDestroyed() || widgetWindowRestoreState === null) {
-    return;
-  }
-  clearWidgetWindowBoundsAnimationTimer();
-  const bounds = widgetWindowBounds(window);
-  console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
-  traceWidgetTaskbarStep("settle-widget-bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
-  window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
-  window.setMinimumSize(420, 128);
-  window.setAlwaysOnTop(true, "floating");
-  window.show();
-  window.moveTop();
-  window.focus();
-  animateNativeWidgetWindowBounds(window, bounds);
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
@@ -12047,9 +12027,6 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
       }
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
-      }
-      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null && boundsLookLikeWidget(window.getBounds())) {
-        settleNativeWidgetWindowBounds(window);
       }
       traceWidgetTaskbarStep("taskbar-autohide-finished", { id: window.id, hidden, accepted, token });
     })();
