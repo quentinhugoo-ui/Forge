@@ -31,6 +31,7 @@ describe("desktop launcher Vite dev server fast path", () => {
   it("starts or reuses Vite and lets Electron load it through VITE_DEV_SERVER_URL", () => {
     expect(launcherSource).toContain("Ensuring Vite renderer dev server");
     expect(launcherSource).toContain("-File \"%FORGE_ELECTRON_VITE_SERVER_SCRIPT%\"");
+    expect(launcherSource).toContain("-ShellRoot \"%~dp0.\"");
     expect(launcherSource).toContain("-WorkspaceBuildId \"%WORKSPACE_BUILD_ID%\"");
     expect(launcherSource).toContain("-UrlPath \"%VITE_DEV_SERVER_URL_FILE%\"");
     expect(launcherSource).not.toContain("for /f \"usebackq delims=\" %%U");
@@ -55,6 +56,7 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).toContain(":own_build_lock");
     expect(launcherSource).toContain("owner.txt");
     expect(launcherSource).toContain("Removed stale InGen launcher build lock.");
+    expect(launcherSource).toContain('del /Q "%BUILD_LOCK%\\owner.txt"');
     expect(launcherSource).toContain("if errorlevel 1 goto fail");
     expect(launcherSource).not.toContain("Waiting briefly, then starting the fresh build output");
   });

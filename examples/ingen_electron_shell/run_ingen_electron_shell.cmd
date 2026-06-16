@@ -162,7 +162,7 @@ if "%NEED_ELECTRON_REBUILD%"=="1" (
 if "%DESKTOP_DEV_SERVER%"=="1" if not "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" if exist "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" (
   echo Ensuring Vite renderer dev server... >> "%LOG%"
   if exist "%VITE_DEV_SERVER_URL_FILE%" del /Q "%VITE_DEV_SERVER_URL_FILE%" 2>nul
-  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0" -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%" -UrlPath "%VITE_DEV_SERVER_URL_FILE%" >> "%LOG%" 2>>&1
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0." -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%" -UrlPath "%VITE_DEV_SERVER_URL_FILE%" >> "%LOG%" 2>>&1
   if exist "%VITE_DEV_SERVER_URL_FILE%" (
     set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"
   )
@@ -199,6 +199,7 @@ goto fail
 if "%APP_ALREADY_RUNNING%"=="1" (
   echo Active InGen window preserved. Focusing the existing app instead of restarting it. >> "%LOG%"
   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
+  if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%\owner.txt" del /Q "%BUILD_LOCK%\owner.txt" 2>nul
   if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%" rmdir "%BUILD_LOCK%" 2>nul
   exit /b 0
 )
@@ -219,11 +220,13 @@ if not exist "%FORGE_ELECTRON_EXE%" (
 )
 start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto fail
+if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%\owner.txt" del /Q "%BUILD_LOCK%\owner.txt" 2>nul
 if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%" rmdir "%BUILD_LOCK%" 2>nul
 exit /b 0
 
 :fail
 echo Launch failed with code %ERRORLEVEL%. See %LOG%.
+if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%\owner.txt" del /Q "%BUILD_LOCK%\owner.txt" 2>nul
 if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%" rmdir "%BUILD_LOCK%" 2>nul
 start "InGen Electron launch error" notepad.exe "%LOG%"
 exit /b %ERRORLEVEL%
