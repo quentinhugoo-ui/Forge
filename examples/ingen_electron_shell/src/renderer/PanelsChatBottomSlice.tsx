@@ -236,7 +236,7 @@ export function UploadPreviewGrid({ previews }: { previews: ComposerUploadPrevie
   return (
     <div className="composerUploadPreviewGrid" style={style}>
       {previews.map((preview) => (
-        <div className="composerUploadPreviewGrid__cell" key={preview.id} title={preview.name}>
+        <div className="composerUploadPreviewGrid__cell" key={preview.id}>
           <UploadPreview preview={preview} />
         </div>
       ))}
@@ -518,7 +518,7 @@ function TranscriptAttachmentFigure({
 
   if (preview.kind === "image") {
     return (
-      <figure className={className} style={style} title={preview.name}>
+      <figure className={className} style={style}>
         <TranscriptImageDreamPreview
           preview={preview}
           maskId={maskId}
@@ -532,7 +532,6 @@ function TranscriptAttachmentFigure({
             type="button"
             className="imageEditButton imageEditButton--transcript"
             aria-label={`Modifier ${preview.name}`}
-            title="Modifier l'image"
             onClick={(event) => {
               event.stopPropagation();
               onEditImage(preview);
@@ -547,7 +546,7 @@ function TranscriptAttachmentFigure({
 
   if (preview.kind === "model3d") {
     return (
-      <figure className={className} style={style} title={preview.name}>
+      <figure className={className} style={style}>
         <div className="transcriptAttachment__model transcriptAttachment__model--direct">
           <ThreeUploadPreview preview={preview} rendererMode="webgpu" />
         </div>
@@ -556,7 +555,7 @@ function TranscriptAttachmentFigure({
   }
 
   return (
-    <figure className={className} style={style} title={preview.name}>
+    <figure className={className} style={style}>
       <svg className="transcriptAttachment__dreamMask" viewBox={`0 0 ${box.width} ${box.height}`} preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <filter id={blurId} x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
@@ -2622,7 +2621,6 @@ function ComposerQuestionnaire({
             type="button"
             className="composerQuestionnaire__arrow"
             aria-label="Question précédente"
-            title="Précédent"
             disabled={pageIndex === 0 || isClosing}
             onClick={() => goToPage(pageIndex - 1)}
           >
@@ -2636,7 +2634,6 @@ function ComposerQuestionnaire({
               type="button"
               className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
               aria-label="Envoyer les réponses"
-              title="Envoyer"
               disabled={!currentAnswerComplete || isClosing}
               onClick={commitAnswers}
             >
@@ -2647,7 +2644,6 @@ function ComposerQuestionnaire({
               type="button"
               className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
               aria-label="Question suivante"
-              title="Suivant"
               disabled={!currentAnswerComplete || isClosing}
               onClick={() => goToPage(pageIndex + 1)}
             >
@@ -2712,7 +2708,6 @@ function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute
         type="button"
         className="assistantText__mathComputeHint"
         aria-label="Use this math in Compute"
-        title="Use this math in Compute"
         onClick={() => onUseMathInCompute?.(formula)}
       >
         <span className="assistantText__mathComputeIcon" aria-hidden="true">
@@ -2735,7 +2730,6 @@ function assistantGeoEntityNode(token: string, key: string): ReactNode {
       key={key}
       className={token.startsWith("#{") ? "assistantText__geoEntity assistantText__geoEntity--country" : "assistantText__geoEntity"}
       aria-label={`Open ${label}`}
-      title={`Open ${label}`}
       onClick={() => {
         const api = window.forgeShell;
         if (api?.openGeoEntity) {
@@ -3190,7 +3184,7 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
           <Pencil size={13} strokeWidth={1.85} />
         </span>
         <span className="transcriptCodeActFileEvent__label">Modified</span>
-        <span className="transcriptCodeActFileEvent__fileCard" title={fileModification.path}>
+        <span className="transcriptCodeActFileEvent__fileCard">
           {fileModification.fileName}
         </span>
         <AnimatedModificationCounter addedChars={fileModification.addedChars} removedChars={fileModification.removedChars} />
@@ -3340,7 +3334,6 @@ function AssistantLearningInterruptCard({
               className="assistantText__learningAction"
               key={action}
               aria-label={`Promote learning interrupt as ${brainLearningPromotionLabel(action)}`}
-              title={`Promote as ${brainLearningPromotionLabel(action)}`}
               onClick={() => requestPromotion(action)}
             >
               {brainLearningPromotionLabel(action)}
@@ -4157,7 +4150,7 @@ function TranscriptCanvas({
       {visiblePins.length > 0 ? (
         <div className="chatCanvas__chapters" aria-label="Pinned chapters">
           {visiblePins.map((pin) => (
-            <button type="button" className="chapterChip" key={pin.id} title={pin.text} onClick={() => jumpToChapter(pin.id)}>
+            <button type="button" className="chapterChip" key={pin.id} onClick={() => jumpToChapter(pin.id)}>
               <PinGlyph filled />
               <span>{pin.text}</span>
             </button>
@@ -4228,7 +4221,6 @@ function TranscriptCanvas({
                 type="button"
                 className="transcriptActionBtn"
                 aria-label="Copy message"
-                title={copiedId === message.id ? "Copied" : "Copy"}
                 onClick={() => copyMessage(message)}
               >
                 <CopyGlyph />
@@ -4238,7 +4230,6 @@ function TranscriptCanvas({
                 className={pinned ? "transcriptActionBtn transcriptActionBtn--active" : "transcriptActionBtn"}
                 aria-label="Pin as chapter"
                 aria-pressed={pinned}
-                title="Pin"
                 onClick={() => togglePin(message)}
               >
                 <PinGlyph filled={pinned} />
@@ -4248,7 +4239,6 @@ function TranscriptCanvas({
                   type="button"
                   className="transcriptActionBtn"
                   aria-label="Generate a different answer"
-                  title="Different answer"
                   onClick={() => requestDifferentAnswer(message, index)}
                 >
                   <RefreshCw aria-hidden="true" size={13} strokeWidth={1.8} />
@@ -4389,7 +4379,6 @@ function WidgetTranscriptPanel({
         className="widgetTranscriptPanel__topTab"
         aria-label="Reduire le panneau de conversation"
         aria-expanded="true"
-        title="Reduire"
         onClick={onReduce}
       >
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -4397,7 +4386,7 @@ function WidgetTranscriptPanel({
         </svg>
       </button>
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
-        <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
+        <strong id={titleId} className="widgetTranscriptPanel__title">
           {sessionLabel}
         </strong>
       </div>
@@ -4426,7 +4415,6 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
       className="widgetTranscriptTab"
       aria-label={`Agrandir la conversation : ${label}`}
       aria-expanded="false"
-      title={label}
       onClick={onOpen}
     >
       <span className="widgetTranscriptTab__name">{label}</span>
@@ -4473,7 +4461,6 @@ function WidgetSessionTabs({
               aria-selected={selected}
               aria-busy={working || undefined}
               aria-label={`Open session: ${label}${working ? ", working" : ", complete"}`}
-              title={label}
               key={session.sessionId}
               onClick={() => onOpenSession?.(session.sessionId, session.section)}
             >
@@ -4486,7 +4473,6 @@ function WidgetSessionTabs({
             type="button"
             className="widgetSessionTabs__new"
             aria-label="New session"
-            title="New session"
             onClick={onNewSession}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -5650,7 +5636,6 @@ export function PanelsChatBottomSlice({
             aria-haspopup="menu"
             aria-expanded={permissionMenuOpen}
             aria-controls={permissionMenuOpen ? permissionMenuId : undefined}
-            title="Permission mode"
             onClick={() => setPermissionMenuOpen((open) => !open)}
           >
             <PermissionModeIcon mode={permissionMode} />
@@ -5752,7 +5737,6 @@ export function PanelsChatBottomSlice({
         <button
           type="button"
           className={widgetMode ? "bottomControls__widgetButton bottomControls__widgetButton--active" : "bottomControls__widgetButton"}
-          title="Mode widget"
           aria-label="Passer en mode widget"
           aria-pressed={widgetMode}
           disabled={widgetModeTransitioning}
@@ -5764,7 +5748,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__flipButton bottomControls__flipButton--model"
-            title={`flip model ${snapshot.composer.modelLabel}`}
             aria-label={`Flip model from ${snapshot.composer.modelLabel}`}
             onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
           >
@@ -5773,7 +5756,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__modelButton"
-            title={snapshot.composer.modelLabel}
             aria-label={`Current model ${snapshot.composer.modelLabel}. Flip model.`}
             onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
           >
@@ -5782,7 +5764,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__reasoningButton"
-            title={`reasoning ${snapshot.composer.reasoningLabel}`}
             aria-label={`Current reasoning power ${snapshot.composer.reasoningLabel}. Flip reasoning power.`}
             onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
           >
@@ -5791,7 +5772,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__flipButton bottomControls__flipButton--reasoning"
-            title={`flip reasoning ${snapshot.composer.reasoningLabel}`}
             aria-label={`Flip reasoning power from ${snapshot.composer.reasoningLabel}`}
             onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
           >

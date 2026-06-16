@@ -521,7 +521,7 @@ function CodingLivePreviewFrame({ preview }: { preview: CodingLivePreviewTarget 
           src={src}
           sandbox="allow-scripts allow-forms allow-modals"
           referrerPolicy="no-referrer"
-          title={`Live preview ${fileName}`}
+          aria-label={`Live preview ${fileName}`}
         />
       ) : (
         <div className="codingLivePreview__empty">
@@ -568,7 +568,6 @@ function NativeBrowserPager({
         className={activePage === "maps" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
         aria-label="Open Map page"
         aria-pressed={activePage === "maps"}
-        title="Map"
         onClick={() => onPageChange("maps")}
       >
         <GoogleEarthIcon />
@@ -578,7 +577,6 @@ function NativeBrowserPager({
         className={activePage === "webexplorer" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
         aria-label={`Open ${webLabel} page`}
         aria-pressed={activePage === "webexplorer"}
-        title={webLabel}
         onClick={() => onPageChange("webexplorer")}
       >
         {webExplorerModuleId === "airbnb" ? <ModuleLogo id="airbnb" /> : <span className="shellIcon shellIcon--google" aria-hidden="true" />}
@@ -1036,7 +1034,6 @@ function CanvasFilesPane({
                 aria-pressed={selected}
                 disabled={count === 0}
                 key={filter.id}
-                title={`${filter.label} (${count})`}
                 onClick={() => setKindFilter(filter.id)}
               >
                 {filter.id === "all" ? <AllFilesIcon /> : <TranscriptAttachmentEventIcon kind={fileKindIconKind(filter.id)} />}
@@ -1058,7 +1055,6 @@ function CanvasFilesPane({
                 role="listitem"
                 key={file.id}
                 style={{ "--canvas-file-enter-delay": `${Math.min(index, 12) * 46}ms` } as CSSProperties}
-                title={file.name}
               >
                 <div className="canvasFileTile__preview">
                   <CanvasFilePreview file={file} />
@@ -1067,7 +1063,6 @@ function CanvasFilesPane({
                       type="button"
                       className="imageEditButton imageEditButton--file"
                       aria-label={`Modifier ${file.name}`}
-                      title="Modifier l'image"
                       onClick={(event) => {
                         event.stopPropagation();
                         stageCanvasImageForEdit(file);
@@ -1079,7 +1074,7 @@ function CanvasFilesPane({
                 </div>
                 <figcaption className="canvasFileTile__caption">
                   <strong>{file.name}</strong>
-                  <span className="canvasFileTile__captionIcon" aria-label={file.kind} title={file.kind}>
+                  <span className="canvasFileTile__captionIcon" aria-label={file.kind}>
                     <TranscriptAttachmentEventIcon kind={file.kind} />
                   </span>
                 </figcaption>

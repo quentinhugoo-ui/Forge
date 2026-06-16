@@ -241,7 +241,7 @@ function parallelSessionCount(item: SidebarSessionItem): number {
 
 function ParallelSessionIcon({ count, birthAnimationKey = 0, birth = false }: { count: number; birthAnimationKey?: number; birth?: boolean }) {
   const laneCount = Math.max(2, Math.min(4, count));
-  const tooltip = `${laneCount} parallel sessions`;
+  const ariaLabel = `${laneCount} parallel sessions`;
   const iconPath =
     laneCount === 2
       ? "M3 21V3h8v18zm6-16H5v14h4zm4 16V3h8v18zm6-16h-4v14h4z"
@@ -253,8 +253,7 @@ function ParallelSessionIcon({ count, birthAnimationKey = 0, birth = false }: { 
       key={birth ? `parallel-session-birth-${birthAnimationKey}` : "parallel-session-mark"}
       className={birth ? "parallelSessionMark parallelSessionMark--birth" : "parallelSessionMark"}
       role="img"
-      aria-label={tooltip}
-      data-tooltip={tooltip}
+      aria-label={ariaLabel}
     >
       <svg
         className="parallelSessionMark__icon"
@@ -550,7 +549,6 @@ function SessionRow({
           type="button"
           className="sessionRow__archive"
           aria-label={"Archive " + sessionLabel}
-          data-tooltip="Archive session"
           onClick={archive}
         >
           <ArchiveSessionIcon />
