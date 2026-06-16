@@ -182,6 +182,10 @@ import {
   localActionsCodeActToAgentActionRequest,
   renderLocalActionsCodeActResult
 } from "./local-actions-codeact.js";
+import {
+  extractDomainBrainCodeActResult,
+  renderDomainBrainCodeActResult
+} from "./domain-brain-codeact.js";
 import { runPriorityMcpBridge } from "./priority-mcp-bridge.js";
 import {
   createMapsCodeActRequest,
@@ -5602,9 +5606,7 @@ function shouldContinueAfterBrainCodeAct(params: {
   if (params.activatedBrainSegment && params.activatedBrainSegment !== params.previousBrainSegment) {
     return false;
   }
-  const commands = brainCodeActCommandsFromAssistantText(params.assistantText).filter(
-    (command) => command !== BRAIN_RENAME_SESSION_COMMAND
-  );
+  const commands = brainCodeActCommandsFromAssistantText(params.assistantText);
   if (commands.length === 0) {
     return false;
   }
@@ -15959,7 +15961,7 @@ function brainCodeActLoopContinuationUserText(
   previousAssistantText: string,
   commands: BrainCodeActCommand[]
 ): string {
-  const commandList = commands.filter((command) => command !== BRAIN_RENAME_SESSION_COMMAND).join(" ");
+  const commandList = commands.join(" ");
   const visiblePrior = assistantCodeActVisibleText(previousAssistantText);
   return [
     userText || "Continue the current user request.",
@@ -16050,6 +16052,24 @@ async function executeAssistantLocalActionsCodeAct(message: TranscriptMessage): 
   return {
     ...message,
     text: `${message.text.trimEnd()}\n\n${rendered}`
+  };
+}
+
+function executeAssistantDomainBrainCodeActs(message: TranscriptMessage): TranscriptMessage {
+  if (message.role !== "assistant") {
+    return message;
+  }
+  const result = extractDomainBrainCodeActResult(message.text);
+  if (!result) {
+    return message;
+  }
+  return {
+    ...message,
+    text: `${message.text.trimEnd()}\n\n${renderDomainBrainCodeActResult(result)}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      domainBrainResult: result
+    })
   };
 }
 
@@ -17305,6 +17325,7 @@ async function executeUniversalLoopOrchestratorPass(params: {
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, params.originalUserText, params.moduleId, params.parallelSessionIndex);
   throwIfAssistantRunCancelled(params.assistantRun);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex, params.originalUserText);
+  assistantMessage = executeAssistantDomainBrainCodeActs(assistantMessage);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, params.session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
@@ -17368,9 +17389,7 @@ function universalLoopContinuationKey(params: {
   continuation: { text: string; idSuffix: string };
   pass: UniversalLoopOrchestratorPassResult;
 }): string {
-  const codeActs = brainCodeActCommandsFromAssistantText(params.pass.assistantMessage.text)
-    .filter((command) => command !== BRAIN_RENAME_SESSION_COMMAND)
-    .join("|");
+  const codeActs = brainCodeActCommandsFromAssistantText(params.pass.assistantMessage.text).join("|");
   return [
     params.continuation.idSuffix,
     params.pass.activatedBrainSegment ?? "",
