@@ -132,6 +132,11 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("CesiumGeoreference_style_floating_origin");
     expect(nativeBridgeSource).toContain("screen_space_error");
     expect(nativeBridgeSource).toContain("visible_on_screen");
+    expect(mainSource).toContain("CESIUM_ACCESS_TOKEN");
+    expect(mainSource).toContain("cesium-ion-direct");
+    expect(mainSource).toContain("google-map-tiles-direct");
+    expect(mainSource).toContain("google-map-tiles-api-key");
+    expect(mainSource).toContain("render-resolver-proxy");
   });
 
   it("paints Maps from Cesium Google tiles first and falls back to the Banger preview frame", () => {
@@ -140,6 +145,9 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("getBangerGoogleTilesConfig");
     expect(canvasSurfacesSource).toContain("BangerMapsCesiumViewport");
     expect(canvasSurfacesSource).toContain("Cesium photorealistic tiles bootstrap");
+    expect(canvasSurfacesSource).toContain("Cesium ion direct loading Google photorealistic 3D Tiles");
+    expect(canvasSurfacesSource).toContain("config.accessMode !== \"google-map-tiles-api-key\"");
+    expect(canvasSurfacesSource).toContain("googleMapsApiKeyFromRootTilesetUrl");
     expect(canvasSurfacesSource).toContain("Cesium Google photorealistic 3D Tiles live");
     expect(canvasSurfacesSource).toContain("googleMapsEndpointFromRootTilesetUrl");
     expect(canvasSurfacesSource).toContain("data-tileset-provider");
@@ -197,6 +205,9 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("provider: \"google_photorealistic_3d_tiles\"");
     expect(mainSource).toContain("rendererModel: \"cesium_for_unreal_style_3d_tileset\"");
     expect(mainSource).toContain("directRootTilesetEndpoint: \"https://tile.googleapis.com/v1/3dtiles/root.json\"");
+    expect(mainSource).toContain("accessMode: \"cesium-ion\"");
+    expect(mainSource).toContain("accessMode: \"google-map-tiles-api-key\"");
+    expect(mainSource).toContain("accessMode: \"render-proxy\"");
     expect(mainSource).toContain("cesiumIonAccessTokenUrl");
     expect(mainSource).toContain("/api/banger/cesium-ion-token");
     expect(mainSource).toContain("rootRequestTtlHours: 3");

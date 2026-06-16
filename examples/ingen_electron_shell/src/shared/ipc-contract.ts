@@ -1809,7 +1809,8 @@ export interface BangerGoogleTilesConfigResult {
   schema: "forge.banger.google_photorealistic_tiles_config.v1";
   provider: "google_photorealistic_3d_tiles";
   rendererModel: "cesium_for_unreal_style_3d_tileset";
-  source: "render-resolver-proxy" | "electron-main-env";
+  source: "cesium-ion-direct" | "google-map-tiles-direct" | "render-resolver-proxy" | "electron-main-env";
+  accessMode?: "cesium-ion" | "google-map-tiles-api-key" | "render-proxy";
   rootTilesetUrl: string;
   cesiumIonAccessTokenUrl?: string;
   cesiumIonAccessToken?: string;

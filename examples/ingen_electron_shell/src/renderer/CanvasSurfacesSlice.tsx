@@ -289,19 +289,20 @@ function BangerMapsCesiumViewport({
         const Cesium = await import("cesium");
         if (disposed || !hostRef.current) return;
         const cesiumIonAccessToken = await resolveCesiumIonAccessToken(config);
-        const usingCesiumIon = true;
+        const usingCesiumIon = config.accessMode !== "google-map-tiles-api-key";
         if (cesiumIonAccessToken) {
           Cesium.Ion.defaultAccessToken = cesiumIonAccessToken;
         }
-        if (!cesiumIonAccessToken) {
-          onStatus("Cesium ion default token loading Google photorealistic 3D Tiles");
+        if (usingCesiumIon) {
+          onStatus(cesiumIonAccessToken ? "Cesium ion direct loading Google photorealistic 3D Tiles" : "Cesium ion default token loading Google photorealistic 3D Tiles");
         }
         if (!usingCesiumIon) {
           const googleMapsEndpoint = googleMapsEndpointFromRootTilesetUrl(config.rootTilesetUrl);
           if (googleMapsEndpoint) {
             Cesium.GoogleMaps.mapTilesApiEndpoint = googleMapsEndpoint;
-            Cesium.GoogleMaps.defaultApiKey = GOOGLE_MAPS_PROXY_KEY_ALIAS;
+            Cesium.GoogleMaps.defaultApiKey = googleMapsApiKeyFromRootTilesetUrl(config.rootTilesetUrl) ?? GOOGLE_MAPS_PROXY_KEY_ALIAS;
           }
+          onStatus("Cesium direct Google Map Tiles API loading photorealistic 3D Tiles");
         }
         viewer = new Cesium.Viewer(hostRef.current, {
           animation: false,
@@ -428,6 +429,15 @@ function googleMapsEndpointFromRootTilesetUrl(value: string): string | undefined
       url.pathname = `${url.pathname}/`;
     }
     return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function googleMapsApiKeyFromRootTilesetUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return url.searchParams.get("key")?.trim() || undefined;
   } catch {
     return undefined;
   }
