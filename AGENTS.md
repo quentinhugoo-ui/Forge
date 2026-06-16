@@ -25,6 +25,12 @@ enforce safety gates, validate schemas, collect observations, verify results and
 return compact proof artifacts to the LLM. If a decision requires reasoning, the
 runtime must hand the evidence back to the LLM instead of deciding silently.
 
+All CodeActs from every Brain, including General, Science, Coding and named
+specialized Brains, are part of the loop-stream action vocabulary, not
+decorative prompt text. The runtime may expose, parse, render and execute these
+LLM-chosen CodeAct boundaries, but it must not select any Brain CodeAct on the
+LLM's behalf.
+
 ## Hard Rules
 
 - Protect `C:\Users\quent\Documents\EVE\MAP`.
