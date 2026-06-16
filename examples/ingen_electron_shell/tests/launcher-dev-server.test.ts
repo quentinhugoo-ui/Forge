@@ -33,6 +33,7 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).toContain("-File \"%FORGE_ELECTRON_VITE_SERVER_SCRIPT%\"");
     expect(launcherSource).toContain("-WorkspaceBuildId \"%WORKSPACE_BUILD_ID%\"");
     expect(launcherSource).toContain("-UrlPath \"%VITE_DEV_SERVER_URL_FILE%\"");
+    expect(launcherSource).not.toContain("for /f \"usebackq delims=\" %%U");
     expect(launcherSource).toContain('set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"');
     expect(launcherSource).toContain("Vite renderer dev server ready: !VITE_DEV_SERVER_URL!");
     expect(launcherSource).toContain("Using Vite renderer dev server");

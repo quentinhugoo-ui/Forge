@@ -158,8 +158,8 @@ if "%NEED_ELECTRON_REBUILD%"=="1" (
 if "%DESKTOP_DEV_SERVER%"=="1" if not "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" if exist "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" (
   echo Ensuring Vite renderer dev server... >> "%LOG%"
   if exist "%VITE_DEV_SERVER_URL_FILE%" del /Q "%VITE_DEV_SERVER_URL_FILE%" 2>nul
-  for /f "usebackq delims=" %%U in (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0" -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%" -UrlPath "%VITE_DEV_SERVER_URL_FILE%"`) do set VITE_DEV_SERVER_URL=%%U
-  if "!VITE_DEV_SERVER_URL!"=="" if exist "%VITE_DEV_SERVER_URL_FILE%" (
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0" -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%" -UrlPath "%VITE_DEV_SERVER_URL_FILE%" >> "%LOG%" 2>>&1
+  if exist "%VITE_DEV_SERVER_URL_FILE%" (
     set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"
   )
   if not "!VITE_DEV_SERVER_URL!"=="" (
