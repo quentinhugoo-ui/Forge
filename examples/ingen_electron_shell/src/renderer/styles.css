@@ -13117,50 +13117,33 @@ ol.assistantText__list li::before {
 
 .rightPanelEmpty {
   display: grid;
-  align-content: start;
-  gap: 8px;
-  color: var(--forge-muted);
+  gap: 2px;
+  place-items: center;
+  width: min(260px, 100%);
+  min-height: 210px;
+  margin: 48px auto 0;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 14%);
+  opacity: 0.58;
+  text-align: center;
+  pointer-events: none;
 }
 
-.rightPanelEmpty__icon {
-  position: relative;
-  width: 22px;
-  height: 18px;
-  margin-bottom: 4px;
-}
-
-.rightPanelEmpty__icon::before,
-.rightPanelEmpty__icon::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--forge-muted), transparent 15%);
-  box-shadow: 0 6px 0 color-mix(in oklab, var(--forge-muted), transparent 30%);
-}
-
-.rightPanelEmpty__icon::before {
-  top: 2px;
-}
-
-.rightPanelEmpty__icon::after {
-  top: 14px;
-  width: 58%;
+.rightPanelEmpty svg {
+  width: 104px;
+  height: 104px;
+  color: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 0.62;
 }
 
 .rightPanelEmpty strong {
-  color: var(--forge-text);
-  font-size: 12px;
+  color: currentColor;
+  font-size: 18px;
   font-weight: 680;
-}
-
-.rightPanelEmpty p {
-  margin: 0;
-  color: var(--forge-muted);
-  font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
 .rightPanelPlan::-webkit-scrollbar {
