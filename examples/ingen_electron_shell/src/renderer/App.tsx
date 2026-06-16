@@ -168,6 +168,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".bottomControls button", padding: { left: 8, right: 8, top: 6, bottom: 6 } },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
+  { selector: ".widgetSessionTabs", padding: { left: 8, right: 8, top: 8, bottom: 2 } },
   { selector: ".widgetTranscriptTab", padding: { left: 8, right: 8, top: 14, bottom: 14 } },
   /* Generous top margin: the menu opens upward and its frame/shadow can sit
      above the region computed mid open-animation, which clipped its top edge. */
