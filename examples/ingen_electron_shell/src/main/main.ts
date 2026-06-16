@@ -12197,7 +12197,7 @@ function sanitizeWidgetHitRegions(value: unknown, window: BrowserWindow): Electr
     }
     regions.push({ x: left, y: top, width: right - left, height: bottom - top });
   }
-  return regions.slice(0, 12);
+  return regions.slice(0, 16);
 }
 
 function applyNativeWidgetWindowShape(window: BrowserWindow, regions: Electron.Rectangle[]): void {

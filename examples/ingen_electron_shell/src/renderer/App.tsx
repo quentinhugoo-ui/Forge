@@ -683,6 +683,8 @@ export function App() {
 
     let animationFrame = 0;
     let armTimer = 0;
+    let lastRegionsKey = "";
+    let followBudget = 0;
     const hitRegionsReadyAt = performance.now() + WIDGET_NATIVE_SHRINK_LEAD_MS + 120;
     void setWidgetClickThrough?.(false);
     void setWidgetHitRegions([]);
@@ -700,10 +702,31 @@ export function App() {
       if (animationFrame !== 0) {
         return;
       }
-      animationFrame = window.requestAnimationFrame(() => {
+      // A fresh trigger gets a budget of follow-up frames so the shape can track
+      // an in-flight animation (drawer slide ≈ 340ms ≈ 24 frames) without ever
+      // looping forever if some target never settles.
+      followBudget = 48;
+      let stableFrames = 0;
+      animationFrame = window.requestAnimationFrame(function syncRegions() {
         animationFrame = 0;
         const regions = readWidgetHitRegions();
-        void setWidgetHitRegions(regions);
+        const key = JSON.stringify(regions);
+        if (key !== lastRegionsKey) {
+          lastRegionsKey = key;
+          void setWidgetHitRegions(regions);
+          stableFrames = 0;
+        } else {
+          stableFrames += 1;
+        }
+        // The native window is clipped to these rects via setShape, so while an
+        // element is still animating (e.g. the session drawer sliding open) the
+        // layout keeps changing frame to frame. Keep re-reading until it holds
+        // still for a few frames (or the budget runs out) — otherwise the panel
+        // stays cropped to a stale, mid-slide frame.
+        followBudget -= 1;
+        if (followBudget > 0 && stableFrames < 3) {
+          animationFrame = window.requestAnimationFrame(syncRegions);
+        }
       });
     };
 
