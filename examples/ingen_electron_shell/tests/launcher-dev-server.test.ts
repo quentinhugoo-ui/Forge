@@ -10,6 +10,7 @@ describe("desktop launcher Vite dev server fast path", () => {
   it("defaults the desktop shortcut to a renderer dev server while keeping stable mode opt-out", () => {
     expect(launcherSource).toContain("setlocal EnableExtensions EnableDelayedExpansion");
     expect(launcherSource).toContain("set FORGE_ELECTRON_VITE_SERVER_SCRIPT=%~dp0scripts\\ensure-vite-dev-server.ps1");
+    expect(launcherSource).toContain("set VITE_DEV_SERVER_URL_FILE=C:\\tmp\\ingen-vite-%WORKSPACE_BUILD_ID%.url");
     expect(launcherSource).toContain("set DESKTOP_DEV_SERVER=1");
     expect(launcherSource).toContain('if "%FORGE_ELECTRON_DESKTOP_STABLE%"=="1" set DESKTOP_DEV_SERVER=0');
     expect(launcherSource).toContain('if "%FORGE_ELECTRON_DESKTOP_DEV_SERVER%"=="0" set DESKTOP_DEV_SERVER=0');
@@ -31,6 +32,8 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).toContain("Ensuring Vite renderer dev server");
     expect(launcherSource).toContain("-File \"%FORGE_ELECTRON_VITE_SERVER_SCRIPT%\"");
     expect(launcherSource).toContain("-WorkspaceBuildId \"%WORKSPACE_BUILD_ID%\"");
+    expect(launcherSource).toContain("-UrlPath \"%VITE_DEV_SERVER_URL_FILE%\"");
+    expect(launcherSource).toContain('set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"');
     expect(launcherSource).toContain("Vite renderer dev server ready: !VITE_DEV_SERVER_URL!");
     expect(launcherSource).toContain("Using Vite renderer dev server");
     expect(mainSource).toContain("process.env.VITE_DEV_SERVER_URL");
@@ -53,7 +56,10 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(viteServerSource).toContain("System.Diagnostics.ProcessStartInfo");
     expect(viteServerSource).toContain("where.exe node");
     expect(viteServerSource).toContain("$startInfo.CreateNoWindow = $true");
-    expect(viteServerSource).toContain("Write-Output \"http://127.0.0.1:$selectedPort\"");
+    expect(viteServerSource).toContain("function Emit-DevServerUrl");
+    expect(viteServerSource).toContain("Set-Content -LiteralPath $UrlPath -Value $url -Encoding ASCII");
+    expect(viteServerSource).toContain("[Console]::Out.WriteLine($url)");
+    expect(viteServerSource).toContain("Vite renderer dev server ready: $url.");
     expect(viteServerSource).toContain("Vite dev server did not become ready");
   });
 });

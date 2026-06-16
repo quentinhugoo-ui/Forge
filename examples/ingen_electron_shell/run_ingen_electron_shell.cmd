@@ -22,6 +22,7 @@ set FORGE_ELECTRON_VITE_SERVER_SCRIPT=%~dp0scripts\ensure-vite-dev-server.ps1
 for /f %%H in ('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\').ToLowerInvariant(); $bytes = [Text.Encoding]::UTF8.GetBytes($root); $sha = [Security.Cryptography.SHA256]::Create(); $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').Substring(0, 12).ToLowerInvariant(); $sha.Dispose(); Write-Output $hash"') do set WORKSPACE_BUILD_ID=%%H
 if "%WORKSPACE_BUILD_ID%"=="" set WORKSPACE_BUILD_ID=default
 set BUILD_LOCK=C:\tmp\ingen-electron-launch-build-%WORKSPACE_BUILD_ID%.lock
+set VITE_DEV_SERVER_URL_FILE=C:\tmp\ingen-vite-%WORKSPACE_BUILD_ID%.url
 if not "%FORGE_ELECTRON_BUILD_WIDGET%"=="0" if exist "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" (
   start "" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Sta -File "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" -LogPath "%LOG%" -ElectronPath "%FORGE_ELECTRON_EXE%" -ShellRoot "%~dp0" -BuildLockPath "%BUILD_LOCK%"
 )
@@ -151,7 +152,11 @@ if "%NEED_ELECTRON_REBUILD%"=="1" (
 
 if "%DESKTOP_DEV_SERVER%"=="1" if not "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" if exist "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" (
   echo Ensuring Vite renderer dev server... >> "%LOG%"
-  for /f "usebackq delims=" %%U in (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0" -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%"`) do set VITE_DEV_SERVER_URL=%%U
+  if exist "%VITE_DEV_SERVER_URL_FILE%" del /Q "%VITE_DEV_SERVER_URL_FILE%" 2>nul
+  for /f "usebackq delims=" %%U in (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%FORGE_ELECTRON_VITE_SERVER_SCRIPT%" -ShellRoot "%~dp0" -LogPath "%LOG%" -WorkspaceBuildId "%WORKSPACE_BUILD_ID%" -UrlPath "%VITE_DEV_SERVER_URL_FILE%"`) do set VITE_DEV_SERVER_URL=%%U
+  if "!VITE_DEV_SERVER_URL!"=="" if exist "%VITE_DEV_SERVER_URL_FILE%" (
+    set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"
+  )
   if not "!VITE_DEV_SERVER_URL!"=="" (
     echo Vite renderer dev server ready: !VITE_DEV_SERVER_URL! >> "%LOG%"
     set NEED_RENDERER_REBUILD=0

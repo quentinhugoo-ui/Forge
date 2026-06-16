@@ -6,7 +6,9 @@ param(
   [string]$LogPath,
 
   [Parameter(Mandatory = $true)]
-  [string]$WorkspaceBuildId
+  [string]$WorkspaceBuildId,
+
+  [string]$UrlPath = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -20,6 +22,19 @@ function Add-LaunchLog {
 }
 
 Add-LaunchLog "Vite dev server helper invoked for $ShellRoot."
+
+function Emit-DevServerUrl {
+  param([int]$Port)
+  $url = "http://127.0.0.1:$Port"
+  Add-LaunchLog "Vite renderer dev server ready: $url."
+  if ($UrlPath.Length -gt 0) {
+    try {
+      Set-Content -LiteralPath $UrlPath -Value $url -Encoding ASCII -ErrorAction Stop
+    } catch {
+    }
+  }
+  [Console]::Out.WriteLine($url)
+}
 
 function Test-DevServer {
   param([int]$Port)
@@ -79,7 +94,7 @@ $selectedPort = $null
 for ($offset = 0; $offset -lt 80; $offset += 1) {
   $port = $preferredPort + $offset
   if (Test-DevServer $port) {
-    Write-Output "http://127.0.0.1:$port"
+    Emit-DevServerUrl $port
     exit 0
   }
   if (-not (Test-PortOpen $port)) {
@@ -124,7 +139,7 @@ Add-LaunchLog "Vite dev server process started: pid=$($process.Id)."
 $deadline = (Get-Date).AddSeconds(45)
 while ((Get-Date) -lt $deadline) {
   if (Test-DevServer $selectedPort) {
-    Write-Output "http://127.0.0.1:$selectedPort"
+    Emit-DevServerUrl $selectedPort
     exit 0
   }
   Start-Sleep -Milliseconds 350
