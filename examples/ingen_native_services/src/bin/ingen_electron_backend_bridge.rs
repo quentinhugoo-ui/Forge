@@ -1699,12 +1699,7 @@ fn stage_banger_gltf_primitive(
         .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing POSITION accessor"))?
         as usize;
     let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
-    if position.component_type != 5126 || position.accessor_type != "VEC3" {
-        return Err(format!(
-            "mesh {mesh_index} primitive {primitive_index} POSITION must be FLOAT VEC3, got {} {}",
-            position.component_type, position.accessor_type
-        ));
-    }
+    banger_maps_float_vec3_accessor_values(&position, "POSITION")?;
     let normal_accessor = attributes.get("NORMAL").and_then(Value::as_u64).map(|value| value as usize);
     let texcoord0_accessor = attributes.get("TEXCOORD_0").and_then(Value::as_u64).map(|value| value as usize);
     let normals = match normal_accessor {
@@ -1788,32 +1783,91 @@ fn stage_banger_gltf_primitive(
 }
 
 fn banger_maps_float_vec3_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 3]>, String> {
-    if stage.component_type != 5126 || stage.accessor_type != "VEC3" {
-        return Err(format!("{semantic} must be FLOAT VEC3, got {} {}", stage.component_type, stage.accessor_type));
+    if stage.accessor_type != "VEC3" {
+        return Err(format!("{semantic} must be VEC3, got {} {}", stage.component_type, stage.accessor_type));
     }
-    Ok(stage
-        .bytes
-        .chunks_exact(12)
-        .map(|chunk| [
-            f32::from_le_bytes(chunk[0..4].try_into().expect("vec3 x bytes")),
-            f32::from_le_bytes(chunk[4..8].try_into().expect("vec3 y bytes")),
-            f32::from_le_bytes(chunk[8..12].try_into().expect("vec3 z bytes")),
-        ])
+    let values = banger_maps_accessor_f32_values(stage, semantic, 3)?;
+    Ok(values
+        .chunks_exact(3)
+        .map(|chunk| {
+            let vec3 = [chunk[0], chunk[1], chunk[2]];
+            if semantic == "NORMAL" {
+                banger_maps_normalize_vec3(vec3)
+            } else {
+                vec3
+            }
+        })
         .collect())
 }
 
 fn banger_maps_float_vec2_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 2]>, String> {
-    if stage.component_type != 5126 || stage.accessor_type != "VEC2" {
-        return Err(format!("{semantic} must be FLOAT VEC2, got {} {}", stage.component_type, stage.accessor_type));
+    if stage.accessor_type != "VEC2" {
+        return Err(format!("{semantic} must be VEC2, got {} {}", stage.component_type, stage.accessor_type));
     }
-    Ok(stage
-        .bytes
-        .chunks_exact(8)
-        .map(|chunk| [
-            f32::from_le_bytes(chunk[0..4].try_into().expect("vec2 x bytes")),
-            f32::from_le_bytes(chunk[4..8].try_into().expect("vec2 y bytes")),
-        ])
-        .collect())
+    let values = banger_maps_accessor_f32_values(stage, semantic, 2)?;
+    Ok(values.chunks_exact(2).map(|chunk| [chunk[0], chunk[1]]).collect())
+}
+
+fn banger_maps_accessor_f32_values(
+    stage: &BangerGltfAccessorStage,
+    semantic: &str,
+    component_count: usize,
+) -> Result<Vec<f32>, String> {
+    let component_size = banger_gltf_component_size(stage.component_type)?;
+    let element_size = component_size * component_count;
+    let expected_len = stage.count * element_size;
+    if stage.bytes.len() != expected_len {
+        return Err(format!(
+            "{semantic} accessor byte length {} does not match count {} * element size {}",
+            stage.bytes.len(),
+            stage.count,
+            element_size
+        ));
+    }
+    let mut values = Vec::with_capacity(stage.count * component_count);
+    for element in stage.bytes.chunks_exact(element_size) {
+        for component in 0..component_count {
+            let offset = component * component_size;
+            values.push(banger_maps_component_to_f32(
+                &element[offset..offset + component_size],
+                stage.component_type,
+                stage.normalized,
+            )?);
+        }
+    }
+    Ok(values)
+}
+
+fn banger_maps_component_to_f32(bytes: &[u8], component_type: u32, normalized: bool) -> Result<f32, String> {
+    match component_type {
+        5120 => {
+            let value = i8::from_le_bytes(bytes.try_into().expect("i8 accessor component")) as f32;
+            Ok(if normalized { (value / 127.0).max(-1.0) } else { value })
+        }
+        5121 => {
+            let value = u8::from_le_bytes(bytes.try_into().expect("u8 accessor component")) as f32;
+            Ok(if normalized { value / 255.0 } else { value })
+        }
+        5122 => {
+            let value = i16::from_le_bytes(bytes.try_into().expect("i16 accessor component")) as f32;
+            Ok(if normalized { (value / 32767.0).max(-1.0) } else { value })
+        }
+        5123 => {
+            let value = u16::from_le_bytes(bytes.try_into().expect("u16 accessor component")) as f32;
+            Ok(if normalized { value / 65535.0 } else { value })
+        }
+        5126 => Ok(f32::from_le_bytes(bytes.try_into().expect("f32 accessor component"))),
+        other => Err(format!("unsupported {other} component type for float staging")),
+    }
+}
+
+fn banger_maps_normalize_vec3(value: [f32; 3]) -> [f32; 3] {
+    let len = (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt();
+    if len > f32::EPSILON {
+        [value[0] / len, value[1] / len, value[2] / len]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
 }
 
 fn banger_maps_engine_vertex_buffer_bytes(
@@ -1877,7 +1931,7 @@ fn banger_maps_unknown_gltf_format_support() -> BangerMapsGltfFormatSupport {
 fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport {
     let extensions_used = banger_gltf_string_array(gltf, "extensionsUsed");
     let extensions_required = banger_gltf_string_array(gltf, "extensionsRequired");
-    let supported_extensions = ["KHR_materials_unlit"];
+    let supported_extensions = ["KHR_materials_unlit", "KHR_mesh_quantization"];
     let unsupported_used_extensions = extensions_used
         .iter()
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
@@ -1888,7 +1942,7 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let compression_blocker = ["KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"]
+    let compression_blocker = ["KHR_draco_mesh_compression", "EXT_meshopt_compression"]
         .iter()
         .find(|extension| {
             extensions_used.iter().any(|item| item == **extension)
@@ -1897,7 +1951,6 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         .map(|extension| match *extension {
             "KHR_draco_mesh_compression" => "KHR_draco_mesh_compression decode is required before native vertex/index upload".to_string(),
             "EXT_meshopt_compression" => "EXT_meshopt_compression decode is required before native vertex/index upload".to_string(),
-            "KHR_mesh_quantization" => "KHR_mesh_quantization dequantization is required before float32 POSITION upload".to_string(),
             _ => format!("{extension} support pending before native upload"),
         });
     BangerMapsGltfFormatSupport {
@@ -2037,6 +2090,7 @@ struct BangerGltfAccessorStage {
     bytes: Vec<u8>,
     count: usize,
     component_type: u32,
+    normalized: bool,
     accessor_type: String,
 }
 
@@ -2059,6 +2113,7 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
         .get("componentType")
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("accessor {accessor_index} missing componentType"))? as u32;
+    let normalized = accessor.get("normalized").and_then(Value::as_bool).unwrap_or(false);
     let count = accessor
         .get("count")
         .and_then(Value::as_u64)
@@ -2095,6 +2150,7 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
         bytes,
         count,
         component_type,
+        normalized,
         accessor_type,
     })
 }
@@ -2182,11 +2238,8 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
                 .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing POSITION accessor"))?
                 as usize;
             let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
-            if position.component_type != 5126 || position.accessor_type != "VEC3" {
-                return Err(format!(
-                    "mesh {mesh_index} primitive {primitive_index} POSITION must be FLOAT VEC3 before wgpu upload"
-                ));
-            }
+            banger_maps_float_vec3_accessor_values(&position, "POSITION")
+                .map_err(|error| format!("mesh {mesh_index} primitive {primitive_index} {error}"))?;
             let normal_accessor = attributes.get("NORMAL").and_then(Value::as_u64).map(|value| value as usize);
             let texcoord0_accessor = attributes.get("TEXCOORD_0").and_then(Value::as_u64).map(|value| value as usize);
             let normals = match normal_accessor {
@@ -3649,12 +3702,7 @@ fn banger_maps_render_mesh_from_primitive(
         .and_then(Value::as_u64)
         .ok_or_else(|| "primitive missing POSITION accessor".to_string())? as usize;
     let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
-    if position.component_type != 5126 || position.accessor_type != "VEC3" {
-        return Err(format!(
-            "render primitive POSITION must be FLOAT VEC3, got {} {}",
-            position.component_type, position.accessor_type
-        ));
-    }
+    banger_maps_float_vec3_accessor_values(&position, "POSITION")?;
     if position.count > u16::MAX as usize {
         return Err(format!("render primitive has {} vertices; current first draw path is u16", position.count));
     }
@@ -3663,7 +3711,7 @@ fn banger_maps_render_mesh_from_primitive(
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
-    let vertex_bytes = banger_maps_position_bytes_to_render_vertices(&position.bytes, material_color)?;
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(&position, material_color)?;
     let index_bytes = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
         Some(index_accessor) => banger_maps_u16_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
         None => banger_maps_generated_u16_index_bytes(position.count)?,
@@ -3677,21 +3725,11 @@ fn banger_maps_render_mesh_from_primitive(
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_position_bytes_to_render_vertices(
-    position_bytes: &[u8],
+fn banger_maps_position_accessor_to_render_vertices(
+    position: &BangerGltfAccessorStage,
     material_color: [f32; 4],
 ) -> Result<Vec<u8>, String> {
-    if position_bytes.len() % 12 != 0 {
-        return Err("POSITION byte length is not a multiple of Float32x3".to_string());
-    }
-    let mut positions = Vec::with_capacity(position_bytes.len() / 12);
-    for chunk in position_bytes.chunks_exact(12) {
-        positions.push([
-            f32::from_le_bytes(chunk[0..4].try_into().expect("position x bytes")),
-            f32::from_le_bytes(chunk[4..8].try_into().expect("position y bytes")),
-            f32::from_le_bytes(chunk[8..12].try_into().expect("position z bytes")),
-        ]);
-    }
+    let positions = banger_maps_float_vec3_accessor_values(position, "POSITION")?;
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     for position in &positions {
@@ -4393,6 +4431,54 @@ mod tests {
     }
 
     #[test]
+    fn stages_khr_mesh_quantization_into_native_engine_vertices() {
+        let glb = test_quantized_glb_bytes();
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let support = banger_maps_gltf_format_support(&decoded.gltf_value);
+        assert_eq!(support.extensions_used, vec!["KHR_mesh_quantization".to_string()]);
+        assert_eq!(support.extensions_required, vec!["KHR_mesh_quantization".to_string()]);
+        assert!(support.unsupported_required_extensions.is_empty());
+        assert!(support.compression_blocker.is_none());
+
+        let (primitives, materials, textures) = stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+        assert_eq!(primitives.len(), 1);
+        assert_eq!(primitives[0].position_accessor, 0);
+        assert_eq!(primitives[0].normal_accessor, Some(1));
+        assert_eq!(primitives[0].texcoord0_accessor, Some(2));
+        assert_eq!(primitives[0].source_position_buffer_byte_count, 18);
+        assert_eq!(primitives[0].vertex_buffer_byte_count, 3 * 48);
+        assert_eq!(primitives[0].index_buffer_byte_count, 6);
+        assert_eq!(primitives[0].vertex_stride_bytes, 48);
+        assert_eq!(materials[0].base_color_factor, [0.25, 0.5, 0.75, 1.0]);
+        assert!(textures.is_empty());
+
+        let position = banger_gltf_accessor_stage(&decoded.gltf_value, decoded.bin_chunk, 0).unwrap();
+        let normal = banger_gltf_accessor_stage(&decoded.gltf_value, decoded.bin_chunk, 1).unwrap();
+        let texcoord = banger_gltf_accessor_stage(&decoded.gltf_value, decoded.bin_chunk, 2).unwrap();
+        let normals = banger_maps_float_vec3_accessor_values(&normal, "NORMAL").unwrap();
+        let texcoords = banger_maps_float_vec2_accessor_values(&texcoord, "TEXCOORD_0").unwrap();
+        let vertex_bytes = banger_maps_engine_vertex_buffer_bytes(
+            &position,
+            Some(&normals),
+            Some(&texcoords),
+            [0.25, 0.5, 0.75, 1.0],
+        )
+        .unwrap();
+        assert_eq!(vertex_bytes.len(), 3 * 48);
+        assert!((test_vertex_f32(&vertex_bytes, 12) - 1.0).abs() < 0.0001);
+        assert!((test_vertex_f32(&vertex_bytes, 25) - 1.0).abs() < 0.0001);
+        assert!((test_vertex_f32(&vertex_bytes, 4) - 1.0).abs() < 0.0001);
+        assert!((test_vertex_f32(&vertex_bytes, 18) - 1.0).abs() < 0.0001);
+
+        #[cfg(target_os = "windows")]
+        {
+            let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+            assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+            assert_eq!(mesh.index_bytes.len(), 6);
+        }
+    }
+
+    #[test]
     fn classifies_google_tiles_entitlement_region_errors() {
         let message = "root status 403: satellite tiles and 3D tiles are not available for your account and region";
         assert_eq!(
@@ -4555,6 +4641,48 @@ mod tests {
         push_u32_le(&mut glb, 0x004E4942);
         glb.extend_from_slice(&bin_chunk);
         glb
+    }
+
+    fn test_quantized_glb_bytes() -> Vec<u8> {
+        let json = br#"{"asset":{"version":"2.0"},"extensionsUsed":["KHR_mesh_quantization"],"extensionsRequired":["KHR_mesh_quantization"],"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.25,0.5,0.75,1.0],"metallicFactor":0.0,"roughnessFactor":0.6}}],"accessors":[{"bufferView":0,"componentType":5123,"count":3,"type":"VEC3","normalized":true},{"bufferView":1,"componentType":5120,"count":3,"type":"VEC3","normalized":true},{"bufferView":2,"componentType":5121,"count":3,"type":"VEC2","normalized":true},{"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":18,"target":34962},{"buffer":0,"byteOffset":20,"byteLength":12,"byteStride":4,"target":34962},{"buffer":0,"byteOffset":32,"byteLength":6,"target":34962},{"buffer":0,"byteOffset":40,"byteLength":6,"target":34963}],"buffers":[{"byteLength":48}]}"#;
+        let mut json_chunk = json.to_vec();
+        while json_chunk.len() % 4 != 0 {
+            json_chunk.push(0x20);
+        }
+        let mut bin_chunk = Vec::new();
+        for value in [0u16, 0, 0, u16::MAX, 0, 0, 0, u16::MAX, 0] {
+            bin_chunk.extend_from_slice(&value.to_le_bytes());
+        }
+        bin_chunk.extend_from_slice(&[0, 0]);
+        for _ in 0..3 {
+            bin_chunk.extend_from_slice(&[0, 127, 0, 0]);
+        }
+        bin_chunk.extend_from_slice(&[0, 0, 255, 0, 0, 255]);
+        bin_chunk.extend_from_slice(&[0, 0]);
+        for index in [0u16, 1, 2] {
+            bin_chunk.extend_from_slice(&index.to_le_bytes());
+        }
+        while bin_chunk.len() % 4 != 0 {
+            bin_chunk.push(0);
+        }
+        assert_eq!(bin_chunk.len(), 48);
+        let length = 12 + 8 + json_chunk.len() + 8 + bin_chunk.len();
+        let mut glb = Vec::with_capacity(length);
+        glb.extend_from_slice(b"glTF");
+        push_u32_le(&mut glb, 2);
+        push_u32_le(&mut glb, length as u32);
+        push_u32_le(&mut glb, json_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x4E4F534A);
+        glb.extend_from_slice(&json_chunk);
+        push_u32_le(&mut glb, bin_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x004E4942);
+        glb.extend_from_slice(&bin_chunk);
+        glb
+    }
+
+    fn test_vertex_f32(bytes: &[u8], f32_index: usize) -> f32 {
+        let offset = f32_index * 4;
+        f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("test vertex f32 bytes"))
     }
 
     fn test_b3dm_bytes() -> Vec<u8> {
