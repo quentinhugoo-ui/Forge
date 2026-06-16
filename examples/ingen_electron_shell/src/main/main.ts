@@ -15502,14 +15502,26 @@ function sidebarSessionFromArchive(session: ChatArchiveSession): SidebarSessionI
 }
 
 function syncLocalChatSessionsFromArchive(): void {
-  const existingIds = new Set(localChatSessions.map((session) => session.sessionId));
+  const existingById = new Map(localChatSessions.filter((session) => session.sessionId).map((session) => [session.sessionId, session]));
+  const archiveIds = new Set(chatArchiveSessions.keys());
   const restored = Array.from(chatArchiveSessions.values())
-    .filter((session) => !session.archived && !existingIds.has(session.sessionId))
+    .filter((session) => !session.archived)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .map(sidebarSessionFromArchive);
-  if (restored.length > 0) {
-    localChatSessions.push(...restored);
-  }
+    .map((archiveSession) => {
+      const archivedItem = sidebarSessionFromArchive(archiveSession);
+      const existing = existingById.get(archiveSession.sessionId);
+      return existing
+        ? {
+            ...existing,
+            ...archivedItem,
+            pinned: existing.pinned,
+            working: existing.working,
+            automated: existing.automated
+          }
+        : archivedItem;
+    });
+  const transient = localChatSessions.filter((session) => !session.sessionId || !archiveIds.has(session.sessionId));
+  localChatSessions.splice(0, localChatSessions.length, ...restored, ...transient);
 }
 
 function restoreChatSessionToCanvas(sessionId: string): boolean {
@@ -16161,10 +16173,10 @@ function ensureAssistantPatternDemoSession(): void {
 }
 
 function backendSessionItems(): SidebarSessionItem[] {
+  ensureAssistantPatternDemoSession();
   if (chatArchiveLoaded) {
     syncLocalChatSessionsFromArchive();
   }
-  ensureAssistantPatternDemoSession();
   const dynamicSessionIds = new Set(localChatSessions.map((session) => session.sessionId));
   const sessions = rustBackend().sessions.map((session) => ({
     sessionId: session.sessionId,

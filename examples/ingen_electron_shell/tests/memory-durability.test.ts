@@ -53,6 +53,16 @@ describe("canonical memory durability", () => {
     expect(mainSource).toContain("function normalizeArchiveSessionAssets");
   });
 
+  it("projects canonical chat archive sessions ahead of demo sidebar rows", () => {
+    expect(mainSource).toContain("const archiveIds = new Set(chatArchiveSessions.keys())");
+    expect(mainSource).toContain(".sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))");
+    expect(mainSource).toContain("localChatSessions.splice(0, localChatSessions.length, ...restored, ...transient)");
+    expect(mainSource).toMatch(
+      /function backendSessionItems\(\): SidebarSessionItem\[]\s*\{\s*ensureAssistantPatternDemoSession\(\);\s*if \(chatArchiveLoaded\) \{\s*syncLocalChatSessionsFromArchive\(\);/
+    );
+    expect(mainSource).not.toContain("localChatSessions.push(...restored)");
+  });
+
   it("persists renderer Brain registries through the canonical main-process store", () => {
     expect(ipcContractSource).toContain("interface BrainCanonicalMemorySnapshot");
     expect(mainSource).toContain('return join(memoryRootPath(), "renderer-brain-memory.json")');
