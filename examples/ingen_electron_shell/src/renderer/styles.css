@@ -13065,8 +13065,7 @@ ol.assistantText__list li::before {
   text-transform: uppercase;
 }
 
-.rightPanelPlan,
-.rightPanelEmpty {
+.rightPanelPlan {
   min-height: 0;
   padding: 12px 14px 14px;
 }
@@ -13189,29 +13188,36 @@ ol.assistantText__list li::before {
 
 .rightPanelEmpty {
   display: grid;
+  min-height: 0;
+  place-items: start center;
+  padding: 86px 14px 14px;
+  overflow: hidden;
+}
+
+.rightPanelEmpty__content {
+  display: grid;
   gap: 2px;
+  align-content: center;
   place-items: center;
   width: min(260px, 100%);
   min-height: 210px;
-  margin: 48px auto 0;
   color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 14%);
   opacity: 0.58;
   text-align: center;
   pointer-events: none;
 }
 
-.rightPanelEmpty svg {
+.rightPanelEmpty__icon {
+  --toolbar-icon-size: 104px;
+
   width: 104px;
   height: 104px;
   color: currentColor;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 0.62;
+  background: currentColor;
+  opacity: 1;
 }
 
-.rightPanelEmpty strong {
+.rightPanelEmpty__content strong {
   color: currentColor;
   font-size: 18px;
   font-weight: 680;

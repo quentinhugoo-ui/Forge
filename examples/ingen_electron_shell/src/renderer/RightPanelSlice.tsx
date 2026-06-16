@@ -91,22 +91,6 @@ function planPanelStateFromText(sourceText: string): PlanPanelState {
   };
 }
 
-function EmptyPlanIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.2 5.9h11.6" />
-      <path d="M6.2 12h11.6" />
-      <path d="M6.2 18.1h11.6" />
-      <path d="M3.9 5.9h.08" />
-      <path d="M3.9 12h.08" />
-      <path d="M3.9 18.1h.08" />
-      <rect x="2.7" y="4.7" width="2.4" height="2.4" rx="0.65" />
-      <rect x="2.7" y="10.8" width="2.4" height="2.4" rx="0.65" />
-      <rect x="2.7" y="16.9" width="2.4" height="2.4" rx="0.65" />
-    </svg>
-  );
-}
-
 export function RightPanelSlice({ open, agentName = "Agent", planSourceText = "" }: RightPanelSliceProps) {
   const plan = useMemo(() => planPanelStateFromText(planSourceText), [planSourceText]);
   const assistantLabel = agentName.trim() || "Agent";
@@ -169,8 +153,10 @@ export function RightPanelSlice({ open, agentName = "Agent", planSourceText = ""
           </div>
         ) : (
           <div className="rightPanelEmpty" role="status">
-            <EmptyPlanIcon />
-            <strong>No plan yet</strong>
+            <div className="rightPanelEmpty__content">
+              <span className="rightPanelEmpty__icon shellIcon shellIcon--nav-plan" aria-hidden="true" />
+              <strong>No plan yet</strong>
+            </div>
           </div>
         )}
       </div>
