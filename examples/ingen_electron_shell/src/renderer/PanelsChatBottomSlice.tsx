@@ -3516,21 +3516,19 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
 
 function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: AssistantSearchArchiveResult; messageId: string; blockIndex: number }) {
   const resultCount = result.returnedCount || String(result.hits.length);
+  const resultCountNumber = Number.parseInt(resultCount, 10);
+  const resultLabel = `${resultCount} ${resultCountNumber === 1 ? "match" : "matches"}`;
   const terms = searchArchiveHighlightTerms(result.query);
   return (
-    <section className="searchArchiveResultCard" aria-label="Search Archive result chunks">
-      <header className="searchArchiveResultCard__header">
-        <span className="searchArchiveResultCard__icon" aria-hidden="true">
-          <Search />
-        </span>
-        <span className="searchArchiveResultCard__title">Search Archive</span>
-        <span className="searchArchiveResultCard__meta">{resultCount} chunks</span>
-      </header>
-      {terms.length > 0 ? (
-        <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
-          {terms.map((term) => <span key={`${messageId}-search-term-${blockIndex}-${term}`}>{term}</span>)}
-        </div>
-      ) : null}
+    <section className="searchArchiveResultCard" aria-label="Search Archive result matches">
+      <div className="searchArchiveResultCard__summary">
+        {terms.length > 0 ? (
+          <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
+            {terms.map((term) => <span key={`${messageId}-search-term-${blockIndex}-${term}`}>{term}</span>)}
+          </div>
+        ) : null}
+        <span className="searchArchiveResultCard__meta">{resultLabel}</span>
+      </div>
       <ol className="searchArchiveResultCard__hits">
         {result.hits.map((hit, hitIndex) => (
           <li
@@ -3544,7 +3542,7 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
             </div>
             <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${hitIndex}`)}</p>
             <div className="searchArchiveResultCard__hitBottom">
-              <span>chunk {hit.rank || hitIndex + 1}</span>
+              <span>match {hit.rank || hitIndex + 1}</span>
               <span>{hit.matchedField || "message_text"}</span>
             </div>
           </li>
