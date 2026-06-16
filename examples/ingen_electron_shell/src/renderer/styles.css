@@ -8419,7 +8419,7 @@ ol.assistantText__list li::before {
   padding: 6px;
   overflow: hidden;
   color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-chat-bg), #000 10%);
+  background: var(--forge-sidebar-bg);
   border: 1px solid color-mix(in oklab, var(--forge-text), transparent 86%);
   border-radius: 6px;
   box-shadow:
