@@ -612,6 +612,9 @@ struct BangerNativeScenePipeline {
     _material_buffer: Option<wgpu::Buffer>,
     _texture_staging_buffers: Vec<wgpu::Buffer>,
     _residency_feedback_buffer: wgpu::Buffer,
+    _shared_residency_page_table_buffer: wgpu::Buffer,
+    _shared_residency_compacted_feedback_buffer: wgpu::Buffer,
+    _shared_residency_budget_buffer: wgpu::Buffer,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -623,6 +626,8 @@ struct BangerNativeScenePipeline {
     _meshlet_cluster_cull_param_hash: String,
     _meshlet_cluster_cull_feedback_hash: String,
     _residency_feedback_hash: String,
+    _shared_residency_page_table_hash: String,
+    _shared_residency_compacted_feedback_hash: String,
     scene_mesh_hash: String,
     scene_graph_hash: String,
     instance_buffer_hash: String,
@@ -2995,6 +3000,9 @@ struct BangerNativeSceneGpuResource {
     material_buffer: Option<wgpu::Buffer>,
     texture_staging_buffers: Vec<wgpu::Buffer>,
     residency_feedback_buffer: wgpu::Buffer,
+    shared_residency_page_table_buffer: wgpu::Buffer,
+    shared_residency_compacted_feedback_buffer: wgpu::Buffer,
+    shared_residency_budget_buffer: wgpu::Buffer,
     vertex_byte_count: usize,
     index_byte_count: usize,
     instance_byte_count: usize,
@@ -3009,6 +3017,8 @@ struct BangerNativeSceneGpuResource {
     meshlet_cluster_cull_param_hash: String,
     meshlet_cluster_cull_feedback_hash: String,
     residency_feedback_hash: String,
+    shared_residency_page_table_hash: String,
+    shared_residency_compacted_feedback_hash: String,
     resource_hash: String,
 }
 
@@ -4602,6 +4612,9 @@ fn create_banger_first_scene_pipeline(
         _material_buffer: gpu_resource.material_buffer,
         _texture_staging_buffers: gpu_resource.texture_staging_buffers,
         _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
+        _shared_residency_page_table_buffer: gpu_resource.shared_residency_page_table_buffer,
+        _shared_residency_compacted_feedback_buffer: gpu_resource.shared_residency_compacted_feedback_buffer,
+        _shared_residency_budget_buffer: gpu_resource.shared_residency_budget_buffer,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -4613,6 +4626,8 @@ fn create_banger_first_scene_pipeline(
         _meshlet_cluster_cull_param_hash: gpu_resource.meshlet_cluster_cull_param_hash,
         _meshlet_cluster_cull_feedback_hash: gpu_resource.meshlet_cluster_cull_feedback_hash,
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
+        _shared_residency_page_table_hash: gpu_resource.shared_residency_page_table_hash,
+        _shared_residency_compacted_feedback_hash: gpu_resource.shared_residency_compacted_feedback_hash,
         scene_mesh_hash,
         scene_graph_hash,
         instance_buffer_hash,
@@ -4748,6 +4763,8 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         .as_ref()
         .map(|bytes| sha256_hex(bytes))
         .unwrap_or_else(|| sha256_hex(b"no-material-buffer"));
+    let material_byte_count = material_bytes.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+    let texture_byte_count = texture_staging_bytes.iter().map(Vec::len).sum::<usize>();
     let texture_hash = sha256_hex(
         texture_staging_bytes
             .iter()
@@ -4783,6 +4800,30 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         &texture_hash,
     );
     let residency_feedback_hash = sha256_hex(&residency_feedback_bytes);
+    let shared_residency_page_table_bytes = banger_shared_residency_page_table_bytes(
+        source,
+        selected_tile_id.as_deref(),
+        vertex_bytes.len() + index_bytes.len() + meshlet_cluster_bytes.len(),
+        material_byte_count,
+        texture_byte_count,
+        residency_feedback_bytes.len() + meshlet_cluster_cull_feedback_bytes.len(),
+    );
+    let shared_residency_page_table_hash = sha256_hex(&shared_residency_page_table_bytes);
+    let shared_residency_compacted_feedback_bytes =
+        banger_shared_residency_compacted_feedback_bytes(&shared_residency_page_table_bytes);
+    let shared_residency_compacted_feedback_hash =
+        sha256_hex(&shared_residency_compacted_feedback_bytes);
+    let shared_residency_budget_bytes = banger_shared_residency_budget_bytes(
+        shared_residency_page_table_bytes.len() / BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE,
+        512 * 1024 * 1024,
+        vertex_bytes.len()
+            + index_bytes.len()
+            + meshlet_cluster_bytes.len()
+            + material_byte_count
+            + texture_byte_count
+            + residency_feedback_bytes.len()
+            + meshlet_cluster_cull_feedback_bytes.len(),
+    );
     let vertex_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-scene-vertex-buffer",
@@ -4872,9 +4913,27 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         &residency_feedback_bytes,
     );
+    let shared_residency_page_table_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-shared-residency-page-table-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &shared_residency_page_table_bytes,
+    );
+    let shared_residency_compacted_feedback_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-shared-residency-compacted-feedback-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &shared_residency_compacted_feedback_bytes,
+    );
+    let shared_residency_budget_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-shared-residency-budget-buffer",
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        &shared_residency_budget_bytes,
+    );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}"
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}"
         )
             .as_bytes(),
     );
@@ -4898,6 +4957,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         material_buffer,
         texture_staging_buffers,
         residency_feedback_buffer,
+        shared_residency_page_table_buffer,
+        shared_residency_compacted_feedback_buffer,
+        shared_residency_budget_buffer,
         mesh_source: source,
         selected_tile_id,
         indirect_args_hash,
@@ -4906,6 +4968,8 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         meshlet_cluster_cull_param_hash,
         meshlet_cluster_cull_feedback_hash,
         residency_feedback_hash,
+        shared_residency_page_table_hash,
+        shared_residency_compacted_feedback_hash,
         resource_hash,
     }
 }
@@ -5231,6 +5295,165 @@ fn banger_maps_residency_feedback_bytes(
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+#[cfg(target_os = "windows")]
+const BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE: usize = 64;
+
+#[cfg(target_os = "windows")]
+const BANGER_SHARED_RESIDENCY_COMPACTED_FEEDBACK_STRIDE: usize = 32;
+
+#[cfg(target_os = "windows")]
+fn banger_shared_residency_page_table_bytes(
+    source: &str,
+    selected_tile_id: Option<&str>,
+    geometry_bytes: usize,
+    material_bytes: usize,
+    texture_bytes: usize,
+    feedback_bytes: usize,
+) -> Vec<u8> {
+    let source_hash = sha256_hex(source.as_bytes());
+    let selected_tile_hash = sha256_hex(selected_tile_id.unwrap_or("no-selected-maps-tile").as_bytes());
+    let mut physical_offset = 0u64;
+    let mut records = Vec::new();
+    for (kind, byte_count, priority, lru_frame) in [
+        ("nanite_geometry_page", geometry_bytes, 900u32, 0u32),
+        ("material_texture_page", material_bytes + texture_bytes, 700u32, 1u32),
+        ("renderer_feedback_page", feedback_bytes, 600u32, 2u32),
+    ] {
+        if byte_count == 0 {
+            continue;
+        }
+        records.extend_from_slice(&banger_shared_residency_page_record_bytes(
+            kind,
+            records.len() as u32,
+            byte_count as u64,
+            physical_offset,
+            priority,
+            lru_frame,
+            &source_hash,
+            &selected_tile_hash,
+        ));
+        physical_offset = physical_offset.saturating_add(banger_align_u64(byte_count as u64, 4096));
+    }
+    if records.is_empty() {
+        records.extend_from_slice(&banger_shared_residency_page_record_bytes(
+            "empty_residency_page",
+            0,
+            4096,
+            0,
+            1,
+            0,
+            &source_hash,
+            &selected_tile_hash,
+        ));
+    }
+    records
+}
+
+#[cfg(target_os = "windows")]
+fn banger_shared_residency_page_record_bytes(
+    kind: &str,
+    page_index: u32,
+    byte_count: u64,
+    physical_offset: u64,
+    priority: u32,
+    lru_frame: u32,
+    source_hash: &str,
+    selected_tile_hash: &str,
+) -> [u8; BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE] {
+    let kind_hash = sha256_hex(kind.as_bytes());
+    let page_hash = sha256_hex(
+        format!("{kind}:{page_index}:{byte_count}:{physical_offset}:{priority}:{lru_frame}")
+            .as_bytes(),
+    );
+    let mut bytes = [0u8; BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE];
+    for (slot, value) in [
+        0x52_53_44_59u32, // RSDY
+        1,
+        banger_hash_prefix_u32(&kind_hash),
+        page_index,
+        byte_count.min(u32::MAX as u64) as u32,
+        (byte_count >> 32) as u32,
+        physical_offset.min(u32::MAX as u64) as u32,
+        (physical_offset >> 32) as u32,
+        priority,
+        lru_frame,
+        1, // resident now; future eviction can flip this without changing layout.
+        banger_hash_prefix_u32(source_hash),
+        banger_hash_prefix_u32(selected_tile_hash),
+        banger_hash_prefix_u32(&page_hash),
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_shared_residency_compacted_feedback_bytes(page_table_bytes: &[u8]) -> Vec<u8> {
+    let mut compacted = Vec::with_capacity(
+        page_table_bytes.len() / BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE
+            * BANGER_SHARED_RESIDENCY_COMPACTED_FEEDBACK_STRIDE,
+    );
+    for record in page_table_bytes.chunks_exact(BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE) {
+        let page_index = u32::from_le_bytes(record[12..16].try_into().expect("page index"));
+        let byte_count_low = u32::from_le_bytes(record[16..20].try_into().expect("byte count"));
+        let priority = u32::from_le_bytes(record[32..36].try_into().expect("priority"));
+        let page_hash_prefix = u32::from_le_bytes(record[52..56].try_into().expect("page hash"));
+        for value in [
+            0x46_44_42_4Bu32, // FDBK
+            1,
+            page_index,
+            byte_count_low,
+            priority,
+            page_hash_prefix,
+            page_index.saturating_add(priority),
+            0,
+        ] {
+            compacted.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    compacted
+}
+
+#[cfg(target_os = "windows")]
+fn banger_shared_residency_budget_bytes(
+    virtual_page_count: usize,
+    budget_bytes: u64,
+    resident_bytes: usize,
+) -> [u8; 32] {
+    let pool_pressure_milli =
+        ((resident_bytes as u128 * 1000) / (budget_bytes.max(1) as u128)).min(u32::MAX as u128) as u32;
+    let mut bytes = [0u8; 32];
+    for (slot, value) in [
+        0x42_55_44_47u32, // BUDG
+        1,
+        virtual_page_count as u32,
+        budget_bytes.min(u32::MAX as u64) as u32,
+        (budget_bytes >> 32) as u32,
+        resident_bytes.min(u32::MAX as usize) as u32,
+        pool_pressure_milli,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_align_u64(value: u64, alignment: u64) -> u64 {
+    if alignment == 0 {
+        return value;
+    }
+    value.div_ceil(alignment) * alignment
 }
 
 #[cfg(target_os = "windows")]
@@ -7390,6 +7613,36 @@ mod tests {
         assert_eq!(u32::from_le_bytes(feedback[16..20].try_into().unwrap()), 42);
         assert_eq!(u32::from_le_bytes(feedback[20..24].try_into().unwrap()), 1);
         assert_ne!(u32::from_le_bytes(feedback[24..28].try_into().unwrap()), 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_shared_residency_page_table_and_compacted_feedback() {
+        let table = banger_shared_residency_page_table_bytes(
+            "banger_maps_3d_tiles_visible_tile_batch",
+            Some("tile_a,tile_b"),
+            8192,
+            256,
+            4096,
+            64,
+        );
+        assert_eq!(table.len(), 3 * BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(table[0..4].try_into().unwrap()), 0x52_53_44_59);
+        assert_eq!(u32::from_le_bytes(table[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(table[12..16].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(table[16..20].try_into().unwrap()), 8192);
+        assert_eq!(u32::from_le_bytes(table[32..36].try_into().unwrap()), 900);
+        let second_offset = BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE;
+        assert_eq!(u32::from_le_bytes(table[second_offset + 24..second_offset + 28].try_into().unwrap()), 8192);
+        let compacted = banger_shared_residency_compacted_feedback_bytes(&table);
+        assert_eq!(compacted.len(), 3 * BANGER_SHARED_RESIDENCY_COMPACTED_FEEDBACK_STRIDE);
+        assert_eq!(u32::from_le_bytes(compacted[0..4].try_into().unwrap()), 0x46_44_42_4B);
+        assert_eq!(u32::from_le_bytes(compacted[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(compacted[16..20].try_into().unwrap()), 900);
+        let budget = banger_shared_residency_budget_bytes(3, 512 * 1024 * 1024, 12 * 1024 * 1024);
+        assert_eq!(u32::from_le_bytes(budget[0..4].try_into().unwrap()), 0x42_55_44_47);
+        assert_eq!(u32::from_le_bytes(budget[8..12].try_into().unwrap()), 3);
+        assert_eq!(banger_align_u64(4097, 4096), 8192);
     }
 
     #[cfg(target_os = "windows")]
