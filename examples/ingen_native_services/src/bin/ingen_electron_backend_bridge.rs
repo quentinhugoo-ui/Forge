@@ -4587,18 +4587,23 @@ fn banger_maps_first_visible_tile_gpu_resource(
 ) -> Result<BangerNativeSceneGpuResource, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
     let maps_render_space_transform = banger_maps_render_space_transform();
-    let selected_tile_id = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
+    let selected_records = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
         .into_iter()
         .take(banger_maps_visible_tile_batch_limit())
+        .collect::<Vec<_>>();
+    let selected_tile_id = selected_records
+        .iter()
         .map(|record| record.tile_id.as_str())
         .collect::<Vec<_>>()
         .join(",");
+    let (material_bytes, texture_staging_bytes) =
+        banger_maps_material_texture_resources_for_records(&selected_records)?;
     let mesh = banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(&ingest)?;
     Ok(banger_native_scene_gpu_resource_from_mesh_bytes(
         device,
         mesh,
-        None,
-        Vec::new(),
+        material_bytes,
+        texture_staging_bytes,
         (!selected_tile_id.is_empty()).then_some(selected_tile_id),
     ))
 }
@@ -4700,6 +4705,43 @@ fn banger_maps_render_mesh_for_record(
         }),
         _ => Err(format!("render mesh unsupported container {}", record.container)),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_material_texture_resources_for_records(
+    records: &[&BangerMapsContentDecodeRecord],
+) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), String> {
+    let mut material_resource_bytes = Vec::new();
+    let mut texture_staging_bytes = Vec::new();
+    for record in records {
+        let bytes = fs::read(&record.cache_path)
+            .map_err(|error| format!("{} resource read failed: {error}", record.tile_id))?;
+        let (gltf_value, bin_chunk) = match record.container {
+            "b3dm" => {
+                let (_, glb_bytes) = decode_banger_b3dm(&bytes)?;
+                let decoded = decode_banger_glb_full(glb_bytes)?;
+                (decoded.gltf_value, decoded.bin_chunk)
+            }
+            "glb" => {
+                let decoded = decode_banger_glb_full(&bytes)?;
+                (decoded.gltf_value, decoded.bin_chunk)
+            }
+            _ => continue,
+        };
+        let (_, materials, textures) = stage_banger_gltf_payload(&gltf_value, bin_chunk)?;
+        if let Some(bytes) = banger_maps_material_resource_bytes(&materials) {
+            material_resource_bytes.extend_from_slice(&bytes);
+        }
+        texture_staging_bytes.extend(banger_maps_texture_staging_resource_bytes(
+            &gltf_value,
+            bin_chunk,
+            &textures,
+        )?);
+    }
+    Ok((
+        (!material_resource_bytes.is_empty()).then_some(material_resource_bytes),
+        texture_staging_bytes,
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -5910,6 +5952,15 @@ mod tests {
         assert_eq!(mesh.instance_bytes.len(), 80);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
+        let selected_records = banger_maps_visible_draw_records(
+            &projection,
+            banger_maps_render_space_transform(),
+        );
+        let (material_bytes, texture_staging_bytes) =
+            banger_maps_material_texture_resources_for_records(&selected_records).unwrap();
+        assert_eq!(material_bytes.unwrap().len(), 2 * 32);
+        assert_eq!(texture_staging_bytes.len(), 2);
+        assert_eq!(texture_staging_bytes[0], vec![137, 80, 78, 71]);
     }
 
     #[test]
