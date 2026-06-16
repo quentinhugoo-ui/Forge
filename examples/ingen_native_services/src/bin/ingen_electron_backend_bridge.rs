@@ -359,6 +359,7 @@ struct BangerMapsGpuStagingProjection {
     enabled: bool,
     staged_content_count: usize,
     failed_content_count: usize,
+    unsupported_extension_count: usize,
     primitive_count: usize,
     vertex_buffer_byte_count: usize,
     index_buffer_byte_count: usize,
@@ -379,6 +380,7 @@ struct BangerMapsGpuStageRecord {
     primitive_stages: Vec<BangerMapsGpuPrimitiveStage>,
     material_stages: Vec<BangerMapsMaterialStage>,
     texture_stages: Vec<BangerMapsTextureStage>,
+    format_support: BangerMapsGltfFormatSupport,
     error: Option<String>,
 }
 
@@ -428,6 +430,17 @@ struct BangerMapsTextureStage {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct BangerMapsGltfFormatSupport {
+    extensions_used: Vec<String>,
+    extensions_required: Vec<String>,
+    unsupported_used_extensions: Vec<String>,
+    unsupported_required_extensions: Vec<String>,
+    compression_blocker: Option<String>,
+    upload_policy: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct BangerB3dmHeaderProjection {
     version: u32,
     byte_length: u32,
@@ -470,6 +483,8 @@ struct BangerGltfSummaryProjection {
     buffer_count: usize,
     extensions_used_count: usize,
     extensions_required_count: usize,
+    extensions_used: Vec<String>,
+    extensions_required: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -897,7 +912,7 @@ fn banger_maps_root_ingest(
                     gpu_staging: empty_banger_maps_gpu_staging(),
                     verifier: banger_maps_root_ingest_verifier(),
                     error: Some(BangerNativeError {
-                        code: "root_fetch_failed",
+                        code: banger_maps_root_error_code(&message),
                         message,
                         proof_hash,
                     }),
@@ -1428,6 +1443,7 @@ fn empty_banger_maps_gpu_staging() -> BangerMapsGpuStagingProjection {
         enabled: false,
         staged_content_count: 0,
         failed_content_count: 0,
+        unsupported_extension_count: 0,
         primitive_count: 0,
         vertex_buffer_byte_count: 0,
         index_buffer_byte_count: 0,
@@ -1458,6 +1474,14 @@ fn build_banger_maps_gpu_staging(
         .collect::<Vec<_>>();
     let staged_content_count = records.iter().filter(|record| record.error.is_none()).count();
     let failed_content_count = records.iter().filter(|record| record.error.is_some()).count();
+    let unsupported_extension_count = records
+        .iter()
+        .map(|record| {
+            record.format_support.unsupported_required_extensions.len()
+                + record.format_support.unsupported_used_extensions.len()
+                + usize::from(record.format_support.compression_blocker.is_some())
+        })
+        .sum();
     let primitive_count = records.iter().map(|record| record.primitive_stages.len()).sum();
     let vertex_buffer_byte_count = records
         .iter()
@@ -1497,6 +1521,7 @@ fn build_banger_maps_gpu_staging(
         enabled,
         staged_content_count,
         failed_content_count,
+        unsupported_extension_count,
         primitive_count,
         vertex_buffer_byte_count,
         index_buffer_byte_count,
@@ -1523,6 +1548,7 @@ fn stage_banger_maps_gpu_record(record: &BangerMapsContentDecodeRecord) -> Bange
         "gltf" => parse_banger_gltf_json_value(&bytes).and_then(|value| stage_banger_gltf_payload(&value, &[])),
         _ => Err(format!("gpu staging unsupported container {}", record.container)),
     };
+    let format_support = banger_maps_gltf_format_support_for_record(record, &bytes);
     match stage_result {
         Ok((primitive_stages, material_stages, texture_stages)) => BangerMapsGpuStageRecord {
             tile_id: record.tile_id.clone(),
@@ -1533,6 +1559,7 @@ fn stage_banger_maps_gpu_record(record: &BangerMapsContentDecodeRecord) -> Bange
             primitive_stages,
             material_stages,
             texture_stages,
+            format_support,
             error: None,
         },
         Err(error) => failed_banger_gpu_stage_record(record, error),
@@ -1549,6 +1576,7 @@ fn failed_banger_gpu_stage_record(record: &BangerMapsContentDecodeRecord, error:
         primitive_stages: Vec::new(),
         material_stages: Vec::new(),
         texture_stages: Vec::new(),
+        format_support: banger_maps_gltf_format_support_for_record(record, &fs::read(&record.cache_path).unwrap_or_default()),
         error: Some(error),
     }
 }
@@ -1557,6 +1585,16 @@ fn stage_banger_gltf_payload(
     gltf: &Value,
     bin_chunk: &[u8],
 ) -> Result<(Vec<BangerMapsGpuPrimitiveStage>, Vec<BangerMapsMaterialStage>, Vec<BangerMapsTextureStage>), String> {
+    let format_support = banger_maps_gltf_format_support(gltf);
+    if let Some(blocker) = format_support.compression_blocker.as_ref() {
+        return Err(blocker.clone());
+    }
+    if !format_support.unsupported_required_extensions.is_empty() {
+        return Err(format!(
+            "glTF required extensions not yet supported for native upload: {}",
+            format_support.unsupported_required_extensions.join(",")
+        ));
+    }
     let mut primitive_stages = Vec::new();
     let meshes = gltf.get("meshes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
     for (mesh_index, mesh) in meshes.iter().enumerate() {
@@ -1583,6 +1621,14 @@ fn stage_banger_gltf_primitive(
     primitive_index: usize,
     primitive: &Value,
 ) -> Result<BangerMapsGpuPrimitiveStage, String> {
+    if let Some(extensions) = primitive.get("extensions").and_then(Value::as_object) {
+        if extensions.contains_key("KHR_draco_mesh_compression") {
+            return Err("KHR_draco_mesh_compression primitive decode pending before native upload".to_string());
+        }
+        if extensions.contains_key("EXT_meshopt_compression") {
+            return Err("EXT_meshopt_compression primitive decode pending before native upload".to_string());
+        }
+    }
     let attributes = primitive
         .get("attributes")
         .and_then(Value::as_object)
@@ -1642,6 +1688,83 @@ fn stage_banger_gltf_primitive(
         wgpu_vertex_usage: "VERTEX|COPY_DST",
         wgpu_index_usage: "INDEX|COPY_DST",
     })
+}
+
+fn banger_maps_gltf_format_support_for_record(
+    record: &BangerMapsContentDecodeRecord,
+    bytes: &[u8],
+) -> BangerMapsGltfFormatSupport {
+    let value = match record.container {
+        "b3dm" => decode_banger_b3dm(bytes)
+            .and_then(|(_, glb_bytes)| decode_banger_glb_full(glb_bytes).map(|decoded| decoded.gltf_value)),
+        "glb" => decode_banger_glb_full(bytes).map(|decoded| decoded.gltf_value),
+        "gltf" => parse_banger_gltf_json_value(bytes),
+        _ => Err(format!("format support unsupported container {}", record.container)),
+    };
+    value
+        .as_ref()
+        .map(banger_maps_gltf_format_support)
+        .unwrap_or_else(|_| banger_maps_unknown_gltf_format_support())
+}
+
+fn banger_maps_unknown_gltf_format_support() -> BangerMapsGltfFormatSupport {
+    BangerMapsGltfFormatSupport {
+        extensions_used: Vec::new(),
+        extensions_required: Vec::new(),
+        unsupported_used_extensions: Vec::new(),
+        unsupported_required_extensions: Vec::new(),
+        compression_blocker: Some("glTF format could not be inspected before native upload".to_string()),
+        upload_policy: "raw_float32_position_u16_u32_indices_material_color_texture_staging_v1",
+    }
+}
+
+fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport {
+    let extensions_used = banger_gltf_string_array(gltf, "extensionsUsed");
+    let extensions_required = banger_gltf_string_array(gltf, "extensionsRequired");
+    let supported_extensions = ["KHR_materials_unlit"];
+    let unsupported_used_extensions = extensions_used
+        .iter()
+        .filter(|extension| !supported_extensions.contains(&extension.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let unsupported_required_extensions = extensions_required
+        .iter()
+        .filter(|extension| !supported_extensions.contains(&extension.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let compression_blocker = ["KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"]
+        .iter()
+        .find(|extension| {
+            extensions_used.iter().any(|item| item == **extension)
+                || extensions_required.iter().any(|item| item == **extension)
+        })
+        .map(|extension| match *extension {
+            "KHR_draco_mesh_compression" => "KHR_draco_mesh_compression decode is required before native vertex/index upload".to_string(),
+            "EXT_meshopt_compression" => "EXT_meshopt_compression decode is required before native vertex/index upload".to_string(),
+            "KHR_mesh_quantization" => "KHR_mesh_quantization dequantization is required before float32 POSITION upload".to_string(),
+            _ => format!("{extension} support pending before native upload"),
+        });
+    BangerMapsGltfFormatSupport {
+        extensions_used,
+        extensions_required,
+        unsupported_used_extensions,
+        unsupported_required_extensions,
+        compression_blocker,
+        upload_policy: "raw_float32_position_u16_u32_indices_material_color_texture_staging_v1",
+    }
+}
+
+fn banger_gltf_string_array(gltf: &Value, key: &str) -> Vec<String> {
+    gltf.get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
@@ -2217,6 +2340,8 @@ fn summarize_banger_gltf_value(value: &Value) -> BangerGltfSummaryProjection {
         buffer_count: json_array_len(&value, "buffers"),
         extensions_used_count: json_array_len(&value, "extensionsUsed"),
         extensions_required_count: json_array_len(&value, "extensionsRequired"),
+        extensions_used: banger_gltf_string_array(value, "extensionsUsed"),
+        extensions_required: banger_gltf_string_array(value, "extensionsRequired"),
     }
 }
 
@@ -2329,6 +2454,19 @@ fn redact_url_secret(url: &str) -> String {
         .collect::<Vec<_>>()
         .join("&");
     format!("{head}?{redacted}")
+}
+
+fn banger_maps_root_error_code(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("satellite tiles and 3d tiles are not available")
+        || (lower.contains("status 403") && lower.contains("permission"))
+    {
+        "google_tiles_entitlement_or_region_blocked"
+    } else if lower.contains("status 401") || lower.contains("api key") || lower.contains("access token") {
+        "google_tiles_credential_rejected"
+    } else {
+        "root_fetch_failed"
+    }
 }
 
 fn banger_maps_root_ingest_verifier() -> BangerMapsRootIngestVerifier {
@@ -3924,6 +4062,37 @@ mod tests {
         assert_eq!(gltf.accessor_count, 2);
         assert_eq!(gltf.buffer_view_count, 3);
         assert_eq!(gltf.buffer_count, 1);
+        assert!(gltf.extensions_used.is_empty());
+        assert!(gltf.extensions_required.is_empty());
+    }
+
+    #[test]
+    fn reports_compressed_gltf_extension_blockers_before_gpu_staging() {
+        let glb = test_draco_glb_bytes();
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let support = banger_maps_gltf_format_support(&decoded.gltf_value);
+        assert_eq!(support.extensions_used, vec!["KHR_draco_mesh_compression".to_string()]);
+        assert_eq!(support.extensions_required, vec!["KHR_draco_mesh_compression".to_string()]);
+        assert_eq!(support.unsupported_required_extensions, vec!["KHR_draco_mesh_compression".to_string()]);
+        assert!(support
+            .compression_blocker
+            .as_deref()
+            .unwrap()
+            .contains("KHR_draco_mesh_compression"));
+        let error = match stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk) {
+            Ok(_) => panic!("compressed glTF unexpectedly staged without Draco decode"),
+            Err(error) => error,
+        };
+        assert!(error.contains("KHR_draco_mesh_compression"));
+    }
+
+    #[test]
+    fn classifies_google_tiles_entitlement_region_errors() {
+        let message = "root status 403: satellite tiles and 3D tiles are not available for your account and region";
+        assert_eq!(
+            banger_maps_root_error_code(message),
+            "google_tiles_entitlement_or_region_blocked"
+        );
     }
 
     #[test]
@@ -4026,6 +4195,30 @@ mod tests {
         }
         bin_chunk.extend_from_slice(&[0, 0]);
         bin_chunk.extend_from_slice(&[137, 80, 78, 71]);
+        while bin_chunk.len() % 4 != 0 {
+            bin_chunk.push(0);
+        }
+        let length = 12 + 8 + json_chunk.len() + 8 + bin_chunk.len();
+        let mut glb = Vec::with_capacity(length);
+        glb.extend_from_slice(b"glTF");
+        push_u32_le(&mut glb, 2);
+        push_u32_le(&mut glb, length as u32);
+        push_u32_le(&mut glb, json_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x4E4F534A);
+        glb.extend_from_slice(&json_chunk);
+        push_u32_le(&mut glb, bin_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x004E4942);
+        glb.extend_from_slice(&bin_chunk);
+        glb
+    }
+
+    fn test_draco_glb_bytes() -> Vec<u8> {
+        let json = br#"{"asset":{"version":"2.0"},"extensionsUsed":["KHR_draco_mesh_compression"],"extensionsRequired":["KHR_draco_mesh_compression"],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"extensions":{"KHR_draco_mesh_compression":{"bufferView":0,"attributes":{"POSITION":0}}}}]}],"accessors":[{"componentType":5126,"count":3,"type":"VEC3"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"buffers":[{"byteLength":4}]}"#;
+        let mut json_chunk = json.to_vec();
+        while json_chunk.len() % 4 != 0 {
+            json_chunk.push(0x20);
+        }
+        let mut bin_chunk = vec![0u8, 1, 2, 3];
         while bin_chunk.len() % 4 != 0 {
             bin_chunk.push(0);
         }
