@@ -13326,6 +13326,18 @@ ol.assistantText__list li::before {
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
+/* The rule above hides every .chatCanvas off-screen in widget mode, but the
+   drawer's transcript IS a .chatCanvas living inside the visible panel — pin it
+   back so the session conversation actually shows. Higher specificity wins. */
+.shell--widget-mode .widgetSessionDrawer .chatCanvas--widgetDrawer,
+.shell--widget-canvas-hidden .widgetSessionDrawer .chatCanvas--widgetDrawer {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition: none;
+  will-change: auto;
+}
+
 .shell--widget-canvas-hidden::before {
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
