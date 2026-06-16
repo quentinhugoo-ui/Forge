@@ -94,6 +94,7 @@ function planPanelStateFromText(sourceText: string): PlanPanelState {
 export function RightPanelSlice({ open, agentName = "Agent", planSourceText = "" }: RightPanelSliceProps) {
   const plan = useMemo(() => planPanelStateFromText(planSourceText), [planSourceText]);
   const assistantLabel = agentName.trim() || "Agent";
+  const showPlanHeaderEyebrow = plan.active && plan.title.trim().toLowerCase() !== "plan";
 
   return (
     <aside
@@ -104,7 +105,7 @@ export function RightPanelSlice({ open, agentName = "Agent", planSourceText = ""
     >
       <div className="rightPanel__inner">
         <header className="rightPanel__header">
-          <span className="rightPanel__eyebrow">Plan</span>
+          {showPlanHeaderEyebrow ? <span className="rightPanel__eyebrow">Plan</span> : null}
           <strong>{plan.title}</strong>
         </header>
 
