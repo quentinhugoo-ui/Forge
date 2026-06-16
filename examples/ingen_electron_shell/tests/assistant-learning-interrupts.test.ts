@@ -120,7 +120,7 @@ describe("assistant learning interrupts", () => {
   it("keeps workflows as skills and only executable commands as CodeActs", () => {
     const modifications = brainSpecializedBrainModificationsFromText([
       '/modify"marketing"brain_ entry_kind="codeact"',
-      'content="Campaign critique workflow: identify offer, audience, channel and metric before writing ideas."',
+      'content="Campaign critique workflow: Trigger=campaign brainstorming; Inputs=offer, audience, channel, metric; Steps=identify gaps -> rewrite brief -> verify concrete scene; Check=brief names one ICP."',
       '/modify"marketing"brain_ entry_kind="codeact"',
       "content='/campaign_brief_ offer=\"...\" audience=\"...\"'",
       '/modify"marketing"brain_ entry_kind="codeact"',
@@ -204,7 +204,8 @@ describe("assistant learning interrupts", () => {
     expect(manifest).toContain('token_budget="1200"');
     expect(manifest).toContain('modifybrain_template_example=/modify"marketing"brain_');
     expect(manifest).toContain('entry_kind="lesson"');
-    expect(manifest).toContain("entry_kind_policy=skill is an LLM-only reusable workflow");
+    expect(manifest).toContain("entry_kind_policy=lesson is a compact rule learned");
+    expect(manifest).toContain("skill is a reusable workflow built from lessons");
     expect(manifest).toContain('modifybrain_skill_example=/modify"marketing"brain_');
     expect(manifest).toContain('modifybrain_codeact_example=/modify"marketing"brain_');
     expect(manifest).toContain('output="append_to_specialized_brain"');
@@ -245,7 +246,8 @@ describe("assistant learning interrupts", () => {
     expect(memoryStoreSource).toContain("ingen.brain.memory.specialized_brain.v1");
     expect(memoryStoreSource).toContain("active_specialized_brain");
     expect(memoryStoreSource).toContain("BRAIN_CODEACT_COMMANDS");
-    expect(memoryStoreSource).toContain("entry_kind_policy=skill is an LLM-only reusable workflow");
+    expect(memoryStoreSource).toContain("entry_kind_policy=lesson is a compact rule learned");
+    expect(memoryStoreSource).toContain("skill is a reusable workflow built from lessons");
     expect(storeSource).toContain("BRAIN_LEARNING_MEMORY_UPDATED_EVENT");
     expect(stylesSource).toContain(".assistantText__learningInterrupt");
   });
