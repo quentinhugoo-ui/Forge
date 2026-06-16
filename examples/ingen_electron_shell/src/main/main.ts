@@ -15567,6 +15567,10 @@ function syncLocalChatSessionsFromArchive(): void {
 }
 
 function restoreChatSessionToCanvas(sessionId: string): boolean {
+  if (sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID) {
+    ensureSearchArchiveLoopDemoSession();
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
+  }
   const archiveSession = chatArchiveSessions.get(sessionId);
   if (!archiveSession) return false;
   providerAttachmentCache.clear();
