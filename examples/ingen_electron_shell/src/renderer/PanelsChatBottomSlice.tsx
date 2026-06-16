@@ -4384,22 +4384,22 @@ function WidgetTranscriptPanel({
       ].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
     >
-      <button
-        type="button"
-        className="widgetTranscriptPanel__topTab"
-        aria-label="Reduire le panneau de conversation"
-        aria-expanded="true"
-        title="Reduire"
-        onClick={onReduce}
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
         <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
           {sessionLabel}
         </strong>
+        <button
+          type="button"
+          className="widgetTranscriptPanel__reduce"
+          aria-label="Reduire le panneau de conversation"
+          aria-expanded="true"
+          title="Reduire"
+          onClick={onReduce}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
       <div className="widgetTranscriptPanel__body">
         <TranscriptCanvas
@@ -4441,22 +4441,28 @@ function WidgetSessionTabs({
   sessions,
   activeSessionId,
   activeSessionLive,
-  onRevealSession,
-  onOpenSession,
+  panelAnchored,
+  onActivateSession,
   onNewSession
 }: {
   sessions: SidebarSessionItem[];
   activeSessionId: string;
   activeSessionLive: boolean;
-  onRevealSession?: () => void;
-  onOpenSession?: (sessionId: string, section: NativeSection) => void;
+  panelAnchored: boolean;
+  onActivateSession?: (sessionId: string, section: NativeSection) => void;
   onNewSession?: () => void;
 }) {
   if (sessions.length === 0 && !onNewSession) {
     return null;
   }
   return (
-    <nav className="widgetSessionTabs" aria-label="Recent widget sessions">
+    <nav
+      className={[
+        "widgetSessionTabs",
+        panelAnchored ? "widgetSessionTabs--panelAnchored" : ""
+      ].filter(Boolean).join(" ")}
+      aria-label="Recent widget sessions"
+    >
       <div className="widgetSessionTabs__list" role="tablist" aria-label="Recent sessions">
         {sessions.map((session) => {
           const selected = session.sessionId !== "" && session.sessionId === activeSessionId;
@@ -4477,10 +4483,7 @@ function WidgetSessionTabs({
               aria-label={`Open session: ${label}${working ? ", working" : ", complete"}`}
               title={label}
               key={session.sessionId}
-              onClick={() => {
-                onOpenSession?.(session.sessionId, session.section);
-                onRevealSession?.();
-              }}
+              onClick={() => onActivateSession?.(session.sessionId, session.section)}
             >
               <span>{label}</span>
             </button>
@@ -4727,6 +4730,7 @@ export function PanelsChatBottomSlice({
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
   const [widgetTranscriptCollapsed, setWidgetTranscriptCollapsed] = useState(false);
   const [widgetTranscriptCollapsing, setWidgetTranscriptCollapsing] = useState(false);
+  const [widgetSessionDocking, setWidgetSessionDocking] = useState(false);
   const [widgetAssistantWriting, setWidgetAssistantWriting] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
@@ -4734,6 +4738,7 @@ export function PanelsChatBottomSlice({
   const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const widgetTranscriptCollapseTimerRef = useRef<number | null>(null);
+  const widgetSessionDockTimerRef = useRef<number | null>(null);
   const draftRef = useRef(draft);
   const composerResetFenceRef = useRef(false);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
@@ -5111,39 +5116,71 @@ export function PanelsChatBottomSlice({
       widgetTranscriptCollapseTimerRef.current = null;
     }
   }, []);
+  const clearWidgetSessionDockTimer = useCallback(() => {
+    if (widgetSessionDockTimerRef.current !== null) {
+      window.clearTimeout(widgetSessionDockTimerRef.current);
+      widgetSessionDockTimerRef.current = null;
+    }
+  }, []);
   const reduceWidgetTranscript = useCallback(() => {
     clearWidgetTranscriptCollapseTimer();
+    clearWidgetSessionDockTimer();
+    setWidgetSessionDocking(false);
     setWidgetTranscriptCollapsing(true);
     widgetTranscriptCollapseTimerRef.current = window.setTimeout(() => {
       widgetTranscriptCollapseTimerRef.current = null;
       setWidgetTranscriptCollapsed(true);
       setWidgetTranscriptCollapsing(false);
     }, 320);
-  }, [clearWidgetTranscriptCollapseTimer]);
+  }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer]);
   const expandWidgetTranscript = useCallback(() => {
     clearWidgetTranscriptCollapseTimer();
+    clearWidgetSessionDockTimer();
+    setWidgetSessionDocking(false);
     setWidgetTranscriptCollapsed(false);
     setWidgetTranscriptCollapsing(false);
-  }, [clearWidgetTranscriptCollapseTimer]);
-  useEffect(() => () => clearWidgetTranscriptCollapseTimer(), [clearWidgetTranscriptCollapseTimer]);
+  }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer]);
+  const activateWidgetSessionFromTab = useCallback((sessionId: string, section: NativeSection) => {
+    clearWidgetTranscriptCollapseTimer();
+    clearWidgetSessionDockTimer();
+    setWidgetTranscriptCollapsed(true);
+    setWidgetTranscriptCollapsing(false);
+    setWidgetSessionDocking(true);
+    onWidgetSessionOpen?.(sessionId, section);
+    widgetSessionDockTimerRef.current = window.setTimeout(() => {
+      widgetSessionDockTimerRef.current = null;
+      setWidgetTranscriptCollapsed(false);
+      setWidgetTranscriptCollapsing(false);
+      setWidgetSessionDocking(false);
+    }, 180);
+  }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer, onWidgetSessionOpen]);
+  useEffect(() => () => {
+    clearWidgetTranscriptCollapseTimer();
+    clearWidgetSessionDockTimer();
+  }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer]);
   useEffect(() => {
     if (!widgetMode) {
       clearWidgetTranscriptCollapseTimer();
+      clearWidgetSessionDockTimer();
       setWidgetTranscriptCollapsed(false);
       setWidgetTranscriptCollapsing(false);
+      setWidgetSessionDocking(false);
       setWidgetAssistantWriting(false);
     }
-  }, [clearWidgetTranscriptCollapseTimer, widgetMode]);
+  }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer, widgetMode]);
   useEffect(() => {
     setWidgetAssistantWriting(false);
   }, [snapshot.activeSessionId]);
   useEffect(() => {
+    if (widgetSessionDocking) {
+      return;
+    }
     if (widgetMode && widgetTranscriptHasConversation) {
       clearWidgetTranscriptCollapseTimer();
       setWidgetTranscriptCollapsed(false);
       setWidgetTranscriptCollapsing(false);
     }
-  }, [clearWidgetTranscriptCollapseTimer, snapshot.activeSessionId, widgetMode, widgetTranscriptHasConversation]);
+  }, [clearWidgetTranscriptCollapseTimer, snapshot.activeSessionId, widgetMode, widgetSessionDocking, widgetTranscriptHasConversation]);
   const widgetTranscriptPanelVisible =
     widgetMode &&
     !widgetModeTransitioning &&
@@ -5154,6 +5191,7 @@ export function PanelsChatBottomSlice({
     widgetMode &&
     !widgetModeTransitioning &&
     widgetTranscriptHasConversation &&
+    !widgetSessionDocking &&
     (widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
   const widgetSessionTabsVisible =
@@ -5163,6 +5201,7 @@ export function PanelsChatBottomSlice({
   const widgetPanelExpanded =
     widgetMode && (
       Boolean(composerQuestionnaire) ||
+      widgetSessionDocking ||
       widgetTranscriptPanelVisible ||
       widgetTranscriptTabVisible ||
       widgetSessionTabsVisible ||
@@ -5373,6 +5412,7 @@ export function PanelsChatBottomSlice({
       className={[
         "panelsChatBottom",
         composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
+        widgetSessionDocking ? "panelsChatBottom--widgetSessionDocking" : "",
         widgetTranscriptPanelVisible ? "panelsChatBottom--widgetTranscriptOpen" : "",
         widgetTranscriptTabVisible ? "panelsChatBottom--widgetTranscriptCollapsed" : "",
         permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
@@ -5471,8 +5511,8 @@ export function PanelsChatBottomSlice({
           sessions={widgetRecentSessions}
           activeSessionId={activeSessionId || snapshot.activeSessionId}
           activeSessionLive={widgetActiveSessionLive}
-          onRevealSession={expandWidgetTranscript}
-          onOpenSession={onWidgetSessionOpen}
+          panelAnchored={widgetSessionDocking || widgetTranscriptPanelVisible}
+          onActivateSession={activateWidgetSessionFromTab}
           onNewSession={onWidgetNewSession}
         />
       ) : null}
