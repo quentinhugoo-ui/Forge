@@ -14,6 +14,17 @@ LLM CLI -> BrainCommand/Intent -> Godel verification -> Forge bytecode/Monster c
 
 Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 
+## Reasoning Boundary
+
+The LLM owns the reasoning monopoly. The application must never pretend to
+reason, infer intent, choose strategy, or replace the LLM's judgment with hidden
+application-side intelligence. The app has no brain.
+
+The application may only execute narrow contracts, route explicit LLM decisions,
+enforce safety gates, validate schemas, collect observations, verify results and
+return compact proof artifacts to the LLM. If a decision requires reasoning, the
+runtime must hand the evidence back to the LLM instead of deciding silently.
+
 ## Hard Rules
 
 - Protect `C:\Users\quent\Documents\EVE\MAP`.
