@@ -54,6 +54,7 @@ import {
 } from "./agent-action-events";
 import {
   BRAIN_AGENT_MEMORY_UPDATED_EVENT,
+  BRAIN_USER_MEMORY_UPDATED_EVENT,
   activateBrainSpecializedBrain,
   appendBrainCustomCodeAct,
   appendBrainLearningMemoryEntry,
@@ -61,6 +62,7 @@ import {
   brainSpecializedBrainNameFromActivationCommand,
   dispatchBrainResearchParallelRequest,
   readBrainAgentMemory,
+  readBrainUserMemory,
   readBrainSpecializedBrainByActivationCommand,
   upsertBrainSpecializedBrain,
   upsertBrainCustomCodeAct
@@ -3505,7 +3507,11 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
     if (match.index > cursor) {
       nodes.push(text.slice(cursor, match.index));
     }
-    nodes.push(<mark key={`${keyPrefix}-${match.index}`}>{match[0]}</mark>);
+    nodes.push(
+      <mark className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill" key={`${keyPrefix}-${match.index}`}>
+        {match[0]}
+      </mark>
+    );
     cursor = match.index + match[0].length;
   }
   if (cursor < text.length) {
@@ -3514,7 +3520,26 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
   return nodes;
 }
 
-function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: AssistantSearchArchiveResult; messageId: string; blockIndex: number }) {
+function searchArchiveHitAuthorLabel(role: string, userName: string, agentName: string): string {
+  const normalizedRole = role.trim().toLowerCase();
+  if (normalizedRole === "user") return userName.trim() || "User";
+  if (normalizedRole === "assistant") return agentName.trim() || "Agent";
+  return role.trim() || "message";
+}
+
+function SearchArchiveResultCard({
+  agentName,
+  blockIndex,
+  messageId,
+  result,
+  userName
+}: {
+  agentName: string;
+  blockIndex: number;
+  messageId: string;
+  result: AssistantSearchArchiveResult;
+  userName: string;
+}) {
   const resultCount = result.returnedCount || String(result.hits.length);
   const resultCountNumber = Number.parseInt(resultCount, 10);
   const resultLabel = `${resultCount} ${resultCountNumber === 1 ? "match" : "matches"}`;
@@ -3524,7 +3549,11 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
       <div className="searchArchiveResultCard__summary">
         {terms.length > 0 ? (
           <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
-            {terms.map((term) => <span key={`${messageId}-search-term-${blockIndex}-${term}`}>{term}</span>)}
+            {terms.map((term) => (
+              <span className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill" key={`${messageId}-search-term-${blockIndex}-${term}`}>
+                {term}
+              </span>
+            ))}
           </div>
         ) : null}
         <span className="searchArchiveResultCard__meta">{resultLabel}</span>
@@ -3538,7 +3567,7 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
             <div className="searchArchiveResultCard__hitTop">
               <strong>{hit.sessionTitle || "Untitled session"}</strong>
               {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
-              <span>{hit.role || "message"}</span>
+              <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
             </div>
             <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${hitIndex}`)}</p>
             <div className="searchArchiveResultCard__hitBottom">
@@ -3573,6 +3602,7 @@ function AssistantMarkdownText({
   agentName,
   text,
   messageId,
+  userName,
   writing,
   onUseMathInCompute,
   parallelSessionIndex
@@ -3580,6 +3610,7 @@ function AssistantMarkdownText({
   agentName: string;
   text: string;
   messageId: string;
+  userName: string;
   writing: boolean;
   onUseMathInCompute?: AssistantMathUseHandler;
   parallelSessionIndex: number;
@@ -3651,7 +3682,16 @@ function AssistantMarkdownText({
           );
         }
         if (block.kind === "search_archive_result") {
-          return <SearchArchiveResultCard blockIndex={index} key={`${messageId}-searcharchive-${index}`} messageId={messageId} result={block.result} />;
+          return (
+            <SearchArchiveResultCard
+              agentName={agentName}
+              blockIndex={index}
+              key={`${messageId}-searcharchive-${index}`}
+              messageId={messageId}
+              result={block.result}
+              userName={userName}
+            />
+          );
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";
@@ -3779,11 +3819,13 @@ function AssistantMarkdownText({
 function StaticAssistantText({
   agentName,
   message,
+  userName,
   onUseMathInCompute,
   parallelSessionIndex
 }: {
   agentName: string;
   message: TranscriptMessage;
+  userName: string;
   onUseMathInCompute?: AssistantMathUseHandler;
   parallelSessionIndex: number;
 }) {
@@ -3797,6 +3839,7 @@ function StaticAssistantText({
         onUseMathInCompute={onUseMathInCompute}
         parallelSessionIndex={parallelSessionIndex}
         text={renderableText}
+        userName={userName}
         writing={false}
       />
     </div>
@@ -3806,6 +3849,7 @@ function StaticAssistantText({
 function AnimatedAssistantText({
   agentName,
   message,
+  userName,
   onAnimationComplete,
   onWritingChange,
   onUseMathInCompute,
@@ -3813,6 +3857,7 @@ function AnimatedAssistantText({
 }: {
   agentName: string;
   message: TranscriptMessage;
+  userName: string;
   onAnimationComplete?: (messageId: string) => void;
   onWritingChange?: (active: boolean) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
@@ -3986,6 +4031,7 @@ function AnimatedAssistantText({
         onUseMathInCompute={onUseMathInCompute}
         parallelSessionIndex={parallelSessionIndex}
         text={visibleText}
+        userName={userName}
         writing={writing}
       />
     </div>
@@ -4105,6 +4151,7 @@ function TranscriptCanvas({
   activeSessionId,
   messages,
   agentName,
+  userName,
   parallelSessionIndex = 0,
   className = "chatCanvas",
   assistantBusy = false,
@@ -4116,6 +4163,7 @@ function TranscriptCanvas({
   activeSessionId: string;
   messages: TranscriptMessage[];
   agentName: string;
+  userName: string;
   parallelSessionIndex?: number;
   className?: string;
   assistantBusy?: boolean;
@@ -4491,6 +4539,7 @@ function TranscriptCanvas({
                           onWritingChange={onAssistantWritingChange}
                           onUseMathInCompute={onUseMathInCompute}
                           parallelSessionIndex={parallelSessionIndex}
+                          userName={userName}
                         />
                       ) : (
                         <StaticAssistantText
@@ -4498,6 +4547,7 @@ function TranscriptCanvas({
                           message={renderedMessage}
                           onUseMathInCompute={onUseMathInCompute}
                           parallelSessionIndex={parallelSessionIndex}
+                          userName={userName}
                         />
                       )}
                     </div>
@@ -4952,6 +5002,7 @@ export function PanelsChatBottomSlice({
   const burstRef = useRef<ComposerSendBurstHandle>(null);
   const composerSendBusyRef = useRef(0);
   const sendEchoBaselineRef = useRef<number | null>(null);
+  const [brainUserName, setBrainUserName] = useState(() => readBrainUserMemory().preferredFirstName);
   const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
   const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
   const selfDirectedRunRef = useRef<SelfDirectedRunState>({
@@ -4968,7 +5019,16 @@ export function PanelsChatBottomSlice({
   }, []);
 
   useEffect(() => {
+    const syncUserName = () => setBrainUserName(readBrainUserMemory().preferredFirstName);
     const syncAgentName = () => setBrainAgentName(readBrainAgentMemory().preferredFirstName);
+    const onUserMemoryUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ preferredFirstName?: unknown }>).detail;
+      if (typeof detail?.preferredFirstName === "string") {
+        setBrainUserName(detail.preferredFirstName);
+        return;
+      }
+      syncUserName();
+    };
     const onAgentMemoryUpdated = (event: Event) => {
       const detail = (event as CustomEvent<{ preferredFirstName?: unknown }>).detail;
       if (typeof detail?.preferredFirstName === "string") {
@@ -4978,13 +5038,18 @@ export function PanelsChatBottomSlice({
       syncAgentName();
     };
     const onStorage = (event: StorageEvent) => {
+      if (event.key === "ingen.brain.memory.user_identity.v1") {
+        syncUserName();
+      }
       if (event.key === "ingen.brain.memory.agent_identity.v1") {
         syncAgentName();
       }
     };
+    window.addEventListener(BRAIN_USER_MEMORY_UPDATED_EVENT, onUserMemoryUpdated);
     window.addEventListener(BRAIN_AGENT_MEMORY_UPDATED_EVENT, onAgentMemoryUpdated);
     window.addEventListener("storage", onStorage);
     return () => {
+      window.removeEventListener(BRAIN_USER_MEMORY_UPDATED_EVENT, onUserMemoryUpdated);
       window.removeEventListener(BRAIN_AGENT_MEMORY_UPDATED_EVENT, onAgentMemoryUpdated);
       window.removeEventListener("storage", onStorage);
     };
@@ -5602,6 +5667,7 @@ export function PanelsChatBottomSlice({
                   activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
                   messages={laneMessages}
                   agentName={brainAgentName}
+                  userName={brainUserName}
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
                   assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}
@@ -5619,6 +5685,7 @@ export function PanelsChatBottomSlice({
             activeSessionId={snapshot.activeSessionId}
             messages={canvasMessages}
             agentName={brainAgentName}
+            userName={brainUserName}
             parallelSessionIndex={0}
             assistantBusy={Boolean(snapshot.composer.assistantBusy)}
             stopAnimationSignal={assistantStopSignal}
@@ -5654,6 +5721,7 @@ export function PanelsChatBottomSlice({
             activeSessionId={snapshot.activeSessionId}
             messages={canvasMessages}
             agentName={brainAgentName}
+            userName={brainUserName}
             parallelSessionIndex={0}
             className="chatCanvas chatCanvas--widgetDrawer"
             assistantBusy={Boolean(snapshot.composer.assistantBusy)}

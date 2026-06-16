@@ -105,6 +105,7 @@ const LEARNING_REGISTRY_STORAGE_KEY = "ingen.brain.memory.learning_registry.v1";
 const CUSTOM_CODEACT_REGISTRY_STORAGE_KEY = "ingen.brain.codeact.custom_registry.v1";
 const SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY = "ingen.brain.memory.specialized_brain_registry.v1";
 export const BRAIN_AGENT_MEMORY_UPDATED_EVENT = "ingen:brain-agent-memory-updated";
+export const BRAIN_USER_MEMORY_UPDATED_EVENT = "ingen:brain-user-memory-updated";
 export const BRAIN_PERSONALITY_MEMORY_UPDATED_EVENT = "ingen:brain-personality-memory-updated";
 export const BRAIN_LEARNING_MEMORY_UPDATED_EVENT = "ingen:brain-learning-memory-updated";
 export const BRAIN_CUSTOM_CODEACTS_UPDATED_EVENT = "ingen:brain-custom-codeacts-updated";
@@ -486,6 +487,7 @@ export function writeBrainUserMemory(preferredFirstName: string): BrainUserMemor
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
+    dispatchBrainStoreEvent(BRAIN_USER_MEMORY_UPDATED_EVENT, next);
   }
   return next;
 }
@@ -1103,6 +1105,9 @@ function applyCanonicalBrainMemorySnapshot(snapshot: BrainCanonicalMemorySnapsho
     writeLocalJson(LEARNING_REGISTRY_STORAGE_KEY, learningEntries);
     writeLocalJson(CUSTOM_CODEACT_REGISTRY_STORAGE_KEY, customCodeActs);
     writeLocalJson(SPECIALIZED_BRAIN_REGISTRY_STORAGE_KEY, specializedBrains);
+    if (isBrainUserMemorySlot(snapshot.userMemory)) {
+      dispatchBrainStoreEvent(BRAIN_USER_MEMORY_UPDATED_EVENT, snapshot.userMemory);
+    }
     if (isBrainAgentMemorySlot(snapshot.agentMemory)) {
       dispatchBrainStoreEvent(BRAIN_AGENT_MEMORY_UPDATED_EVENT, snapshot.agentMemory);
     }
