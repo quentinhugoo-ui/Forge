@@ -40,69 +40,6 @@ export interface SidebarShadowState {
   booted: boolean;
 }
 
-const fallbackRecentItems: SidebarSessionItem[] = [
-  {
-    sessionId: "native-front-migration",
-    label: "Electron cutover",
-    date: "2026-06-09",
-    section: "forge",
-    workspaceLabel: "Forge",
-    rowVisible: true,
-    pinned: true,
-    working: false,
-    automated: false,
-    archived: false
-  },
-  {
-    sessionId: "test-session-example",
-    label: "test session example",
-    date: "2026-06-10",
-    section: "forge",
-    workspaceLabel: "Forge",
-    rowVisible: true,
-    pinned: false,
-    working: true,
-    automated: false,
-    archived: false
-  },
-  {
-    sessionId: "",
-    label: "LLM Act Codes discovery methods",
-    date: "2026-06-08",
-    section: "forge",
-    workspaceLabel: "Forge",
-    rowVisible: true,
-    pinned: false,
-    working: false,
-    automated: true,
-    archived: false
-  },
-  {
-    sessionId: "",
-    label: "PoolClaw agent profiles",
-    date: "2026-06-07",
-    section: "forge",
-    workspaceLabel: "PoolClaw",
-    rowVisible: true,
-    pinned: false,
-    working: false,
-    automated: false,
-    archived: false
-  },
-  {
-    sessionId: "",
-    label: "Banger create 3D object",
-    date: "2026-06-07",
-    section: "banger",
-    workspaceLabel: "Banger",
-    rowVisible: true,
-    pinned: false,
-    working: false,
-    automated: false,
-    archived: false
-  }
-];
-
 export const fallbackSidebarSnapshot: SidebarSnapshot = {
   schema: "ingen.electron.sidebar.snapshot.v1",
   version: FORGE_ELECTRON_IPC_VERSION,
@@ -114,7 +51,7 @@ export const fallbackSidebarSnapshot: SidebarSnapshot = {
   sessionsMenuMode: "recents",
   recentSessionId: "",
   hasArchivedSession: false,
-  recentItems: fallbackRecentItems,
+  recentItems: [],
   archivedItems: [],
   toolControls: [
     { id: "new-session", label: "New Session", icon: "inline_svg_0008.svg", drawer: "", visible: true, hidden: false, selected: true, nativeAuthority: "electron-shadow" },
