@@ -637,6 +637,8 @@ struct BangerNativeScenePipeline {
     virtual_shadow_map_physical_page_pipeline: wgpu::ComputePipeline,
     virtual_shadow_map_projection_bind_group_layout: wgpu::BindGroupLayout,
     virtual_shadow_map_projection_pipeline: wgpu::ComputePipeline,
+    spectral_ocean_bind_group_layout: wgpu::BindGroupLayout,
+    spectral_ocean_pipeline: wgpu::ComputePipeline,
     single_layer_water_bind_group_layout: wgpu::BindGroupLayout,
     single_layer_water_pipeline: wgpu::ComputePipeline,
     vertex_count: u32,
@@ -705,7 +707,14 @@ struct BangerNativeSingleLayerWaterResources {
     refraction_mask_view: wgpu::TextureView,
     _composite_texture: wgpu::Texture,
     composite_view: wgpu::TextureView,
+    _spectral_state_texture: wgpu::Texture,
+    spectral_state_view: wgpu::TextureView,
+    _spectral_displacement_texture: wgpu::Texture,
+    spectral_displacement_view: wgpu::TextureView,
+    _spectral_slope_texture: wgpu::Texture,
+    spectral_slope_view: wgpu::TextureView,
     params_buffer: wgpu::Buffer,
+    spectral_params_buffer: wgpu::Buffer,
     tile_mask_buffer: wgpu::Buffer,
     _resource_hash: String,
 }
@@ -3856,6 +3865,14 @@ fn render_child_surface_frame(
     dispatch_banger_virtual_shadow_map_page_mark(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_physical_pages(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_projection_filter(device, &mut encoder, scene_pipeline);
+    let spectral_params_bytes =
+        banger_spectral_ocean_params_bytes(frame_target.width, frame_target.height, time_seconds, frame_index);
+    queue.write_buffer(
+        &frame_target.water.spectral_params_buffer,
+        0,
+        &spectral_params_bytes,
+    );
+    dispatch_banger_spectral_ocean_compute(device, &mut encoder, scene_pipeline, frame_target);
     dispatch_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target);
     queue.submit(Some(encoder.finish()));
     device
@@ -4022,13 +4039,44 @@ fn create_banger_single_layer_water_resources(
         wgpu::TextureFormat::Rgba8Unorm,
         wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
     );
+    let spectral_state_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-spectral-state-texture",
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let spectral_displacement_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-spectral-displacement-texture",
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let spectral_slope_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-spectral-slope-texture",
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
     let params_bytes = banger_single_layer_water_params_bytes(width, height);
+    let spectral_params_bytes = banger_spectral_ocean_params_bytes(width, height, 0.0, allocation_index);
     let tile_mask_bytes = banger_single_layer_water_tile_mask_bytes(width, height);
     let params_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-water-single-layer-params-buffer",
         wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         &params_bytes,
+    );
+    let spectral_params_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-water-spectral-ocean-params-buffer",
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        &spectral_params_bytes,
     );
     let tile_mask_buffer = banger_create_mapped_buffer(
         device,
@@ -4038,9 +4086,10 @@ fn create_banger_single_layer_water_resources(
     );
     let resource_hash = sha256_hex(
         format!(
-            "banger-single-layer-water-v1:{width}:{height}:{allocation_index}:scene-depth-refraction-composite:{}:{}",
+            "banger-single-layer-water-v1:{width}:{height}:{allocation_index}:scene-depth-refraction-composite-spectral:{}:{}:{}",
             sha256_hex(&params_bytes),
-            sha256_hex(&tile_mask_bytes)
+            sha256_hex(&tile_mask_bytes),
+            sha256_hex(&spectral_params_bytes)
         )
         .as_bytes(),
     );
@@ -4049,11 +4098,18 @@ fn create_banger_single_layer_water_resources(
         _depth_without_water_view: depth_without_water_texture.create_view(&wgpu::TextureViewDescriptor::default()),
         refraction_mask_view: refraction_mask_texture.create_view(&wgpu::TextureViewDescriptor::default()),
         composite_view: composite_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        spectral_state_view: spectral_state_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        spectral_displacement_view: spectral_displacement_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        spectral_slope_view: spectral_slope_texture.create_view(&wgpu::TextureViewDescriptor::default()),
         _scene_without_water_texture: scene_without_water_texture,
         _depth_without_water_texture: depth_without_water_texture,
         _refraction_mask_texture: refraction_mask_texture,
         _composite_texture: composite_texture,
+        _spectral_state_texture: spectral_state_texture,
+        _spectral_displacement_texture: spectral_displacement_texture,
+        _spectral_slope_texture: spectral_slope_texture,
         params_buffer,
+        spectral_params_buffer,
         tile_mask_buffer,
         _resource_hash: resource_hash,
     }
@@ -4119,6 +4175,49 @@ fn banger_single_layer_water_tile_mask_bytes(width: u32, height: u32) -> Vec<u8>
     let tile_count = width.max(1).div_ceil(8) * height.max(1).div_ceil(8);
     let word_count = tile_count.max(1).div_ceil(32);
     vec![0u8; word_count as usize * 4]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_spectral_ocean_params_bytes(
+    width: u32,
+    height: u32,
+    time_seconds: f32,
+    frame_index: u32,
+) -> [u8; 64] {
+    let spectral_size = width.max(height).next_power_of_two().clamp(64, 2048);
+    let mut bytes = [0u8; 64];
+    for (slot, value) in [
+        width.max(1),
+        height.max(1),
+        spectral_size,
+        frame_index,
+        8, // reserved butterfly stage count for the promoted inverse FFT path.
+        0,
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (slot, value) in [
+        time_seconds,
+        9.81f32, // gravity
+        21.0,    // wind speed m/s
+        160.0,   // domain length meters
+        0.72,    // wind x
+        0.36,    // wind y
+        1.35,    // choppiness
+        0.0007,  // Phillips/JONSWAP energy scale seed
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let offset = 32 + slot * 4;
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -4625,6 +4724,14 @@ fn dispatch_banger_single_layer_water_composite(
                 binding: 6,
                 resource: frame_target.water.tile_mask_buffer.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.spectral_displacement_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.spectral_slope_view),
+            },
         ],
     });
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -4632,6 +4739,44 @@ fn dispatch_banger_single_layer_water_composite(
         timestamp_writes: None,
     });
     pass.set_pipeline(&scene_pipeline.single_layer_water_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(frame_target.width.div_ceil(8), frame_target.height.div_ceil(8), 1);
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_banger_spectral_ocean_compute(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-spectral-ocean-bind-group"),
+        layout: &scene_pipeline.spectral_ocean_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.spectral_state_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.spectral_displacement_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.spectral_slope_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: frame_target.water.spectral_params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("banger-native-spectral-ocean-compute-pass"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(&scene_pipeline.spectral_ocean_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.dispatch_workgroups(frame_target.width.div_ceil(8), frame_target.height.div_ceil(8), 1);
 }
@@ -4767,6 +4912,20 @@ fn banger_unfilterable_texture_bind_group_layout_entry(binding: u32) -> wgpu::Bi
             sample_type: wgpu::TextureSampleType::Float { filterable: false },
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
+        },
+        count: None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_rgba16float_storage_texture_bind_group_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::Rgba16Float,
+            view_dimension: wgpu::TextureViewDimension::D2,
         },
         count: None,
     }
@@ -5350,6 +5509,44 @@ fn create_banger_first_scene_pipeline(
         compilation_options: Default::default(),
         cache: None,
     });
+    let spectral_ocean_shader_source = banger_spectral_ocean_compute_wgsl();
+    let spectral_ocean_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-spectral-ocean-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(spectral_ocean_shader_source.into()),
+    });
+    let spectral_ocean_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-spectral-ocean-bind-group-layout"),
+            entries: &[
+                banger_rgba16float_storage_texture_bind_group_layout_entry(0),
+                banger_rgba16float_storage_texture_bind_group_layout_entry(1),
+                banger_rgba16float_storage_texture_bind_group_layout_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let spectral_ocean_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-spectral-ocean-pipeline-layout"),
+            bind_group_layouts: &[Some(&spectral_ocean_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let spectral_ocean_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-spectral-ocean-pipeline"),
+        layout: Some(&spectral_ocean_pipeline_layout),
+        module: &spectral_ocean_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
     let single_layer_water_shader_source = banger_single_layer_water_composite_compute_wgsl();
     let single_layer_water_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-single-layer-water-composite-wgsl"),
@@ -5402,6 +5599,8 @@ fn create_banger_first_scene_pipeline(
                     },
                     count: None,
                 },
+                banger_unfilterable_texture_bind_group_layout_entry(7),
+                banger_unfilterable_texture_bind_group_layout_entry(8),
             ],
         });
     let single_layer_water_pipeline_layout =
@@ -5420,12 +5619,13 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
             sha256_hex(vsm_physical_page_shader_source.as_bytes()),
             sha256_hex(vsm_projection_shader_source.as_bytes()),
+            sha256_hex(spectral_ocean_shader_source.as_bytes()),
             sha256_hex(single_layer_water_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
@@ -5480,6 +5680,8 @@ fn create_banger_first_scene_pipeline(
         virtual_shadow_map_physical_page_pipeline,
         virtual_shadow_map_projection_bind_group_layout,
         virtual_shadow_map_projection_pipeline,
+        spectral_ocean_bind_group_layout,
+        spectral_ocean_pipeline,
         single_layer_water_bind_group_layout,
         single_layer_water_pipeline,
         vertex_count: gpu_resource.vertex_count,
@@ -5610,6 +5812,10 @@ var refraction_mask: texture_storage_2d<r32float, write>;
 var<uniform> params: SingleLayerWaterParams;
 @group(0) @binding(6)
 var<storage, read_write> water_tile_mask: array<atomic<u32>>;
+@group(0) @binding(7)
+var spectral_displacement: texture_2d<f32>;
+@group(0) @binding(8)
+var spectral_slope: texture_2d<f32>;
 
 @compute @workgroup_size(8, 8, 1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -5620,13 +5826,18 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let albedo = textureLoad(gbuffer_albedo, pixel, 0).rgb;
     let normal = normalize(textureLoad(gbuffer_normal, pixel, 0).xyz * 2.0 - vec3<f32>(1.0));
     let material = textureLoad(gbuffer_material, pixel, 0);
+    let ocean_displacement = textureLoad(spectral_displacement, pixel, 0);
+    let ocean_slope = textureLoad(spectral_slope, pixel, 0);
     let is_water = material.x > 2.5;
     let roughness_hint = clamp(1.0 - material.y, 0.0, 1.0);
-    let water_depth = params.optical.w + material.z * 8.0;
+    let spectral_height = ocean_displacement.y;
+    let water_depth = params.optical.w + material.z * 8.0 + abs(spectral_height) * 0.18;
     let absorption = exp(-params.optical.rgb * water_depth);
-    let fresnel = pow(1.0 - clamp(abs(normal.y), 0.0, 1.0), 5.0);
-    let refract_strength = clamp(abs(normal.x) * 0.55 + abs(normal.z) * 0.55 + material.w + roughness_hint * 0.2, 0.0, 1.0);
-    let scattered = params.scattering.rgb * (0.18 + fresnel * 0.62 + material.w * 0.35);
+    let spectral_normal = normalize(vec3<f32>(-ocean_slope.x, 1.0, -ocean_slope.y));
+    let water_normal = normalize(mix(normal, spectral_normal, select(0.0, 0.58, is_water)));
+    let fresnel = pow(1.0 - clamp(abs(water_normal.y), 0.0, 1.0), 5.0);
+    let refract_strength = clamp(abs(water_normal.x) * 0.55 + abs(water_normal.z) * 0.55 + material.w + roughness_hint * 0.2, 0.0, 1.0);
+    let scattered = params.scattering.rgb * (0.18 + fresnel * 0.62 + material.w * 0.35 + ocean_slope.z * 0.08);
     let water_color = albedo * absorption + scattered;
     let composite = select(albedo, water_color, is_water);
     textureStore(water_composite, pixel, vec4<f32>(clamp(composite, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
@@ -5640,6 +5851,60 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let bit_mask = 1u << (tile_index % 32u);
         atomicOr(&water_tile_mask[word_index], bit_mask);
     }
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_spectral_ocean_compute_wgsl() -> &'static str {
+    r#"
+struct SpectralOceanParams {
+    extent: vec4<u32>,
+    fft: vec4<u32>,
+    ocean: vec4<f32>,
+    wind: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var spectral_state: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1)
+var spectral_displacement: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2)
+var spectral_slope: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3)
+var<uniform> params: SpectralOceanParams;
+
+fn hash21(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.extent.x || gid.y >= params.extent.y) {
+        return;
+    }
+    let pixel = vec2<i32>(i32(gid.x), i32(gid.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5)) / vec2<f32>(f32(params.extent.x), f32(params.extent.y));
+    let centered = uv - vec2<f32>(0.5);
+    let domain_length = max(params.ocean.w, 1.0);
+    let k = centered * (6.28318530718 * f32(params.extent.z)) / domain_length;
+    let k_len = max(length(k), 0.0001);
+    let k_dir = k / vec2<f32>(k_len);
+    let wind_dir = normalize(params.wind.xy);
+    let wind_alignment = max(dot(k_dir, wind_dir), 0.0);
+    let wind_speed = max(params.ocean.z, 0.1);
+    let largest_wave = wind_speed * wind_speed / max(params.ocean.y, 0.01);
+    let phillips = params.wind.w * exp(-1.0 / max(k_len * k_len * largest_wave * largest_wave, 0.0001)) / pow(k_len, 4.0) * wind_alignment * wind_alignment;
+    let omega = sqrt(params.ocean.y * k_len);
+    let phase = omega * params.ocean.x + hash21(vec2<f32>(gid.xy)) * 6.28318530718;
+    let amplitude = sqrt(max(phillips, 0.0));
+    let height = sin(phase) * amplitude;
+    let chop = params.wind.z * height;
+    let displacement = vec3<f32>(k_dir.x * chop, height, k_dir.y * chop);
+    let slope = vec3<f32>(cos(phase) * k.x * amplitude, cos(phase) * k.y * amplitude, amplitude);
+    textureStore(spectral_state, pixel, vec4<f32>(amplitude, phase, omega, f32(params.fft.x)));
+    textureStore(spectral_displacement, pixel, vec4<f32>(displacement, 1.0));
+    textureStore(spectral_slope, pixel, vec4<f32>(slope, 1.0));
 }
 "#
 }
@@ -9359,10 +9624,33 @@ mod tests {
         let shader = banger_single_layer_water_composite_compute_wgsl();
         assert!(shader.contains("SingleLayerWaterParams"));
         assert!(shader.contains("gbuffer_material"));
+        assert!(shader.contains("spectral_displacement"));
+        assert!(shader.contains("spectral_slope"));
         assert!(shader.contains("texture_storage_2d<rgba8unorm, write>"));
         assert!(shader.contains("texture_storage_2d<r32float, write>"));
         assert!(shader.contains("refraction_mask"));
         assert!(shader.contains("atomicOr"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_spectral_ocean_displacement_and_slope_contract() {
+        let params = banger_spectral_ocean_params_bytes(3000, 1800, 12.5, 42);
+        assert_eq!(u32::from_le_bytes(params[0..4].try_into().unwrap()), 3000);
+        assert_eq!(u32::from_le_bytes(params[4..8].try_into().unwrap()), 1800);
+        assert_eq!(u32::from_le_bytes(params[8..12].try_into().unwrap()), 2048);
+        assert_eq!(u32::from_le_bytes(params[12..16].try_into().unwrap()), 42);
+        assert_eq!(u32::from_le_bytes(params[16..20].try_into().unwrap()), 8);
+        assert_eq!(f32::from_le_bytes(params[32..36].try_into().unwrap()), 12.5);
+        assert_eq!(f32::from_le_bytes(params[44..48].try_into().unwrap()), 160.0);
+
+        let shader = banger_spectral_ocean_compute_wgsl();
+        assert!(shader.contains("SpectralOceanParams"));
+        assert!(shader.contains("texture_storage_2d<rgba16float, write>"));
+        assert!(shader.contains("spectral_displacement"));
+        assert!(shader.contains("spectral_slope"));
+        assert!(shader.contains("phillips"));
+        assert!(shader.contains("params.fft.x"));
     }
 
     #[cfg(target_os = "windows")]
