@@ -2202,7 +2202,7 @@ pub fn brain_newbrain_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: false,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Optional compact lessons in the form observed_error -> replacement_rule, separated by | when there are several.".to_string(),
+                description: "Optional compact lessons learned from errors, repeated failures, preferences or successful outcomes, usually in the form observed_pattern -> better_rule, separated by | when there are several.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "initial_rules".to_string(),
@@ -2216,7 +2216,7 @@ pub fn brain_newbrain_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: false,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Optional reusable methods/procedures that belong to this specialized Brain, separated by |.".to_string(),
+                description: "Optional reusable workflows built from lessons. Prefer compact entries with Trigger, Inputs, Steps and Check, separated by | when there are several.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "initial_tasks".to_string(),
@@ -2256,7 +2256,7 @@ pub fn brain_modify_named_brain_codeact_template() -> BrainGeneralCodeActTemplat
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_MODIFY_NAMED_BRAIN_COMMAND.to_string(),
         section: "domain_brain".to_string(),
-        purpose: "Append or revise one explicit learning entry inside an existing specialized Brain named by the LLM. Use for user-confirmed or strong candidate lessons where an observed error becomes a replacement rule, or where a reusable rule, skill, task or CodeAct draft belongs to that domain. This command targets only named specialized Brain scopes.".to_string(),
+        purpose: "Append or revise one explicit learning entry inside an existing specialized Brain named by the LLM. Use lesson for a compact rule learned from an error, repeated failure, preference or success. Use skill for a reusable workflow built from lessons, with trigger, inputs, steps and a check. This command targets only named specialized Brain scopes.".to_string(),
         result_schema: BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -2278,7 +2278,7 @@ pub fn brain_modify_named_brain_codeact_template() -> BrainGeneralCodeActTemplat
                     "task".to_string(),
                     "codeact".to_string(),
                 ],
-                description: "Kind of durable update chosen by the LLM. Prefer lesson when an error is being converted into a better rule.".to_string(),
+                description: "Kind of durable update chosen by the LLM. Prefer lesson for one learned rule; prefer skill for a reusable workflow with trigger, inputs, steps and check.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "observation".to_string(),
@@ -2313,7 +2313,7 @@ pub fn brain_modify_named_brain_codeact_template() -> BrainGeneralCodeActTemplat
                 required: true,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Compact final text to store: rule wording, skill procedure, task, or CodeAct draft. The LLM authors this; the app stores it.".to_string(),
+                description: "Compact final text to store: lesson rule, skill workflow, task, or CodeAct draft. The LLM authors this; the app stores it.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "evidence".to_string(),
@@ -3879,7 +3879,8 @@ mod tests {
         assert!(!modify_text.contains("General Brain"));
         assert!(newbrain_text.contains("root read-only catalog"));
         assert!(modify_text.contains("targets only named specialized Brain scopes"));
-        assert!(modify.purpose.contains("observed error becomes a replacement rule"));
+        assert!(modify.purpose.contains("Use lesson for a compact rule"));
+        assert!(modify.purpose.contains("Use skill for a reusable workflow"));
         assert!(newbrain.slots.iter().any(|slot| slot.name == "brain_name" && slot.required));
         assert!(newbrain.slots.iter().any(|slot| slot.name == "activation_triggers" && slot.required));
         assert!(modify.slots.iter().any(|slot| slot.name == "entry_kind" && slot.required));

@@ -314,22 +314,19 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   id: BrainLearningRegistryCategory;
   label: string;
   title: string;
-  glyph: string;
   placeholder: string;
 }> = [
   {
     id: "lesson",
     label: "Lessons",
-    title: "The agent reviews mistakes and useful outcomes, then turns them into durable rules and skills it can reuse in future sessions.",
-    glyph: "lesson-book",
-    placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
+    title: "Rules learned from mistakes and useful outcomes. Each bullet captures the observed pattern and the better rule to reuse.",
+    placeholder: "Ex: Observed error: campaign stayed abstract -> Rule: start from one concrete user scene before writing the promise."
   },
   {
     id: "skill",
     label: "Skills",
-    title: "Reusable agent skills extracted from repeated useful actions, patterns, and workflows.",
-    glyph: "zap",
-    placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
+    title: "Reusable workflows built from lessons. Each bullet should name a trigger, inputs, steps, and a check.",
+    placeholder: "Ex: UI correction workflow: Trigger=user rejects a visual change; Inputs=screenshot + accepted state; Steps=compare -> simplify -> verify; Check=no extra frame."
   }
 ];
 const DEFAULT_BRAIN_LEARNING_MEMORY_CATEGORY = BRAIN_LEARNING_MEMORY_CATEGORIES[0]!;
@@ -921,7 +918,7 @@ function BrainLearningRegistry() {
   };
 
   return (
-    <section className="brainLearningRegistry" aria-label="Durable lessons" role="listitem">
+    <section className="brainLearningRegistry" aria-label="Durable lessons and skills" role="listitem">
       <div className="brainLearningRegistry__head">
         <span className="brainRow__icon">
           <Glyph kind="lesson-book" size={17} />
@@ -940,7 +937,6 @@ function BrainLearningRegistry() {
               onClick={() => selectCategory(item.id)}
               onKeyDown={onCategoryTabKeyDown}
             >
-              <Glyph kind={item.glyph} size={13} />
               {item.label}
             </button>
           ))}
