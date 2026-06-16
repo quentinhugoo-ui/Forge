@@ -197,7 +197,10 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".widgetSessionTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
-  { selector: ".widgetSessionDrawer--open .widgetSessionDrawer__panel", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
+  /* Ungated on --open: the panel keeps sliding for ~340ms after it is toggled
+     shut, so its region must track it the whole way down. Collapsed, its rect
+     just overlaps the (already-interactive) chat-bar area, which is harmless. */
+  { selector: ".widgetSessionDrawer__panel", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
   /* Generous top margin: the menu opens upward and its frame/shadow can sit
      above the region computed mid open-animation, which clipped its top edge. */
   { selector: ".permissionModeMenu", padding: { left: 12, right: 12, top: 30, bottom: 10 } }
