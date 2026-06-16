@@ -12,17 +12,16 @@ describe("session rename CodeAct", () => {
     expect(brainSource).toContain('pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_"');
     expect(brainSource).toContain("/rename_session_<short title>_");
     expect(brainSource).toContain("The app strips the tag before display");
-    expect(brainSource).toContain("The app does not reason about, score, or repair this title");
-    expect(brainSource).toContain("The Witcher 3: Hearts of Stone");
+    expect(brainSource).toContain("relevant, grammatically correct 2-5 word session title");
+    expect(brainSource).toContain("Use a relevant, grammatically correct 2-5 word title");
     expect(brainSource).toContain("Never mention, explain, echo, format, or discuss this rename action");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("/rename_session_<short title>_");
     expect(generatedSource).toContain("The app strips the tag before display");
-    expect(generatedSource).toContain("The app does not reason about, score, or repair this title");
+    expect(generatedSource).toContain("relevant, grammatically correct 2-5 word session title");
     expect(mainSource).toContain("On the first assistant response in this session");
     expect(mainSource).toContain("/rename_session_<short title>_");
-    expect(mainSource).toContain("the app does not reason about or repair this title");
-    expect(mainSource).toContain('avoid damaged titles like "Heart Stone Witcher"');
+    expect(mainSource).toContain("relevant, grammatically correct 2-5 word session title");
     expect(mainSource).toContain("The app strips the tag before display");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_PATTERN");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_FRAGMENT_PATTERN");
@@ -38,6 +37,13 @@ describe("session rename CodeAct", () => {
     expect(rendererSource).toContain("function isSilentTranscriptCodeActLine");
     expect(rendererSource).toContain("line.replace(RENAME_SESSION_TAG_FRAGMENT_PATTERN");
     expect(rendererSource).toContain("!SILENT_TRANSCRIPT_CODEACT_COMMANDS.has(command)");
+
+    const renamePrompts = [brainSource, generatedSource, mainSource].join("\n");
+    expect(renamePrompts).not.toContain("does not " + "reason");
+    expect(renamePrompts).not.toContain("repair " + "this title");
+    expect(renamePrompts).not.toContain("canonical " + "proper names");
+    expect(renamePrompts).not.toContain("keyword " + "bags");
+    expect(renamePrompts).not.toContain("Heart " + "Stone Witcher");
   });
 
   it("removes the old compact parser and runtime title guesser", () => {
