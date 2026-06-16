@@ -4441,12 +4441,14 @@ function WidgetSessionTabs({
   sessions,
   activeSessionId,
   activeSessionLive,
+  onRevealSession,
   onOpenSession,
   onNewSession
 }: {
   sessions: SidebarSessionItem[];
   activeSessionId: string;
   activeSessionLive: boolean;
+  onRevealSession?: () => void;
   onOpenSession?: (sessionId: string, section: NativeSection) => void;
   onNewSession?: () => void;
 }) {
@@ -4475,7 +4477,10 @@ function WidgetSessionTabs({
               aria-label={`Open session: ${label}${working ? ", working" : ", complete"}`}
               title={label}
               key={session.sessionId}
-              onClick={() => onOpenSession?.(session.sessionId, session.section)}
+              onClick={() => {
+                onOpenSession?.(session.sessionId, session.section);
+                onRevealSession?.();
+              }}
             >
               <span>{label}</span>
             </button>
@@ -5466,6 +5471,7 @@ export function PanelsChatBottomSlice({
           sessions={widgetRecentSessions}
           activeSessionId={activeSessionId || snapshot.activeSessionId}
           activeSessionLive={widgetActiveSessionLive}
+          onRevealSession={expandWidgetTranscript}
           onOpenSession={onWidgetSessionOpen}
           onNewSession={onWidgetNewSession}
         />
