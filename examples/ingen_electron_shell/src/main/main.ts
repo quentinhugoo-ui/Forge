@@ -171,8 +171,9 @@ import {
   type GoogleWebCodeActRequest
 } from "./google-web-codeact.js";
 import {
-  extractWebSearchCodeAct,
-  renderWebSearchCodeActResult
+  readWebSearchCodeAct,
+  renderWebSearchCodeActResult,
+  renderWebSearchTemplateResult
 } from "./websearch-codeact.js";
 import { runWebSearchBridge } from "./websearch-bridge.js";
 import {
@@ -15780,13 +15781,29 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
 }
 
 async function executeAssistantWebSearchCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
-  if (message.role !== "assistant" || message.text.includes("WEBSEARCH_RESULT")) {
+  if (
+    message.role !== "assistant" ||
+    message.text.includes("WEBSEARCH_RESULT") ||
+    message.text.includes("WEBSEARCH_TEMPLATE_RESULT")
+  ) {
     return message;
   }
-  const request = extractWebSearchCodeAct(message.text);
-  if (!request) {
+  const codeAct = readWebSearchCodeAct(message.text);
+  if (!codeAct) {
     return message;
   }
+  if (codeAct.kind === "template") {
+    const executionText = renderWebSearchTemplateResult(codeAct.result);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeActTemplate: codeAct.result
+      })
+    };
+  }
+  const { request } = codeAct;
   const result = await runWebSearchBridge(request);
   const executionText = renderWebSearchCodeActResult(result);
   return {
