@@ -55,6 +55,9 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).toContain(":build_lock_ready");
     expect(launcherSource).toContain(":own_build_lock");
     expect(launcherSource).toContain("owner.txt");
+    expect(launcherSource).toContain("ownerPid");
+    expect(launcherSource).toContain("ownerAlive");
+    expect(launcherSource).toContain("ParentProcessId");
     expect(launcherSource).toContain("Removed stale InGen launcher build lock.");
     expect(launcherSource).toContain('del /Q "%BUILD_LOCK%\\owner.txt"');
     expect(launcherSource).toContain("if errorlevel 1 goto fail");

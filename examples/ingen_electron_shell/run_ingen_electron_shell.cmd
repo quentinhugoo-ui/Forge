@@ -73,7 +73,7 @@ if "%APP_ALREADY_RUNNING%"=="1" (
 
 2>nul mkdir "%BUILD_LOCK%"
 if not errorlevel 1 goto own_build_lock
-C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $marker = Join-Path $lock 'owner.txt'; if (Test-Path -LiteralPath $lock) { $stale = -not (Test-Path -LiteralPath $marker); if (-not $stale) { $item = Get-Item -LiteralPath $marker -ErrorAction SilentlyContinue; $stale = $item -and $item.LastWriteTimeUtc -lt (Get-Date).ToUniversalTime().AddMinutes(-20) }; if ($stale) { Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue; exit 0 } }; exit 1" >> "%LOG%" 2>>&1
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $marker = Join-Path $lock 'owner.txt'; if (Test-Path -LiteralPath $lock) { $ownerPid = $null; if (Test-Path -LiteralPath $marker) { $ownerText = Get-Content -LiteralPath $marker -TotalCount 1 -ErrorAction SilentlyContinue; $parsed = 0; if ([int]::TryParse($ownerText, [ref]$parsed)) { $ownerPid = $parsed } }; $ownerAlive = $false; if ($null -ne $ownerPid) { $ownerAlive = [bool](Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $ownerPid) -ErrorAction SilentlyContinue) }; $item = Get-Item -LiteralPath $marker -ErrorAction SilentlyContinue; $tooOld = $item -and $item.LastWriteTimeUtc -lt (Get-Date).ToUniversalTime().AddMinutes(-20); if (-not $ownerAlive -or $tooOld) { Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue; exit 0 } }; exit 1" >> "%LOG%" 2>>&1
 if not errorlevel 1 (
   echo Removed stale InGen launcher build lock. >> "%LOG%"
   2>nul mkdir "%BUILD_LOCK%"
@@ -89,7 +89,8 @@ goto build_lock_ready
 
 :own_build_lock
 set OWN_BUILD_LOCK=1
-echo %DATE% %TIME%>"%BUILD_LOCK%\owner.txt"
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$marker = '%BUILD_LOCK%\owner.txt'; $self = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $PID) -ErrorAction SilentlyContinue; Set-Content -LiteralPath $marker -Value $self.ParentProcessId -Encoding ASCII" >> "%LOG%" 2>>&1
+if not exist "%BUILD_LOCK%\owner.txt" echo %DATE% %TIME%>"%BUILD_LOCK%\owner.txt"
 
 :build_lock_ready
 if not exist "%FORGE_ELECTRON_BACKEND_EXE%" set NEED_BACKEND_REBUILD=1
