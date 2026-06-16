@@ -3412,6 +3412,19 @@ function selectedComposerModel(profile: ProviderRuntimeProfile): string {
   return models[index] ?? "";
 }
 
+function composerModelDisplayLabel(provider: LlmProviderConnectId, model: string): string {
+  if (provider !== "claude") {
+    return model;
+  }
+  const match = /^(?:claude-)?(sonnet|haiku|opus)(?:-(.+))?$/i.exec(model.trim());
+  if (!match) {
+    return model;
+  }
+  const family = match[1].slice(0, 1).toUpperCase() + match[1].slice(1).toLowerCase();
+  const suffix = match[2]?.trim();
+  return suffix ? `Claude ${family} ${suffix.replace(/-/g, ".")}` : family;
+}
+
 function selectedComposerReasoning(profile: ProviderRuntimeProfile): string {
   const reasoning = profile.reasoning.length > 0 ? profile.reasoning : [];
   const index = Math.min(panelsChatBottomState.reasoningIndex, Math.max(0, reasoning.length - 1));
@@ -16552,13 +16565,14 @@ function panelsChatBottomSnapshot(): PanelsChatBottomSnapshot {
           ? backend.nativeStatus.proof
           : backend.nativeStatus.brain;
   const selectedProfile = providerProfileFromComposer(panelsChatBottomState.selectedProvider);
-  const modelLabels = selectedProfile.connected
+  const modelValues = selectedProfile.connected
     ? selectedProfile.models.length > 0 ? selectedProfile.models : ["Model catalog unavailable"]
     : ["Connect provider"];
+  const modelLabels = modelValues.map((model) => composerModelDisplayLabel(selectedProfile.connectId, model));
   const reasoningLabels = selectedProfile.connected
     ? selectedProfile.reasoning.length > 0 ? selectedProfile.reasoning : ["Reasoning unavailable"]
     : ["-"];
-  panelsChatBottomState.modelIndex = panelsChatBottomState.modelIndex % modelLabels.length;
+  panelsChatBottomState.modelIndex = panelsChatBottomState.modelIndex % modelValues.length;
   panelsChatBottomState.reasoningIndex = panelsChatBottomState.reasoningIndex % reasoningLabels.length;
   const nativeAuthority = mode === "electron" ? "rust" : "electron-shadow";
   const snapshot: PanelsChatBottomSnapshot = {
