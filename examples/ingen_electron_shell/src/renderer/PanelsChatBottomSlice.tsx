@@ -1265,12 +1265,10 @@ type AssistantMarkdownBlock =
   | { kind: "divider" }
   | { kind: "learning_interrupt"; interrupt: BrainLearningInterrupt }
   | { kind: "search_archive_result"; result: AssistantSearchArchiveResult }
-  | { kind: "search_archive_demo_start" }
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
 const CONTEXT_COMPACTION_COMMAND = "/context_compaction_";
-const SEARCH_ARCHIVE_DEMO_START_MARKER = "[[searcharchive_demo_start]]";
 
 type TranscriptContextCompactionState = "compressing" | "compressed";
 type SpecializedBrainActivationCommand = `/${string}brain_`;
@@ -1883,12 +1881,6 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       flushList();
       skippingCodeActMetadata = false;
       lastEvent = null;
-      continue;
-    }
-    if (line === SEARCH_ARCHIVE_DEMO_START_MARKER) {
-      flushParagraph();
-      flushList();
-      blocks.push({ kind: "search_archive_demo_start" });
       continue;
     }
     if (line === "SEARCHARCHIVE_RESULT") {
@@ -3525,21 +3517,28 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
 function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: AssistantSearchArchiveResult; messageId: string; blockIndex: number }) {
   const resultCount = result.returnedCount || String(result.hits.length);
   return (
-    <section className="searchArchiveResultCard" aria-label="Search archive result">
+    <section className="searchArchiveResultCard searchArchiveResultCard--live" aria-label="Search Archive live result">
       <header className="searchArchiveResultCard__header">
         <span className="searchArchiveResultCard__icon" aria-hidden="true">
           <ModuleLogo id="searcharchive" />
         </span>
-        <span className="searchArchiveResultCard__title">Archive search</span>
-        <span className="searchArchiveResultCard__meta">{resultCount} returned</span>
+        <span className="searchArchiveResultCard__title">Search Archive</span>
+        <span className="searchArchiveResultCard__meta">{resultCount} found</span>
       </header>
+      <div className="searchArchiveResultCard__scan" aria-hidden="true">
+        <span />
+      </div>
       <div className="searchArchiveResultCard__query">
         <span>query</span>
         <code>{result.query || "empty"}</code>
       </div>
       <ol className="searchArchiveResultCard__hits">
         {result.hits.map((hit, hitIndex) => (
-          <li className="searchArchiveResultCard__hit" key={`${messageId}-search-hit-${blockIndex}-${hit.rank}-${hitIndex}`}>
+          <li
+            className="searchArchiveResultCard__hit"
+            key={`${messageId}-search-hit-${blockIndex}-${hit.rank}-${hitIndex}`}
+            style={{ "--search-archive-hit-index": hitIndex } as CSSProperties}
+          >
             <div className="searchArchiveResultCard__hitTop">
               <strong>{hit.sessionTitle || "Untitled session"}</strong>
               <span>{hit.role || "message"}</span>
@@ -3560,28 +3559,6 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
           {result.proofHash ? <code>{result.proofHash}</code> : null}
         </footer>
       ) : null}
-    </section>
-  );
-}
-
-function SearchArchiveDemoStartCard() {
-  const [starting, setStarting] = useState(false);
-  const startDemo = () => {
-    if (starting) {
-      return;
-    }
-    setStarting(true);
-    void panelsChatBottomStore.dispatch({ kind: "start_searcharchive_loop_demo" }).catch(() => setStarting(false));
-  };
-
-  return (
-    <section className="searchArchiveDemoCard" aria-label="SearchArchive loop stream demo">
-      <button className="searchArchiveDemoCard__start" type="button" onClick={startDemo} disabled={starting}>
-        <span className="searchArchiveDemoCard__startIcon" aria-hidden="true">
-          <ModuleLogo id="searcharchive" />
-        </span>
-        <span>{starting ? "Starting" : "Start"}</span>
-      </button>
     </section>
   );
 }
@@ -3686,9 +3663,6 @@ function AssistantMarkdownText({
         }
         if (block.kind === "search_archive_result") {
           return <SearchArchiveResultCard blockIndex={index} key={`${messageId}-searcharchive-${index}`} messageId={messageId} result={block.result} />;
-        }
-        if (block.kind === "search_archive_demo_start") {
-          return <SearchArchiveDemoStartCard key={`${messageId}-searcharchive-demo-${index}`} />;
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";
