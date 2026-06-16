@@ -197,7 +197,7 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".widgetSessionTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
-  { selector: ".widgetNewSessionTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
+  { selector: ".widgetSessionMenuTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
   /* Ungated on --open: the panel keeps sliding for ~340ms after it is toggled
      shut, so its region must track it the whole way down. Collapsed, its rect
      just overlaps the (already-interactive) chat-bar area, which is harmless. */
@@ -486,7 +486,7 @@ export function App() {
     return items.find((item) => item.sessionId !== "" && item.sessionId === sessionId)?.label || "New session";
   }, [panelsChatSnapshot.activeSessionId, sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
   const widgetRecentSessions = useMemo(
-    () => sidebarSnapshot.recentItems.filter((item) => item.rowVisible && item.sessionId.trim().length > 0).slice(0, 3),
+    () => sidebarSnapshot.recentItems.filter((item) => item.rowVisible && item.sessionId.trim().length > 0).slice(0, 8),
     [sidebarSnapshot.recentItems]
   );
   useEffect(() => {

@@ -155,6 +155,16 @@ For every task:
 
 Never leave successful source changes uncommitted without naming the exact path and reason. Never discard user changes. If a branch/worktree was explicitly used, it is temporary: merge successful work back to `master`, push `master`, then remove the temporary branch/worktree.
 
+## Partial Commit Rule
+
+Agents must commit only the lines they intentionally changed.
+
+Before staging, inspect `git diff`. If a touched file contains unrelated edits, use partial staging with `git add -p` or an exact index patch. Never run `git add <file>` on a file that contains mixed changes from another session.
+
+If a hunk mixes the agent's work with unrelated lines, split it with `git add -p` or stage an exact patch. If it cannot be separated cleanly, stop and report the overlapping file and lines instead of committing someone else's work.
+
+Avoid whole-file formatting on files that may contain concurrent edits unless the task explicitly owns the whole file.
+
 ## Useful Checks
 
 ```powershell

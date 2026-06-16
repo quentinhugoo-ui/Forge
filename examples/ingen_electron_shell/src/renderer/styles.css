@@ -110,8 +110,12 @@ button {
 }
 
 .shell .widgetSessionTab,
-.shell .widgetNewSessionTab {
+.shell .widgetSessionMenuTab {
   border-radius: 6px 6px 0 0 !important;
+}
+
+.shell .widgetSessionMenu__working {
+  border-radius: 999px !important;
 }
 
 .shell .sessionRow {
@@ -3980,7 +3984,7 @@ button {
 }
 
 .widgetSessionTab,
-.widgetNewSessionTab {
+.widgetSessionMenuTab {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -4002,22 +4006,37 @@ button {
   transition:
     color 150ms ease,
     background 150ms ease,
-    opacity 180ms ease;
+    max-width 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Active session tab: full and readable, frontmost (inline z-index from JS). */
 .widgetSessionTab {
-  z-index: 2;
-  max-width: min(174px, calc(var(--questionnaire-width) - 42px));
+  max-width: min(172px, calc(var(--questionnaire-width) - 70px));
   padding: 0 9px;
+}
+
+/* Folder stack: every tab after the active one tucks behind it and shrinks to
+   a peeking sliver, dimmed. */
+.widgetSessionTab + .widgetSessionTab {
+  margin-left: -10px;
+  max-width: 72px;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 28%);
 }
 
 .widgetSessionTab:hover,
 .widgetSessionTab:focus-visible,
-.widgetNewSessionTab:hover,
-.widgetNewSessionTab:focus-visible {
+.widgetSessionMenuTab:hover,
+.widgetSessionMenuTab:focus-visible {
   color: #ffffff;
   background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
   outline: none;
+}
+
+/* A peeking tab pulls forward and widens when hovered. */
+.widgetSessionTab + .widgetSessionTab:hover,
+.widgetSessionTab + .widgetSessionTab:focus-visible {
+  z-index: 35 !important;
+  max-width: 132px;
 }
 
 .widgetSessionTab__label {
@@ -4027,67 +4046,108 @@ button {
   white-space: nowrap;
 }
 
-.widgetNewSessionTab {
-  z-index: 1;
-  justify-content: flex-end;
-  /* Folder-tab overlap: tuck the left edge behind the session tab so the two
-     read as stacked tabs, not separated buttons. The icon sits past the
-     overlap, on the visible right side. */
-  margin-left: -9px;
-  width: 25px;
-  max-width: 25px;
-  min-width: 25px;
-  padding: 0 5px 0 0;
-  overflow: hidden;
+/* Chevron tab at the end of the stack: opens the sessions menu. On top so it
+   is always clickable; tucked a touch into the stack to read as one piece. */
+.widgetSessionMenuTab {
+  z-index: 36;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  margin-left: -8px;
+  padding: 0;
   touch-action: manipulation;
-  transition:
-    width 520ms cubic-bezier(0.22, 1, 0.36, 1),
-    max-width 520ms cubic-bezier(0.22, 1, 0.36, 1),
-    padding 520ms cubic-bezier(0.22, 1, 0.36, 1),
-    color 150ms ease,
-    background 150ms ease;
 }
 
-/* Pull the new-session tab in front of the session tab while interacting with
-   it or expanding it, so its content is never hidden under the overlap. */
-.widgetNewSessionTab:hover,
-.widgetNewSessionTab:focus-visible,
-.widgetNewSessionTab--expanding {
-  z-index: 3;
+.widgetSessionMenuTab svg {
+  display: block;
 }
 
-.widgetNewSessionTab--expanding {
-  justify-content: flex-start;
-  width: 116px;
-  max-width: 116px;
-  padding: 0 8px 0 9px;
+.widgetSessionDrawer--menuOpen .widgetSessionMenuTab {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
 }
 
-.widgetNewSessionTab__icon {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 auto;
+/* Sessions menu: a compact popover over the (forced-open) panel body. */
+.widgetSessionMenuScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 39;
 }
 
-.widgetNewSessionTab__label {
+.widgetSessionMenu {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: min(224px, calc(100% - 12px));
+  max-height: calc(100% - 14px);
+  overflow-y: auto;
+  padding: 4px;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 14%);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.36);
+  animation: widgetSessionMenuReveal 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.widgetSessionMenu__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  color: color-mix(in oklab, var(--forge-chat-text), #ffffff 4%);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.widgetSessionMenu__item:hover,
+.widgetSessionMenu__item:focus-visible {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 11%);
+  outline: none;
+}
+
+.widgetSessionMenu__item--active {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 7%);
+}
+
+.widgetSessionMenu__item--new {
+  color: color-mix(in oklab, #ffffff, #7dbeff 34%);
+}
+
+.widgetSessionMenu__plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.widgetSessionMenu__label {
   min-width: 0;
-  max-width: 0;
-  margin-left: 0;
   overflow: hidden;
-  opacity: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition:
-    max-width 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 220ms ease;
 }
 
-.widgetNewSessionTab--expanding .widgetNewSessionTab__label {
-  max-width: 82px;
-  margin-left: 5px;
-  opacity: 1;
-  transition-delay: 120ms, 120ms, 160ms;
+.widgetSessionMenu__working {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  background: #7dbeff;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire {
@@ -4638,7 +4698,9 @@ button {
   height: 100%;
   min-height: 0;
   padding-top: 46px;
+  padding-bottom: var(--transcript-bottom-breathing-room);
   overscroll-behavior: contain;
+  scroll-padding-bottom: var(--transcript-bottom-breathing-room);
   user-select: text;
   -webkit-user-select: text;
 }
@@ -7378,6 +7440,17 @@ ol.assistantText__list li::before {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes widgetSessionMenuReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -13942,8 +14015,9 @@ ol.assistantText__list li::before {
   .sidebarModule,
   .sidebarModule__logo,
   .widgetSessionTab,
-  .widgetNewSessionTab,
+  .widgetSessionMenuTab,
   .widgetSessionTabsRail,
+  .widgetSessionMenu,
   .widgetSessionDrawer,
   .widgetSessionDrawer__panel {
     animation: none;
