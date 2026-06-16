@@ -504,7 +504,7 @@ function BrainSessionArchiveList({
       </div>
       {hiddenCount > 0 ? (
         <button type="button" className="brainSessionArchiveMore" onClick={onShowMore}>
-          Afficher plus
+          Show more
           <span>{hiddenCount}</span>
         </button>
       ) : null}
@@ -1280,7 +1280,7 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     {
       id: "gpu",
       title: hardwareGpuTitle(primaryGpu?.name),
-      detail: "Température / Util.",
+      detail: "Temperature / Util.",
       badge: "GPU",
       temperature: primaryGpu ? { ...primaryGpu.temperature, label: "GPU" } : hardwareFallbackMetric("GPU", null, "C"),
       percent: primaryGpu ? { ...primaryGpu.utilization, label: "GPU" } : hardwareFallbackMetric("GPU", null, "%"),
@@ -1290,7 +1290,7 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     {
       id: "cpu",
       title: snapshot.cpu.model || "CPU",
-      detail: "Température / Util.",
+      detail: "Temperature / Util.",
       badge: "CPU",
       temperature: cpuTemperatureGaugeMetric(snapshot),
       percent: { ...snapshot.cpu.utilization, label: "CPU" },
@@ -1299,10 +1299,10 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     },
     {
       id: "system",
-      title: "Système",
-      detail: "Température / RAM",
-      badge: "Système",
-      temperature: { ...snapshot.thermal.systemTemperature, label: "Système" },
+      title: "System",
+      detail: "Temperature / RAM",
+      badge: "System",
+      temperature: { ...snapshot.thermal.systemTemperature, label: "System" },
       percent: { ...snapshot.memory.utilization, label: "RAM" },
       min: 25,
       max: 105

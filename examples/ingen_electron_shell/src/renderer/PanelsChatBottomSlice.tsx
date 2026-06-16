@@ -531,7 +531,7 @@ function TranscriptAttachmentFigure({
           <button
             type="button"
             className="imageEditButton imageEditButton--transcript"
-            aria-label={`Modifier ${preview.name}`}
+            aria-label={`Edit ${preview.name}`}
             onClick={(event) => {
               event.stopPropagation();
               onEditImage(preview);
@@ -2501,7 +2501,7 @@ function ComposerQuestionnaire({
   const chooseOther = (otherText = currentAnswer?.otherText ?? "") => {
     setAnswers((current) => ({
       ...current,
-      [pageIndex]: { kind: "other", value: "Autre", otherText }
+      [pageIndex]: { kind: "other", value: "Other", otherText }
     }));
   };
   const commitAnswers = () => {
@@ -2570,17 +2570,17 @@ function ComposerQuestionnaire({
               disabled={motionState === "leaving" || isClosing}
               name={`${questionnaire.sourceMessageId}-page-${candidatePageIndex}`}
               type="radio"
-              value="Autre"
+              value="Other"
               onChange={() => chooseOther()}
             />
             <span className="composerQuestionnaire__optionIndex" aria-hidden="true">4</span>
             <span className="composerQuestionnaire__optionCopy">
-              <span className="composerQuestionnaire__optionLabel">Autre</span>
+              <span className="composerQuestionnaire__optionLabel">Other</span>
               <textarea
                 className="composerQuestionnaire__otherInput"
-                aria-label="Autre"
+                aria-label="Other"
                 disabled={motionState === "leaving" || isClosing}
-                placeholder={"Pr\u00e9cise ta r\u00e9ponse..."}
+                placeholder="Describe your answer..."
                 rows={2}
                 value={candidateAnswer?.kind === "other" ? candidateAnswer.otherText : ""}
                 onChange={(event) => chooseOther(event.currentTarget.value)}
@@ -2616,11 +2616,11 @@ function ComposerQuestionnaire({
         ) : (
           <span className="composerQuestionnaire__headerSpacer" aria-hidden="true" />
         )}
-        <div className="composerQuestionnaire__pager" aria-label="Pagination du questionnaire">
+        <div className="composerQuestionnaire__pager" aria-label="Questionnaire pagination">
           <button
             type="button"
             className="composerQuestionnaire__arrow"
-            aria-label="Question précédente"
+            aria-label="Previous question"
             disabled={pageIndex === 0 || isClosing}
             onClick={() => goToPage(pageIndex - 1)}
           >
@@ -2633,7 +2633,7 @@ function ComposerQuestionnaire({
             <button
               type="button"
               className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
-              aria-label="Envoyer les réponses"
+              aria-label="Send answers"
               disabled={!currentAnswerComplete || isClosing}
               onClick={commitAnswers}
             >
@@ -2643,7 +2643,7 @@ function ComposerQuestionnaire({
             <button
               type="button"
               className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
-              aria-label="Question suivante"
+              aria-label="Next question"
               disabled={!currentAnswerComplete || isClosing}
               onClick={() => goToPage(pageIndex + 1)}
             >
@@ -4377,7 +4377,7 @@ function WidgetTranscriptPanel({
       <button
         type="button"
         className="widgetTranscriptPanel__topTab"
-        aria-label="Reduire le panneau de conversation"
+        aria-label="Collapse conversation panel"
         aria-expanded="true"
         onClick={onReduce}
       >
@@ -4413,7 +4413,7 @@ function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => v
     <button
       type="button"
       className="widgetTranscriptTab"
-      aria-label={`Agrandir la conversation : ${label}`}
+      aria-label={`Expand conversation: ${label}`}
       aria-expanded="false"
       onClick={onOpen}
     >
@@ -5737,7 +5737,7 @@ export function PanelsChatBottomSlice({
         <button
           type="button"
           className={widgetMode ? "bottomControls__widgetButton bottomControls__widgetButton--active" : "bottomControls__widgetButton"}
-          aria-label="Passer en mode widget"
+          aria-label="Switch to widget mode"
           aria-pressed={widgetMode}
           disabled={widgetModeTransitioning}
           onClick={toggleWidgetMode}

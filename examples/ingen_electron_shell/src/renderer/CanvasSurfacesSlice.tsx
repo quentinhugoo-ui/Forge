@@ -441,13 +441,13 @@ interface CanvasSessionFilesTab {
 }
 
 const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: ComposerUploadPreview["kind"][] }> = [
-  { id: "all", label: "Tous les fichiers" },
-  { id: "image", label: "Images et photos" },
+  { id: "all", label: "All files" },
+  { id: "image", label: "Images and photos" },
   { id: "video", label: "Videos" },
-  { id: "model3d", label: "Objets 3D" },
+  { id: "model3d", label: "3D objects" },
   { id: "document", label: "Documents", kinds: ["pdf", "spreadsheet", "text"] },
-  { id: "chart", label: "Graphiques" },
-  { id: "file", label: "Autres fichiers" }
+  { id: "chart", label: "Charts" },
+  { id: "file", label: "Other files" }
 ];
 function TerminalGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
   return (
@@ -1022,7 +1022,7 @@ function CanvasFilesPane({
             onChange={(event) => setQuery(event.currentTarget.value)}
           />
         </label>
-        <div className="canvasFilesPane__filters" aria-label="Classer les fichiers par type">
+        <div className="canvasFilesPane__filters" aria-label="Sort files by type">
           {FILE_KIND_FILTERS.map((filter) => {
             const count = fileKindCounts.get(filter.id) ?? 0;
             const selected = kindFilter === filter.id;
@@ -1062,7 +1062,7 @@ function CanvasFilesPane({
                     <button
                       type="button"
                       className="imageEditButton imageEditButton--file"
-                      aria-label={`Modifier ${file.name}`}
+                      aria-label={`Edit ${file.name}`}
                       onClick={(event) => {
                         event.stopPropagation();
                         stageCanvasImageForEdit(file);

@@ -3339,7 +3339,7 @@ async function openAiResponseContent(userText: string, attachments: ProviderAtta
   const content: OpenAiResponseContentPart[] = [
     {
       type: "input_text",
-      text: text || "Analyse les pieces jointes envoyees."
+      text: text || "Analyze the sent attachments."
     }
   ];
   for (const attachment of attachments) {
@@ -3391,7 +3391,7 @@ async function openAiResponseConversationInput(
 }
 
 async function openRouterUserContent(userText: string, attachments: ProviderAttachment[]): Promise<string | OpenRouterContentPart[]> {
-  const text = userTextWithAttachmentContext(userText, attachments) || "Analyse les pieces jointes envoyees.";
+  const text = userTextWithAttachmentContext(userText, attachments) || "Analyze the sent attachments.";
   const snapshots = attachments.flatMap((attachment) => attachment.visualSnapshots);
   if (snapshots.length === 0) {
     return text;
@@ -3550,7 +3550,7 @@ function compactedConversationMemory(
     `estimated_transcript_tokens=${estimatedTokens}`,
     `compact_after_tokens=${PANELS_CHAT_BOTTOM_COMPACT_AT_TOKENS}`,
     `recent_raw_token_budget=${PANELS_CHAT_BOTTOM_RECENT_CONTEXT_TOKENS}`,
-    "Memoire compacte de la conversation anterieure:"
+    "Compact memory from the previous conversation:"
   ];
   const selected: string[] = [];
   let usedTokens = estimatedPromptTokens(header.join("\n"));
@@ -3558,7 +3558,7 @@ function compactedConversationMemory(
     if (message.role === "system") {
       continue;
     }
-    const label = message.role === "user" ? "Utilisateur" : "Assistant";
+    const label = message.role === "user" ? "User" : "Assistant";
     const line = `${label}: ${trimUtf8Bytes(message.content, 1200)}`;
     const lineTokens = estimatedPromptTokens(line) + 8;
     if (selected.length > 0 && usedTokens + lineTokens > PANELS_CHAT_BOTTOM_MEMORY_TOKEN_BUDGET) {
@@ -3574,7 +3574,7 @@ function compactedConversationMemory(
       selected.length < compactedMessages.length
         ? `messages_compactes_omises=${compactedMessages.length - selected.length}`
         : "",
-      "Utilise cette memoire comme contexte, sans la recopier si elle n'est pas utile."
+      "Use this memory as context, without copying it back unless it is useful."
     ].filter(Boolean).join("\n"),
     PANELS_CHAT_BOTTOM_MEMORY_TEXT_BYTES
   );
@@ -3691,9 +3691,9 @@ function sessionDocumentMemoryContext(
   }
   return trimUtf8Bytes(
     [
-      "Registre des documents de la session:",
-      "Tous ces documents font partie du contexte actif. S'ils sont pertinents, utilise leurs apercus et leurs noms pour raisonner; demande une reinjection seulement si le contenu brut manque.",
-      `Les images de ce registre restent des cibles editables pour ${BRAIN_EDITIMAGE_COMMAND}. Si l'utilisateur demande ensuite de modifier, supprimer, remplacer, nettoyer, recadrer, recolorer ou restyler une image du registre, active ${BRAIN_EDITIMAGE_COMMAND} avec image_ref=id ou filename au lieu de demander un workspace ou de proposer un prompt pour un outil externe.`,
+      "Session document registry:",
+      "All these documents are part of the active context. If they are relevant, use their previews and names for reasoning; request reinjection only if the raw content is missing.",
+      `Images in this registry remain editable targets for ${BRAIN_EDITIMAGE_COMMAND}. If the user later asks to modify, remove, replace, clean up, crop, recolor, or restyle an image from the registry, activate ${BRAIN_EDITIMAGE_COMMAND} with image_ref=id or filename instead of asking for a workspace or proposing an external-tool prompt.`,
       ...blocks
     ].join("\n\n"),
     PANELS_CHAT_BOTTOM_DOCUMENT_MEMORY_BYTES
@@ -3736,13 +3736,13 @@ function providerUserTextForTurn(
     return [memory, documentMemory].filter(Boolean).join("\n\n");
   }
   const attachmentFollowUp = [
-    "TACHE ACTIVE OBLIGATOIRE:",
-    "L'utilisateur vient d'envoyer les pieces jointes pour repondre a sa demande precedente.",
-    `Demande precedente: ${previousIntent}`,
-    "Les pieces jointes du tour courant sont la reponse attendue a cette demande precedente.",
-    "Reponds directement maintenant a la demande precedente en utilisant les pieces jointes disponibles.",
-    "Ne demande pas ce que l'utilisateur veut faire avec l'image ou le document.",
-    "Si la demande precedente etait un avis, donne ton avis concret; si elle etait une analyse, analyse directement."
+    "MANDATORY ACTIVE TASK:",
+    "The user has just sent attachments to answer the previous request.",
+    `Previous request: ${previousIntent}`,
+    "The attachments in the current turn are the expected answer to that previous request.",
+    "Answer the previous request directly now using the available attachments.",
+    "Do not ask what the user wants to do with the image or document.",
+    "If the previous request asked for an opinion, give your concrete opinion; if it asked for an analysis, analyze directly."
   ].join("\n");
   return [memory, documentMemory, attachmentFollowUp].filter(Boolean).join("\n\n");
 }
@@ -4018,46 +4018,46 @@ function codexRuntimeReasoning(profile: ProviderRuntimeProfile): string {
 function webExplorerCodeActInstructions(moduleId = ""): string {
   if (moduleId === "gmail") {
     return [
-      "Module actif: Gmail. Si une action Gmail est demandee, ecris ta propre phrase naturelle adaptee a la demande utilisateur, puis active explicitement le CodeAct Gmail avec ses slots.",
-      `Pour ouvrir Gmail directement, active ${BRAIN_GMAIL_COM_COMMAND} apres ta phrase naturelle.`,
-      "L'application affiche automatiquement l'evenement quand le CodeAct est active; ne decris pas l'evenement technique dans ta phrase.",
+      "Active module: Gmail. If a Gmail action is requested, write your own natural sentence adapted to the user's request, then explicitly activate the Gmail CodeAct with its slots.",
+      `To open Gmail directly, activate ${BRAIN_GMAIL_COM_COMMAND} after your natural sentence.`,
+      "The app automatically displays the event when the CodeAct is active; do not describe the technical event in your sentence.",
       `Template Gmail: ${BRAIN_GMAIL_COMMAND} intent="open|search|inspect|summarize|draft|reply" query="..." keywords="..." recipient="..." subject="..." body="...".`,
-      "N'envoie jamais un email toi-meme: draft/reply prepare seulement un brouillon soumis a validation utilisateur.",
-      `N'utilise pas ${BRAIN_GOOGLEWEB_COMMAND} pour une action Gmail.`
+      "Never send an email yourself: draft/reply only prepares a draft for user validation.",
+      `Do not use ${BRAIN_GOOGLEWEB_COMMAND} for a Gmail action.`
     ].join("\n");
   }
   if (moduleId === "airbnb") {
     return [
-      "Module actif: Airbnb. Si une action Airbnb est demandee, ecris ta propre phrase naturelle adaptee a la demande utilisateur, puis active explicitement le CodeAct Airbnb avec ses slots.",
+      "Active module: Airbnb. If an Airbnb action is requested, write your own natural sentence adapted to the user's request, then explicitly activate the Airbnb CodeAct with its slots.",
       BRAIN_CODEACT_ROUTING_RULES,
-      "Ta reponse ne doit jamais etre seulement une commande CodeAct: elle doit contenir une phrase normale pour l'utilisateur, et cette meme phrase doit etre copiee dans le slot say.",
-      "L'application affiche automatiquement l'evenement quand le CodeAct est active; ne decris pas l'evenement technique dans ta phrase.",
-      `Template Airbnb: ${BRAIN_AIRBNB_COMMAND} intent="open|search|inspect" say="phrase naturelle LLM visible par l'utilisateur" query="..." keywords="...".`,
-      `Pour ouvrir Airbnb directement ou commencer une recherche Airbnb, active ${BRAIN_AIRBNB_COMMAND} apres ta phrase naturelle.`,
-      `N'utilise pas ${BRAIN_GOOGLEWEB_COMMAND} pour une action Airbnb.`
+      "Your response must never be only a CodeAct command: it must contain a normal sentence for the user, and that same sentence must be copied into the say slot.",
+      "The app automatically displays the event when the CodeAct is active; do not describe the technical event in your sentence.",
+      `Template Airbnb: ${BRAIN_AIRBNB_COMMAND} intent="open|search|inspect" say="natural LLM sentence visible to the user" query="..." keywords="...".`,
+      `To open Airbnb directly or start an Airbnb search, activate ${BRAIN_AIRBNB_COMMAND} after your natural sentence.`,
+      `Do not use ${BRAIN_GOOGLEWEB_COMMAND} for an Airbnb action.`
     ].join("\n");
   }
   if (moduleId === "compute") {
     return [
-      `Module actif: Compute. Si la demande contient une formule, un calcul, une recurrence, une simulation numerique ou une verification mathematique, ecris une phrase naturelle courte puis active explicitement ${BRAIN_NEWCOMPUTE_COMMAND}.`,
+      `Active module: Compute. If the request contains a formula, calculation, recurrence, numeric simulation, or mathematical verification, write a short natural sentence, then explicitly activate ${BRAIN_NEWCOMPUTE_COMMAND}.`,
       BRAIN_CODEACT_ROUTING_RULES,
-      `Le texte du composer peut contenir une formule injectee depuis le Canvas: traite-la comme entree Compute et transforme-la en commande ${BRAIN_NEWCOMPUTE_COMMAND} au lieu de seulement l'expliquer en prose.`,
-      "L'application affiche automatiquement l'evenement Compute quand le CodeAct est active; ne decris pas l'evenement technique dans ta phrase.",
-      `N'utilise ${BRAIN_GOOGLEWEB_COMMAND} que si le calcul exige une recherche web externe avant le Compute.`
+      `The composer text can contain a formula injected from the Canvas: treat it as Compute input and transform it into a ${BRAIN_NEWCOMPUTE_COMMAND} command instead of only explaining it in prose.`,
+      "The app automatically displays the Compute event when the CodeAct is active; do not describe the technical event in your sentence.",
+      `Use ${BRAIN_GOOGLEWEB_COMMAND} only if the calculation requires external web research before Compute.`
     ].join("\n");
   }
   return [
-    "Respecte les commandes et priorites CodeAct du Brain deja fourni au debut de session.",
+    "Follow the Brain CodeAct commands and priorities already provided at session start.",
     BRAIN_CODEACT_ROUTING_RULES,
-    `Quand le Brain actif est general et qu'une demande correspond a ${BRAIN_SCIENCE_COMMAND} ou ${BRAIN_CODING_COMMAND}, active d'abord ce CodeAct de Brain avec une phrase naturelle courte; ne commence pas par une longue reponse specialisee sans switch.`,
-    `N'utilise ${BRAIN_GOOGLEWEB_COMMAND} que pour une recherche web generique qui n'est couverte par aucun module specifique du Brain.`,
-    `Regle geographique stricte: ${BRAIN_MAPS_COMMAND} exige une intention carte/localisation/itineraire/coordonnees/Google Earth/meteo locale explicite. Un nom de pays, ville, region ou periode historique dans une demande culturelle, litteraire, historique, de tableau, de vocabulaire ou d'explication ne suffit jamais: utilise plutot ${BRAIN_WEBSEARCH_COMMAND}, puis ${BRAIN_SCRAPERS_COMMAND} si des sources, images ou medias doivent enrichir la conversation. Si le meme lieu apparait avec voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, voyageurs, logement, hotel, location ou reservation, ecris une phrase naturelle puis active d'abord ${BRAIN_MAPS_COMMAND}, puis ${BRAIN_AIRBNB_COMMAND} comme page suivante du WebExplorer. Un ${BRAIN_MAPS_COMMAND} sans target ouvre une vue Earth neutre; n'utilise jamais user_home_location comme cible par defaut. Ne lis jamais la position de l'ordinateur sans permission explicite.`,
-    `Si l'utilisateur demande de generer/creer une image, ecris une phrase naturelle puis active ${BRAIN_NEWIMAGE_COMMAND} avec say et prompt.`,
-    `Si l'utilisateur demande de modifier/retoucher/transformer une image attachee, selectionnee ou visible dans le registre des documents de la session, ecris une phrase naturelle puis active ${BRAIN_EDITIMAGE_COMMAND} avec say, instruction et image_ref.`,
-    `Pour une demande comme retirer un element de l'image, enlever le fond, changer les couleurs ou modifier l'image, n'ecris pas un prompt pour un outil externe: active ${BRAIN_EDITIMAGE_COMMAND}.`,
-    `N'active jamais ${BRAIN_WORKSPACE_COMMAND} pour generer ou editer une image; le workspace ne concerne que le travail local de code/fichiers/projet.`,
-    "Si aucune image n'est disponible dans le composer, la selection, le dernier visuel visible ou le registre des documents, demande quelle image modifier au lieu d'activer le CodeAct.",
-    "L'application n'infere pas la demande utilisateur; elle execute seulement les commandes CodeAct que tu as ecrites."
+    `When the active Brain is general and a request matches ${BRAIN_SCIENCE_COMMAND} or ${BRAIN_CODING_COMMAND}, activate that Brain CodeAct first with one short natural sentence; do not start with a long specialized answer before switching.`,
+    `Use ${BRAIN_GOOGLEWEB_COMMAND} only for generic web research that is not covered by a specific Brain module.`,
+    `Strict geography rule: ${BRAIN_MAPS_COMMAND} requires an explicit map/location/route/coordinates/Google Earth/local weather intent. A country, city, region, or historical period in a cultural, literary, historical, table, vocabulary, or explanation request is never enough: use ${BRAIN_WEBSEARCH_COMMAND} instead, then ${BRAIN_SCRAPERS_COMMAND} if sources, images, or media should enrich the conversation. If the same place appears with travel, vacation, visit, tourism, stay, destination, dates, travelers, lodging, hotel, rental, or booking, write a natural sentence, then activate ${BRAIN_MAPS_COMMAND} first and ${BRAIN_AIRBNB_COMMAND} as the next WebExplorer page. ${BRAIN_MAPS_COMMAND} without a target opens a neutral Earth view; never use user_home_location as the default target. Never read the computer location without explicit permission.`,
+    `If the user asks to generate/create an image, write a natural sentence, then activate ${BRAIN_NEWIMAGE_COMMAND} with say and prompt.`,
+    `If the user asks to modify/retouch/transform an attached, selected, or session-document image, write a natural sentence, then activate ${BRAIN_EDITIMAGE_COMMAND} with say, instruction, and image_ref.`,
+    `For requests such as removing an element from an image, removing the background, changing colors, or editing an image, do not write a prompt for an external tool: activate ${BRAIN_EDITIMAGE_COMMAND}.`,
+    `Never activate ${BRAIN_WORKSPACE_COMMAND} to generate or edit an image; workspace is only for local code/files/project work.`,
+    "If no image is available in the composer, selection, latest visible visual, or document registry, ask which image to edit instead of activating the CodeAct.",
+    "The app does not infer the user request; it only executes the CodeAct commands you wrote."
   ].join("\n");
 }
 
@@ -5249,7 +5249,7 @@ function stripCompetingTravelCodeActLines(text: string): string {
 
 function airbnbCodeActLineFromTarget(target: string): string {
   const cleanTarget = target.replace(/"/g, "'");
-  return `${BRAIN_AIRBNB_COMMAND} intent="search" say="Je t'ouvre Airbnb pour ${cleanTarget}." query="${cleanTarget}" keywords="host_geographic_travel_fallback, voyage, vacances"`;
+  return `${BRAIN_AIRBNB_COMMAND} intent="search" say="Opening Airbnb for ${cleanTarget}." query="${cleanTarget}" keywords="host_geographic_travel_fallback, travel, vacation"`;
 }
 
 function applyGeographicTravelAirbnbFallback(
@@ -5387,7 +5387,7 @@ function brainBootManifest(): string {
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
     `scrapers_mcp_policy=${BRAIN_SCRAPERS_COMMAND} runs Scrapling MCP + Crawl4AI MCP in parallel for known URLs. Use after ${BRAIN_WEBSEARCH_COMMAND} or explicit URLs to enrich answers with clean Markdown, structured fields, links, image/video/audio URLs, screenshots/artifact refs and provenance. Return one compact SCRAPERS_RESULT/media_manifest; respect robots/terms/rate limits/privacy, stealth only when authorized.`,
-    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
+    `rule=On the first user message of this session: identify the topic, choose a short relevant chat name, then emit exactly one standalone internal line /"Title"_renamechat_ before any visible prose. Never attach this line to the visible response, never mention it, and never describe the rename. The app uses the quoted field to replace "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=General Brain is immutable and read-only. The agent must never write, patch or synthesize new CodeActs inside General Brain. When /newbrain_ is emitted, the host derives the specialized activator CodeAct such as /musicianbrain_ from explicit fields and stores it outside General Brain.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
@@ -6422,7 +6422,7 @@ async function runClaudeCodePrint(
   const model = selectedComposerModel(profile);
   const effort = normalizedReasoningEffort(selectedComposerReasoning(profile));
   const history = recentConversationWindow(userMessageId, transcript)
-    .map((message) => `${message.role === "system" ? "Systeme" : message.role === "user" ? "Utilisateur" : "Assistant"}: ${message.content}`)
+    .map((message) => `${message.role === "system" ? "System" : message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
     .join("\n\n");
   const promptedUserText = [
     brainRuntimeReminderManifest(),
@@ -6432,8 +6432,8 @@ async function runClaudeCodePrint(
     brainSegmentManifest(),
     selfDirectedModeManifest(),
     webExplorerCodeActInstructions(moduleId),
-    history ? `Conversation recente:\n${history}` : "",
-    `Utilisateur:\n${userText}`
+    history ? `Recent conversation:\n${history}` : "",
+    `User:\n${userText}`
   ].filter(Boolean).join("\n\n");
   const args = [
     "-p",
@@ -6605,7 +6605,7 @@ async function runOpenRouterChatCompletion(
       role: "system",
       content:
         [
-          "Tu es la surface assistant locale d'InGen. Reponds dans la langue de l'utilisateur, clairement et sans inventer de runtime.",
+          "You are InGen's local assistant surface. Answer clearly in the user's language without inventing runtime behavior.",
           brainRuntimeReminderManifest(),
           brainIdentityMemoryManifest(),
           workspaceContextManifest(),
@@ -6783,24 +6783,24 @@ function agentRuntimeProvider(): LlmProviderConnectId {
 function agentActionResultSummary(result: AgentActionResult): string {
   const charDelta = typeof result.value === "string" && /^chars \+\d+ -\d+$/.test(result.value) ? ` ${result.value}` : "";
   if (!result.accepted) {
-    return `Resultat: action bloquee - ${result.error?.message ?? "rejetee par le host d'action"}.`;
+    return `Result: action blocked - ${result.error?.message ?? "rejected by the action host"}.`;
   }
   if (result.items) {
-    return `Resultat: ${result.items.length} element${result.items.length > 1 ? "s" : ""} liste${result.items.length > 1 ? "s" : ""}${result.path ? ` dans ${result.path}` : ""}.`;
+    return `Result: ${result.items.length} item${result.items.length > 1 ? "s" : ""} listed${result.path ? ` in ${result.path}` : ""}.`;
   }
   if (result.matches) {
-    return `Resultat: ${result.matches.length} correspondance${result.matches.length > 1 ? "s" : ""} trouvee${result.matches.length > 1 ? "s" : ""}.`;
+    return `Result: ${result.matches.length} match${result.matches.length > 1 ? "es" : ""} found.`;
   }
   if (result.commandLine) {
-    return `Resultat: commande terminee avec code ${result.exitCode ?? "inconnu"}.`;
+    return `Result: command completed with code ${result.exitCode ?? "unknown"}.`;
   }
   if (result.toPath) {
-    return `Resultat: ${result.path ?? "chemin"} -> ${result.toPath}${charDelta}.`;
+    return `Result: ${result.path ?? "path"} -> ${result.toPath}${charDelta}.`;
   }
   if (result.path) {
-    return `Resultat: action appliquee sur ${result.path}${charDelta}.`;
+    return `Result: action applied on ${result.path}${charDelta}.`;
   }
-  return `Resultat: action appliquee${charDelta}.`;
+  return `Result: action applied${charDelta}.`;
 }
 
 function agentRuntimeToolResultSummary(result: AgentActionResult): string {
@@ -7268,13 +7268,13 @@ function agentLoopNarrationContractManifest(): string {
     "LOOP_STREAM_NARRATION_CONTRACT v1",
     "ACTION_NARRATION_CONTRACT v1",
     "voice_source=Follow BRAIN_PERSONALITY_MANIFEST when choosing warmth, rhythm, phrasing and how much human presence to show.",
-    "visible_language=French; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
+    "visible_language=English; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
     "visible_step_shape=Each visible paragraph should make the step understandable: what was just learned, why the next move follows, and what action or verification comes next.",
     "paragraph_size=Use one compact paragraph of 1-3 sentences before an event or action. Avoid long checklists during the loop.",
     "pedagogy=Name pivots and tradeoffs plainly: if a tool fails, explain the useful signal from the failure and the safer next route.",
     "evidence=After a tool result, mention the runtime proof that matters: accepted result, path, count, exit code, artifact, verification or blocked reason.",
     "event_coupling=When you say an action will be taken, immediately follow with the matching CodeAct or AGENT_ACTION_JSON control line. Do not promise work without an event.",
-    "tone=Concrete, calm, direct. Avoid mechanical labels such as 'Step 1', 'OBLIGATION', 'Interdit', or repeating 'Je vais' at every paragraph.",
+    "tone=Concrete, calm, direct. Avoid mechanical labels such as 'Step 1', 'OBLIGATION', 'Forbidden', or repeating 'I will' at every paragraph.",
     "completion=When no further loop action is needed, stop the loop with a short natural summary of what was actually proven or what remains blocked."
   ].join("\n");
 }
@@ -7303,7 +7303,7 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
       ? "stop_policy=Do not stop with only a verbal plan when a concrete local action is still required."
       : "stop_policy=If the objective is already satisfied, write the natural summary and do not emit AGENT_ACTION_JSON.",
     "",
-    `Objectif utilisateur initial:\n${originalUserText}`
+    `Initial user objective:\n${originalUserText}`
   ].join("\n");
 }
 
@@ -7325,9 +7325,9 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
       : "runtime_requirement=Choose the next concrete local action from the observed state; do not add a domain-specific hardcoded workflow.",
     "control_line=AGENT_ACTION_JSON must start at column 1 after the visible paragraph. Do not write a final summary in this continuation.",
     "",
-    `Derniere reponse assistant sans action:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
+    `Last assistant response without action:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
-    `Objectif utilisateur initial:\n${originalUserText}`
+    `Initial user objective:\n${originalUserText}`
   ].join("\n");
 }
 
@@ -7340,12 +7340,12 @@ function agentActionCodingLivePreviewForcedContinuationUserText(originalUserText
     "",
     "runtime_next=The local visual file exists, but the live preview has not been opened yet. Explain that proof and open the preview as the next event.",
     `control_line=After the visible paragraph, emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} with the verified absolute path and kind="html" when appropriate.`,
-    lastPath ? `path_verifie=${JSON.stringify(lastPath)}` : "",
+    lastPath ? `verified_path=${JSON.stringify(lastPath)}` : "",
     "stop_policy=Do not claim the preview is open without the preview CodeAct.",
     "",
-    `Derniere reponse assistant sans preview:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
+    `Last assistant response without preview:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
-    `Objectif utilisateur initial:\n${originalUserText}`
+    `Initial user objective:\n${originalUserText}`
   ].filter(Boolean).join("\n");
 }
 
@@ -7358,9 +7358,9 @@ function agentActionInitialCodingVisualForcedContinuationUserText(originalUserTe
     "runtime_next=The previous answer treated a visual coding request as a snippet, but this desktop loop needs a real local artifact. Explain that pivot clearly, then create or update the file.",
     "control_line=After the visible paragraph, emit exactly one AGENT_ACTION_JSON line that creates or modifies the local file. Do not claim file proof before AGENT_ACTION_RESULT.",
     "",
-    `Derniere reponse assistant a corriger:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
+    `Last assistant response to correct:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
-    `Objectif utilisateur initial:\n${originalUserText}`
+    `Initial user objective:\n${originalUserText}`
   ].join("\n");
 }
 
@@ -7378,20 +7378,20 @@ function agentActionFailureContinuationUserText(originalUserText: string, reques
     "blocked_policy=If the error proves a protected root, dangerous action, missing user permission or impossible operation, state the block clearly and do not emit AGENT_ACTION_JSON.",
     "control_line=If a safe alternative exists, emit exactly one AGENT_ACTION_JSON line after the visible paragraph. Never claim success without an accepted AGENT_ACTION_RESULT.",
     "",
-    `Objectif utilisateur initial:\n${originalUserText}`
+    `Initial user objective:\n${originalUserText}`
   ].join("\n");
 }
 
-const AGENT_ACTION_ORGANIZE_CATEGORY_NAMES = new Set(["Documents", "Images", "Videos", "Audio", "Archives", "Code", "Applications", "Dossiers", "Autres"]);
+const AGENT_ACTION_ORGANIZE_CATEGORY_NAMES = new Set(["Documents", "Images", "Videos", "Audio", "Archives", "Code", "Applications", "Folders", "Other"]);
 const AGENT_ACTION_VISIBLE_SHORTCUT_EXTENSIONS = new Set([".exe", ".msi", ".lnk", ".url", ".appref-ms"]);
 const AGENT_ACTION_IGNORED_SYSTEM_FILENAMES = new Set(["desktop.ini", "thumbs.db"]);
-const AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME = "Classement";
+const AGENT_ACTION_DEFAULT_COLLECTION_FOLDER_NAME = "Sorted";
 const AGENT_ACTION_DETERMINISTIC_FALLBACK_MAX_REQUESTS = 48;
 const AGENT_ACTION_DETERMINISTIC_STEP_DELAY_MS = 280;
 
 function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   if (item.kind === "directory") {
-    return "Dossiers";
+    return "Folders";
   }
   const extension = extname(item.name).toLowerCase();
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff"].includes(extension)) return "Images";
@@ -7401,7 +7401,7 @@ function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   if ([".js", ".ts", ".tsx", ".jsx", ".py", ".rs", ".go", ".java", ".cpp", ".c", ".h", ".json", ".toml", ".yaml", ".yml", ".html", ".css"].includes(extension)) return "Code";
   if ([".exe", ".msi", ".app", ".bat", ".cmd", ".ps1"].includes(extension)) return "Applications";
   if ([".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".xls", ".xlsx", ".ppt", ".pptx", ".csv"].includes(extension)) return "Documents";
-  return "Autres";
+  return "Other";
 }
 
 function agentActionShouldLeaveLegacyPathInPlace(item: AgentActionPathEntry): boolean {
@@ -7461,15 +7461,15 @@ function deterministicOrganizationProgressText(request: AgentActionRequest, inde
   const target = request.toPath ?? request.path ?? "the selected path";
   switch (request.action) {
     case "create_directory":
-      return `Catégorie prête${position}: je vérifie le dossier ${target} avant les déplacements.`;
+      return `Category ready${position}: checking the folder ${target} before moving items.`;
     case "move_path":
-      return `Élément classé${position}: ${request.path ?? "un élément"} part vers ${target}.`;
+      return `Item sorted${position}: ${request.path ?? "an item"} is moving to ${target}.`;
     case "copy_path":
-      return `Copie bornée${position}: ${request.path ?? "un élément"} est dupliqué vers ${target}.`;
+      return `Bounded copy${position}: ${request.path ?? "an item"} is being duplicated to ${target}.`;
     case "rename_path":
-      return `Nom clarifié${position}: ${request.path ?? "un élément"} devient ${target}.`;
+      return `Name clarified${position}: ${request.path ?? "an item"} becomes ${target}.`;
     default:
-      return `Action locale${position}: ${AGENT_ACTION_CAPABILITY_BY_ACTION[request.action]} s'exécute maintenant.`;
+      return `Local action${position}: ${AGENT_ACTION_CAPABILITY_BY_ACTION[request.action]} is running now.`;
   }
 }
 
@@ -7480,7 +7480,7 @@ function agentActionUserWantsCollectionRoot(text: string): boolean {
 function agentActionDisplayName(value?: string): string {
   const fileName = (value ?? "").replace(/[\\/]+$/g, "").split(/[\\/]/).filter(Boolean).at(-1) ?? "";
   if (!fileName) {
-    return "cet element";
+    return "this item";
   }
   return fileName.length > 54 ? `${fileName.slice(0, 43)}...${fileName.slice(-8)}` : fileName;
 }
@@ -7488,7 +7488,7 @@ function agentActionDisplayName(value?: string): string {
 function agentActionDestinationFolderName(value?: string): string {
   const parent = value ? dirname(value) : "";
   const folder = agentActionDisplayName(parent);
-  return folder === "cet element" ? "son dossier cible" : folder;
+  return folder === "this item" ? "its target folder" : folder;
 }
 
 function agentActionShouldLeavePathInPlace(item: AgentActionPathEntry, moveDirectories: boolean): boolean {
@@ -7563,24 +7563,24 @@ function agentActionFileOrganizationProgressText(request: AgentActionRequest, in
   const targetFolder = agentActionDestinationFolderName(request.toPath);
   const opening =
     index === 0
-      ? "Je commence le tri par les elements les plus evidents."
+      ? "I am starting the sorting pass with the most obvious items."
       : index % 3 === 0
-        ? "Le bureau se simplifie par petites decisions verifiables."
+        ? "The desktop is getting simpler through small verifiable decisions."
         : index % 3 === 1
-          ? "Je garde le rythme: une action claire, puis verification."
-          : "Je continue sans toucher aux raccourcis ni aux applications visibles.";
-  const remaining = total > index + 1 ? "Je poursuis ensuite avec le prochain element utile." : "Je fais ensuite une derniere verification du resultat.";
+          ? "Keeping the rhythm: one clear action, then verification."
+          : "I am continuing without touching visible shortcuts or applications.";
+  const remaining = total > index + 1 ? "I will continue with the next useful item." : "I will run one final result check after this.";
   switch (request.action) {
     case "create_directory":
-      return `${opening} Je prepare le dossier ${targetName}; il servira de point d'arrivee propre au lieu d'empiler les fichiers au meme endroit.`;
+      return `${opening} I am preparing the folder ${targetName}; it will be a clean destination instead of stacking files in the same place.`;
     case "move_path":
-      return `${opening} Je deplace ${sourceName} vers ${targetFolder}, parce que sa categorie est claire. ${remaining}`;
+      return `${opening} I am moving ${sourceName} to ${targetFolder} because its category is clear. ${remaining}`;
     case "copy_path":
-      return `${opening} Je copie ${sourceName} vers ${targetName} en gardant l'original intact, puis je controle que la copie existe.`;
+      return `${opening} I am copying ${sourceName} to ${targetName} while keeping the original intact, then checking that the copy exists.`;
     case "rename_path":
-      return `${opening} Je renomme ${sourceName} en ${targetName}; le but est de rendre l'element reconnaissable sans changer son contenu.`;
+      return `${opening} I am renaming ${sourceName} to ${targetName}; the goal is to make the item recognizable without changing its contents.`;
     default:
-      return `${opening} J'applique l'action locale necessaire, puis je verifie le resultat avant de continuer.`;
+      return `${opening} I am applying the required local action, then checking the result before continuing.`;
   }
 }
 
@@ -7590,13 +7590,13 @@ function agentActionFileOrganizationFinalText(results: AgentActionResult[]): str
   const created = accepted.filter((result) => result.action === "create_directory").length;
   const moved = accepted.filter((result) => result.action === "move_path").length;
   const parts = [
-    created ? `${created} dossier${created > 1 ? "s" : ""} prepare${created > 1 ? "s" : ""}` : "",
-    moved ? `${moved} element${moved > 1 ? "s" : ""} deplace${moved > 1 ? "s" : ""}` : ""
+    created ? `${created} folder${created > 1 ? "s" : ""} prepared` : "",
+    moved ? `${moved} item${moved > 1 ? "s" : ""} moved` : ""
   ].filter(Boolean);
   if (parts.length === 0) {
-    return `Conclusion: aucune modification locale n'a ete appliquee.${failed ? ` Blocage: ${failed.error?.message ?? "action refusee par le host"}.` : ""}`;
+    return `Conclusion: no local changes were applied.${failed ? ` Blocker: ${failed.error?.message ?? "action refused by the host"}.` : ""}`;
   }
-  return `Conclusion: ${parts.join(", ")}.${failed ? ` La suite s'est arretee sur un blocage: ${failed.error?.message ?? "action refusee par le host"}.` : ""}`;
+  return `Conclusion: ${parts.join(", ")}.${failed ? ` The sequence stopped on a blocker: ${failed.error?.message ?? "action refused by the host"}.` : ""}`;
 }
 
 function deterministicOrganizationFinalText(results: AgentActionResult[]): string {
@@ -7607,15 +7607,15 @@ function deterministicOrganizationFinalText(results: AgentActionResult[]): strin
   const copied = accepted.filter((result) => result.action === "copy_path").length;
   const renamed = accepted.filter((result) => result.action === "rename_path").length;
   const parts = [
-    created ? `${created} dossier${created > 1 ? "s" : ""} prêt${created > 1 ? "s" : ""}` : "",
-    moved ? `${moved} élément${moved > 1 ? "s" : ""} déplacé${moved > 1 ? "s" : ""}` : "",
-    copied ? `${copied} élément${copied > 1 ? "s" : ""} copié${copied > 1 ? "s" : ""}` : "",
-    renamed ? `${renamed} élément${renamed > 1 ? "s" : ""} renommé${renamed > 1 ? "s" : ""}` : ""
+    created ? `${created} folder${created > 1 ? "s" : ""} ready` : "",
+    moved ? `${moved} item${moved > 1 ? "s" : ""} moved` : "",
+    copied ? `${copied} item${copied > 1 ? "s" : ""} copied` : "",
+    renamed ? `${renamed} item${renamed > 1 ? "s" : ""} renamed` : ""
   ].filter(Boolean);
   if (parts.length === 0) {
-    return `Conclusion: aucune modification locale n'a été appliquée.${failed ? ` Blocage: ${failed.error?.message ?? "action refusée par le host"}.` : ""}`;
+    return `Conclusion: no local changes were applied.${failed ? ` Blocker: ${failed.error?.message ?? "action refused by the host"}.` : ""}`;
   }
-  return `Conclusion: ${parts.join(", ")}.${failed ? ` La suite s'est arrêtée sur un blocage: ${failed.error?.message ?? "action refusée par le host"}.` : ""}`;
+  return `Conclusion: ${parts.join(", ")}.${failed ? ` The sequence stopped on a blocker: ${failed.error?.message ?? "action refused by the host"}.` : ""}`;
 }
 
 async function applyDeterministicOrganizationFallback(params: {
@@ -7635,10 +7635,10 @@ async function applyDeterministicOrganizationFallback(params: {
   if (requests.length === 0) {
     const assistantMessage = {
       ...params.assistantMessage,
-      text: `${params.assistantMessage.text.trimEnd()}\n\nConclusion: aucun élément non-application n'a été déplacé; les applications, raccourcis et dossiers visibles restent en place.`.trim(),
+      text: `${params.assistantMessage.text.trimEnd()}\n\nConclusion: no non-application item was moved; visible apps, shortcuts, and folders remain in place.`.trim(),
       proofHash: hashJson({ deterministicAgentActionFallbackNoop: true, previousProofHash: params.assistantMessage.proofHash })
     };
-    assistantMessage.text = `${params.assistantMessage.text.trimEnd()}\n\nConclusion: aucun fichier a classer n'a ete trouve. Les raccourcis d'application et les fichiers systeme visibles restent en place.`.trim();
+    assistantMessage.text = `${params.assistantMessage.text.trimEnd()}\n\nConclusion: no file to sort was found. App shortcuts and visible system files remain in place.`.trim();
     params.commitProgress?.(assistantMessage);
     return assistantMessage;
   }
@@ -7646,7 +7646,7 @@ async function applyDeterministicOrganizationFallback(params: {
     ...params.assistantMessage,
     text: [
       params.assistantMessage.text,
-      "La liste est suffisante pour lancer un premier tri borné: je crée les dossiers de catégories nécessaires, puis je déplace quelques éléments évidents sans rien supprimer."
+      "The list is sufficient for a first bounded sorting pass: I am creating the necessary category folders, then moving a few obvious items without deleting anything."
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
   assistantMessage = {
@@ -7654,8 +7654,8 @@ async function applyDeterministicOrganizationFallback(params: {
     text: [
       params.assistantMessage.text,
       agentActionUserWantsCollectionRoot(params.originalUserText)
-        ? "Je passe a un rangement plus net: je cree un dossier principal pour le bureau, puis je classe les fichiers et dossiers dedans par categorie."
-        : "J'ai assez d'elements pour commencer: je cree seulement les dossiers utiles, puis je range les fichiers evidents sans rien supprimer."
+        ? "I am moving to a cleaner organization: I am creating a main desktop folder, then sorting files and folders into it by category."
+        : "I have enough items to start: I am creating only the useful folders, then sorting the obvious files without deleting anything."
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
   const results: AgentActionResult[] = [];
@@ -14369,7 +14369,7 @@ function polishedSessionTitle(title: string, reason: string): string {
   }
   const copiedHistory = compact.match(/^je\s+veux\s+connaitre\s+l['’]histoire\s+de\s+(.+)$/i);
   if (copiedHistory?.[1]) {
-    return normalizeSessionTitle(`Histoire de ${copiedHistory[1]}`);
+    return normalizeSessionTitle(`History of ${copiedHistory[1]}`);
   }
   const copiedTalk = compact.match(/^(?:parle|parles|parlez)\s+moi\s+de\s+(.+)$/i);
   if (copiedTalk?.[1]) {
@@ -14379,13 +14379,13 @@ function polishedSessionTitle(title: string, reason: string): string {
   const hasTitleShape = /\b(de|du|des|sur|pour|avec|dans|analyse|histoire|decouverte|recherche|climat|creation|debug|refonte|plan)\b/i.test(compact);
   if (words.length <= 2 && !hasTitleShape) {
     if (/histoire|histor/i.test(reason)) {
-      return normalizeSessionTitle(`Histoire de ${compact}`);
+      return normalizeSessionTitle(`History of ${compact}`);
     }
     if (/climat|temperature|meteo|saison/i.test(reason)) {
-      return normalizeSessionTitle(`Climat de ${compact}`);
+      return normalizeSessionTitle(`Climate of ${compact}`);
     }
     if (/voyage|vacance|sejour|airbnb|logement|hotel|location/i.test(reason)) {
-      return normalizeSessionTitle(`Voyage a ${compact}`);
+      return normalizeSessionTitle(`Travel to ${compact}`);
     }
     return normalizeSessionTitle(compact);
   }
@@ -14423,18 +14423,18 @@ function firstTurnRuntimeSessionTitle(userText: string, assistantText: string): 
   }
   const context = `${userText}\n${assistantText}`;
   if (/\b(?:vie|biograph|qui\s+est|portrait|ne\s+en|né\s+en|nee\s+en|née\s+en|mort\s+en|inventeur|president|président|ecrivain|écrivain|philosophe|scientifique|homme\s+d['’]etat)\b/i.test(context)) {
-    return normalizeSessionTitle(`Biographie de ${subject}`);
+    return normalizeSessionTitle(`Biography of ${subject}`);
   }
   if (/\b(?:histoire|origine|naissance|fondation|chronologie)\b/i.test(context)) {
-    return normalizeSessionTitle(`Histoire de ${subject}`);
+    return normalizeSessionTitle(`History of ${subject}`);
   }
   if (/\b(?:climat|meteo|météo|temperature|température|saison)\b/i.test(context)) {
-    return normalizeSessionTitle(`Climat de ${subject}`);
+    return normalizeSessionTitle(`Climate of ${subject}`);
   }
   if (/\b(?:airbnb|hotel|hôtel|logement|sejour|séjour|voyage|vacances)\b/i.test(context)) {
-    return normalizeSessionTitle(`Voyage a ${subject}`);
+    return normalizeSessionTitle(`Travel to ${subject}`);
   }
-  return normalizeSessionTitle(`Guide de ${subject}`);
+  return normalizeSessionTitle(`Guide to ${subject}`);
 }
 
 function applyFirstTurnRuntimeSessionTitle(
@@ -15946,16 +15946,16 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
   const command = brainSegmentCommand(segment);
   const catalog = segment === "science" ? "Science/Engineering/3D Brain" : "Coding Brain";
   const lines = [
-    userText || "Continue la demande utilisateur en cours.",
+    userText || "Continue the current user request.",
     "",
-    `Contexte InGen: ${command} vient d'etre active. Le catalogue ${catalog} est maintenant injecte. Continue la demande utilisateur avec ce Brain actif; ne reactive pas ${command} sauf si une nouvelle demande l'exige.`,
+    `InGen context: ${command} has just been activated. The ${catalog} catalog is now injected. Continue the user request with this Brain active; do not reactivate ${command} unless a new request requires it.`,
     agentLoopNarrationContractManifest(),
     `questionnaire_pause=If useful questions are needed before acting, do not write a checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, optional intro, q1..q5 max, one question per page, and three concrete expert options in qN_options. Use only if guessing would hurt the result; host adds Other automatically.`
   ];
   if (segment === "coding") {
     lines.push(
-      "Coding Brain conserve les outils Windows/local action et le rythme d'action: pour creer du code, modifier un fichier, lancer un test ou inspecter le poste, utilise AGENT_ACTION_JSON puis attends AGENT_ACTION_RESULT avant de conclure.",
-      `Pour une demande visuelle HTML/CSS/JS/React/Vite, n'ecris pas de bloc de code a copier-coller: cree ou modifie un vrai fichier local avec AGENT_ACTION_JSON, verifie le resultat accepte, puis annonce l'ouverture du visuel et emets ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} avec le chemin absolu verifie.`
+      "Coding Brain keeps Windows/local action tools and action rhythm: to create code, modify a file, run a test, or inspect the machine, use AGENT_ACTION_JSON, then wait for AGENT_ACTION_RESULT before concluding.",
+      `For a visual HTML/CSS/JS/React/Vite request, do not write a copy-paste code block: create or modify a real local file with AGENT_ACTION_JSON, verify the accepted result, then announce that the visual preview is opening and emit ${BRAIN_CODING_LIVE_PREVIEW_COMMAND} with the verified absolute path.`
     );
   }
   return lines.join("\n");
@@ -15969,7 +15969,7 @@ function brainCodeActLoopContinuationUserText(
   const commandList = commands.filter((command) => command !== BRAIN_RENAME_SESSION_COMMAND).join(" ");
   const visiblePrior = assistantCodeActVisibleText(previousAssistantText);
   return [
-    userText || "Continue la demande utilisateur en cours.",
+    userText || "Continue the current user request.",
     "",
     "BRAIN_CODEACT_LOOP_CONTINUATION v1",
     `codeact_events=${commandList || "none"}`,
@@ -16144,40 +16144,40 @@ const ASSISTANT_PATTERN_DEMO_SESSION_ID = "assistant-writing-patterns-gallery-de
 function assistantPatternDemoArchiveSession(): ChatArchiveSession {
   const now = "2026-06-13T03:20:00.000Z";
   const messages: ChatArchiveMessage[] = [
-    { turnId: "pattern-demo-user-summary", role: "user", text: "Montre-moi un resume court.", createdAt: now, attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-summary") },
-    { turnId: "pattern-demo-assistant-summary", role: "assistant", text: "En bref : Kagoshima a des hivers doux, des etes tres humides, et l'automne reste souvent la saison la plus confortable.\n\nA retenir : chaleur + humidite structurent la plupart des conseils.", createdAt: "2026-06-13T03:20:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-summary") },
-    { turnId: "pattern-demo-user-facts", role: "user", text: "Montre-moi des paires cle-valeur.", createdAt: "2026-06-13T03:21:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-facts") },
-    { turnId: "pattern-demo-assistant-facts", role: "assistant", text: "Fiche compacte :\n\nVille: Kagoshima\nSaison ideale: automne\nHumidite: elevee en ete\nPoint de vigilance: typhons possibles", createdAt: "2026-06-13T03:21:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-facts") },
-    { turnId: "pattern-demo-user-steps", role: "user", text: "Montre-moi une procedure.", createdAt: "2026-06-13T03:22:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-steps") },
-    { turnId: "pattern-demo-assistant-steps", role: "assistant", text: "Procedure recommandee :\n\n1. Identifier le pattern dominant.\n2. Verifier si le parser sait deja le reconnaitre.\n3. Le rendre avec la grammaire visuelle commune.\n4. Ajouter une assertion de non-regression.", createdAt: "2026-06-13T03:22:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-steps") },
-    { turnId: "pattern-demo-user-plan", role: "user", text: "Montre-moi un plan d'action.", createdAt: "2026-06-13T03:23:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-plan") },
-    { turnId: "pattern-demo-assistant-plan", role: "assistant", text: "Plan d'action :\n\nObjectif: harmoniser les rendus LLM\nEtape 1: detecter les blocs recurrents\nEtape 2: appliquer les tokens visuels communs\nValidation: test Markdown cible + build renderer\nProchaine action: ouvrir la session galerie et comparer les blocs", createdAt: "2026-06-13T03:23:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-plan") },
-    { turnId: "pattern-demo-user-pros-cons", role: "user", text: "Montre-moi avantages et limites.", createdAt: "2026-06-13T03:24:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-pros-cons") },
-    { turnId: "pattern-demo-assistant-pros-cons", role: "assistant", text: "Avantages :\n\n- Lecture plus rapide\n- Patterns LLM previsibles\n- Moins de blocs bruts fatigants\n\nLimites :\n\n- Certains formats sont ambigus\n- Le parser doit rester conservateur\n- Les longs tableaux doivent rester scrollables", createdAt: "2026-06-13T03:24:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-pros-cons") },
-    { turnId: "pattern-demo-user-callout", role: "user", text: "Montre-moi notes, warnings et hypotheses.", createdAt: "2026-06-13T03:25:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-callout") },
-    { turnId: "pattern-demo-assistant-callout", role: "assistant", text: "Note: Ceci devient une information discrete.\n\nAttention: cette ligne devient un warning.\n\nHypothese: le LLM peut envoyer une supposition que le front doit distinguer.", createdAt: "2026-06-13T03:25:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-callout") },
-    { turnId: "pattern-demo-user-quote", role: "user", text: "Montre-moi une citation/source.", createdAt: "2026-06-13T03:26:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-quote") },
-    { turnId: "pattern-demo-assistant-quote", role: "assistant", text: "Citation/source a isoler :\n\n> Le rendu doit aider a scanner l'information, pas seulement reproduire le texte brut.\n> Une citation consecutive reste un seul bloc.", createdAt: "2026-06-13T03:26:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-quote") },
-    { turnId: "pattern-demo-user-table", role: "user", text: "Montre-moi une reponse avec un tableau Markdown.", createdAt: "2026-06-13T03:27:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-table") },
-    { turnId: "pattern-demo-assistant-table", role: "assistant", text: "Tableau climatique aplati comme un LLM peut le renvoyer :\n\n| Saison | Temperature | Ressenti | |---|---:|---| | Hiver | 5-14 C | Doux | | Printemps | 10-24 C | Agreable | | Ete | 24-33 C | Chaud et humide |", createdAt: "2026-06-13T03:27:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-table") },
-    { turnId: "pattern-demo-user-code", role: "user", text: "Montre-moi un code fence.", createdAt: "2026-06-13T03:28:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-code") },
-    { turnId: "pattern-demo-assistant-code", role: "assistant", text: "Exemple de code fence :\n\n```rust\nfn seasonal_band(month: u8) -> &'static str {\n    match month {\n        12 | 1 | 2 => \"winter\",\n        6..=8 => \"summer\",\n        _ => \"transition\",\n    }\n}\n```", createdAt: "2026-06-13T03:28:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-code") },
-    { turnId: "pattern-demo-user-data", role: "user", text: "Montre-moi du JSON ou YAML.", createdAt: "2026-06-13T03:29:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-data") },
-    { turnId: "pattern-demo-assistant-data", role: "assistant", text: "Exemple de donnees structurees :\n\n```json\n{\n  \"city\": \"Kagoshima\",\n  \"season\": \"autumn\",\n  \"risk\": \"typhoon watch\"\n}\n```", createdAt: "2026-06-13T03:29:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-data") },
-    { turnId: "pattern-demo-user-command", role: "user", text: "Montre-moi une commande terminal.", createdAt: "2026-06-13T03:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-command") },
-    { turnId: "pattern-demo-assistant-command", role: "assistant", text: "Commande a copier :\n\n```powershell\nnpm.cmd run build\nnpx.cmd vitest run tests/llm-multimodal-attachments.test.ts -t \"renders assistant markdown\"\n```", createdAt: "2026-06-13T03:30:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-command") },
-    { turnId: "pattern-demo-user-log", role: "user", text: "Montre-moi un log d'erreur.", createdAt: "2026-06-13T03:31:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-log") },
-    { turnId: "pattern-demo-assistant-log", role: "assistant", text: "Erreur a diagnostiquer :\n\n```text\nError: table row has 5 cells but header has 3\n  at parseMarkdownTable (PanelsChatBottomSlice.tsx:1488)\n  at AssistantMarkdownText (PanelsChatBottomSlice.tsx:2552)\n```", createdAt: "2026-06-13T03:31:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-log") },
-    { turnId: "pattern-demo-user-math", role: "user", text: "Montre-moi calculs et formules.", createdAt: "2026-06-13T03:32:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-math") },
-    { turnId: "pattern-demo-assistant-math", role: "assistant", text: "Calcul rapide :\n\nTemperature moyenne: (24 + 33) / 2 = 28.5 C\nHumidite ressentie: 28.5 C + facteur humidite eleve => sensation plus lourde\nROI simplifie: gain / cout = 420 / 120 = 3.5", createdAt: "2026-06-13T03:32:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-math") },
-    { turnId: "pattern-demo-user-decision", role: "user", text: "Montre-moi une decision recommandee.", createdAt: "2026-06-13T03:33:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-decision") },
-    { turnId: "pattern-demo-assistant-decision", role: "assistant", text: "Recommandation : partir en automne.\n\nOption A: automne, meilleur equilibre confort/pluie.\nOption B: printemps, agreable mais humidite montante.\nOption C: ete, a eviter si tu supportes mal la chaleur.\n\nConclusion : je choisirais septembre tardif ou octobre.", createdAt: "2026-06-13T03:33:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-decision") },
-    { turnId: "pattern-demo-user-questions", role: "user", text: "Montre-moi des questions de clarification.", createdAt: "2026-06-13T03:34:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-questions") },
-    { turnId: "pattern-demo-assistant-questions", role: "assistant", text: "Questions utiles :\n\n- Tu veux une reponse touristique ou meteorologique ?\n- Tu preferes des moyennes mensuelles ou saisonnieres ?\n- Tu veux inclure les risques typhon ?", createdAt: "2026-06-13T03:34:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-questions") },
-    { turnId: "pattern-demo-user-checklist", role: "user", text: "Montre-moi une checklist.", createdAt: "2026-06-13T03:35:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-checklist") },
-    { turnId: "pattern-demo-assistant-checklist", role: "assistant", text: "Checklist de preparation :\n\n- [x] Identifier le pattern LLM\n- [x] Appliquer l'identite graphique commune\n- [ ] Verifier le rendu dans la session fictive", createdAt: "2026-06-13T03:35:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-checklist") },
-    { turnId: "pattern-demo-user-divider", role: "user", text: "Montre-moi une synthese separee.", createdAt: "2026-06-13T03:36:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-divider") },
-    { turnId: "pattern-demo-assistant-divider", role: "assistant", text: "Avant la synthese.\n\n---\n\n1. Lire le pattern.\n2. Promouvoir en composant.\n3. Garder le texte accessible.", createdAt: "2026-06-13T03:36:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-divider") }
+    { turnId: "pattern-demo-user-summary", role: "user", text: "Show me a short summary.", createdAt: now, attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-summary") },
+    { turnId: "pattern-demo-assistant-summary", role: "assistant", text: "In short: Kagoshima has mild winters, very humid summers, and autumn is often the most comfortable season.\n\nKeep in mind: heat + humidity shape most recommendations.", createdAt: "2026-06-13T03:20:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-summary") },
+    { turnId: "pattern-demo-user-facts", role: "user", text: "Show me key-value pairs.", createdAt: "2026-06-13T03:21:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-facts") },
+    { turnId: "pattern-demo-assistant-facts", role: "assistant", text: "Compact sheet:\n\nCity: Kagoshima\nIdeal season: autumn\nHumidity: high in summer\nWatch point: possible typhoons", createdAt: "2026-06-13T03:21:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-facts") },
+    { turnId: "pattern-demo-user-steps", role: "user", text: "Show me a procedure.", createdAt: "2026-06-13T03:22:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-steps") },
+    { turnId: "pattern-demo-assistant-steps", role: "assistant", text: "Recommended procedure:\n\n1. Identify the dominant pattern.\n2. Check whether the parser already recognizes it.\n3. Render it with the shared visual grammar.\n4. Add a non-regression assertion.", createdAt: "2026-06-13T03:22:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-steps") },
+    { turnId: "pattern-demo-user-plan", role: "user", text: "Show me an action plan.", createdAt: "2026-06-13T03:23:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-plan") },
+    { turnId: "pattern-demo-assistant-plan", role: "assistant", text: "Action plan:\n\nGoal: harmonize LLM renderings\nStep 1: detect recurring blocks\nStep 2: apply shared visual tokens\nValidation: targeted Markdown test + renderer build\nNext action: open the gallery session and compare the blocks", createdAt: "2026-06-13T03:23:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-plan") },
+    { turnId: "pattern-demo-user-pros-cons", role: "user", text: "Show me benefits and limits.", createdAt: "2026-06-13T03:24:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-pros-cons") },
+    { turnId: "pattern-demo-assistant-pros-cons", role: "assistant", text: "Benefits:\n\n- Faster scanning\n- Predictable LLM patterns\n- Fewer tiring raw blocks\n\nLimits:\n\n- Some formats are ambiguous\n- The parser must stay conservative\n- Long tables must remain scrollable", createdAt: "2026-06-13T03:24:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-pros-cons") },
+    { turnId: "pattern-demo-user-callout", role: "user", text: "Show me notes, warnings, and hypotheses.", createdAt: "2026-06-13T03:25:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-callout") },
+    { turnId: "pattern-demo-assistant-callout", role: "assistant", text: "Note: This becomes a discreet information block.\n\nWarning: this line becomes a warning.\n\nHypothesis: the LLM can send an assumption that the front end must distinguish.", createdAt: "2026-06-13T03:25:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-callout") },
+    { turnId: "pattern-demo-user-quote", role: "user", text: "Show me a quote/source.", createdAt: "2026-06-13T03:26:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-quote") },
+    { turnId: "pattern-demo-assistant-quote", role: "assistant", text: "Quote/source to isolate:\n\n> Rendering should help scan information, not only reproduce raw text.\n> A consecutive quote remains a single block.", createdAt: "2026-06-13T03:26:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-quote") },
+    { turnId: "pattern-demo-user-table", role: "user", text: "Show me an answer with a Markdown table.", createdAt: "2026-06-13T03:27:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-table") },
+    { turnId: "pattern-demo-assistant-table", role: "assistant", text: "Flattened climate table as an LLM might return it:\n\n| Season | Temperature | Feel | |---|---:|---| | Winter | 5-14 C | Mild | | Spring | 10-24 C | Pleasant | | Summer | 24-33 C | Hot and humid |", createdAt: "2026-06-13T03:27:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-table") },
+    { turnId: "pattern-demo-user-code", role: "user", text: "Show me a code fence.", createdAt: "2026-06-13T03:28:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-code") },
+    { turnId: "pattern-demo-assistant-code", role: "assistant", text: "Code fence example:\n\n```rust\nfn seasonal_band(month: u8) -> &'static str {\n    match month {\n        12 | 1 | 2 => \"winter\",\n        6..=8 => \"summer\",\n        _ => \"transition\",\n    }\n}\n```", createdAt: "2026-06-13T03:28:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-code") },
+    { turnId: "pattern-demo-user-data", role: "user", text: "Show me JSON or YAML.", createdAt: "2026-06-13T03:29:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-data") },
+    { turnId: "pattern-demo-assistant-data", role: "assistant", text: "Structured data example:\n\n```json\n{\n  \"city\": \"Kagoshima\",\n  \"season\": \"autumn\",\n  \"risk\": \"typhoon watch\"\n}\n```", createdAt: "2026-06-13T03:29:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-data") },
+    { turnId: "pattern-demo-user-command", role: "user", text: "Show me a terminal command.", createdAt: "2026-06-13T03:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-command") },
+    { turnId: "pattern-demo-assistant-command", role: "assistant", text: "Command to copy:\n\n```powershell\nnpm.cmd run build\nnpx.cmd vitest run tests/llm-multimodal-attachments.test.ts -t \"renders assistant markdown\"\n```", createdAt: "2026-06-13T03:30:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-command") },
+    { turnId: "pattern-demo-user-log", role: "user", text: "Show me an error log.", createdAt: "2026-06-13T03:31:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-log") },
+    { turnId: "pattern-demo-assistant-log", role: "assistant", text: "Error to diagnose:\n\n```text\nError: table row has 5 cells but header has 3\n  at parseMarkdownTable (PanelsChatBottomSlice.tsx:1488)\n  at AssistantMarkdownText (PanelsChatBottomSlice.tsx:2552)\n```", createdAt: "2026-06-13T03:31:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-log") },
+    { turnId: "pattern-demo-user-math", role: "user", text: "Show me calculations and formulas.", createdAt: "2026-06-13T03:32:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-math") },
+    { turnId: "pattern-demo-assistant-math", role: "assistant", text: "Quick calculation:\n\nAverage temperature: (24 + 33) / 2 = 28.5 C\nFelt humidity: 28.5 C + high humidity factor => heavier feeling\nSimplified ROI: gain / cost = 420 / 120 = 3.5", createdAt: "2026-06-13T03:32:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-math") },
+    { turnId: "pattern-demo-user-decision", role: "user", text: "Show me a recommended decision.", createdAt: "2026-06-13T03:33:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-decision") },
+    { turnId: "pattern-demo-assistant-decision", role: "assistant", text: "Recommendation: go in autumn.\n\nOption A: autumn, best comfort/rain balance.\nOption B: spring, pleasant but rising humidity.\nOption C: summer, avoid it if you do not tolerate heat well.\n\nConclusion: I would choose late September or October.", createdAt: "2026-06-13T03:33:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-decision") },
+    { turnId: "pattern-demo-user-questions", role: "user", text: "Show me clarification questions.", createdAt: "2026-06-13T03:34:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-questions") },
+    { turnId: "pattern-demo-assistant-questions", role: "assistant", text: "Useful questions:\n\n- Do you want a travel-focused or weather-focused answer?\n- Do you prefer monthly or seasonal averages?\n- Do you want to include typhoon risks?", createdAt: "2026-06-13T03:34:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-questions") },
+    { turnId: "pattern-demo-user-checklist", role: "user", text: "Show me a checklist.", createdAt: "2026-06-13T03:35:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-checklist") },
+    { turnId: "pattern-demo-assistant-checklist", role: "assistant", text: "Preparation checklist:\n\n- [x] Identify the LLM pattern\n- [x] Apply the shared visual identity\n- [ ] Verify the rendering in the demo session", createdAt: "2026-06-13T03:35:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-checklist") },
+    { turnId: "pattern-demo-user-divider", role: "user", text: "Show me a separated synthesis.", createdAt: "2026-06-13T03:36:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-divider") },
+    { turnId: "pattern-demo-assistant-divider", role: "assistant", text: "Before the synthesis.\n\n---\n\n1. Read the pattern.\n2. Promote it into a component.\n3. Keep the text accessible.", createdAt: "2026-06-13T03:36:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-divider") }
   ];
   return {
     schema: "forge.brain.chat_session_archive.v1",
