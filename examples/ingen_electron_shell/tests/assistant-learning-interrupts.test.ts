@@ -92,6 +92,7 @@ describe("assistant learning interrupts", () => {
     expect(drafts[0]?.title).toBe("Musician Brain");
     expect(drafts[0]?.activationTriggers).toBe("songwriting, harmony, arrangement");
     expect(drafts[0]?.initialSkills).toBe("turn motif into arrangement");
+    expect(drafts[0]?.initialCodeActs).toContain("/local_actions_");
     expect(drafts[0]?.initialCodeActs).toContain("/websearch_");
     expect(drafts[0]?.tokenBudget).toBe("900");
     expect(drafts[0]?.description).toContain("Host-generated from explicit /newbrain_ fields");
@@ -100,6 +101,7 @@ describe("assistant learning interrupts", () => {
     expect(drafts[0]?.template).not.toContain("General Brain");
     expect(drafts[0]?.template).toContain('generated_by="host_from_newbrain"');
     expect(drafts[0]?.template).toContain('initial_skills="turn motif into arrangement"');
+    expect(drafts[0]?.template).toContain("/local_actions_");
   });
 
   it("parses named specialized Brain updates from /modify templates", () => {
