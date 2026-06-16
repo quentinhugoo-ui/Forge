@@ -637,6 +637,8 @@ struct BangerNativeScenePipeline {
     virtual_shadow_map_physical_page_pipeline: wgpu::ComputePipeline,
     virtual_shadow_map_projection_bind_group_layout: wgpu::BindGroupLayout,
     virtual_shadow_map_projection_pipeline: wgpu::ComputePipeline,
+    single_layer_water_bind_group_layout: wgpu::BindGroupLayout,
+    single_layer_water_pipeline: wgpu::ComputePipeline,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -673,6 +675,7 @@ struct BangerNativeFrameTarget {
     depth_view: wgpu::TextureView,
     hzb: BangerNativeHzbResources,
     gbuffer: BangerNativeGBufferResources,
+    water: BangerNativeSingleLayerWaterResources,
     width: u32,
     height: u32,
     target_hash: String,
@@ -689,6 +692,21 @@ struct BangerNativeGBufferResources {
     material_view: wgpu::TextureView,
     _emissive_texture: wgpu::Texture,
     emissive_view: wgpu::TextureView,
+    _resource_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeSingleLayerWaterResources {
+    _scene_without_water_texture: wgpu::Texture,
+    _scene_without_water_view: wgpu::TextureView,
+    _depth_without_water_texture: wgpu::Texture,
+    _depth_without_water_view: wgpu::TextureView,
+    _refraction_mask_texture: wgpu::Texture,
+    refraction_mask_view: wgpu::TextureView,
+    _composite_texture: wgpu::Texture,
+    composite_view: wgpu::TextureView,
+    params_buffer: wgpu::Buffer,
+    tile_mask_buffer: wgpu::Buffer,
     _resource_hash: String,
 }
 
@@ -3838,6 +3856,7 @@ fn render_child_surface_frame(
     dispatch_banger_virtual_shadow_map_page_mark(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_physical_pages(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_projection_filter(device, &mut encoder, scene_pipeline);
+    dispatch_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -3875,11 +3894,13 @@ fn create_banger_frame_target(
     let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let hzb = create_banger_hzb_resources(device, &depth_texture, width, height, allocation_index);
     let gbuffer = create_banger_gbuffer_resources(device, width, height, allocation_index);
+    let water = create_banger_single_layer_water_resources(device, width, height, allocation_index);
     BangerNativeFrameTarget {
         _depth_texture: depth_texture,
         depth_view,
         hzb,
         gbuffer,
+        water,
         width,
         height,
         target_hash,
@@ -3960,6 +3981,144 @@ fn banger_create_gbuffer_texture(
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_single_layer_water_resources(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    allocation_index: u32,
+) -> BangerNativeSingleLayerWaterResources {
+    let scene_without_water_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-scene-without-water-texture",
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let depth_without_water_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-depth-without-water-texture",
+        width,
+        height,
+        wgpu::TextureFormat::R32Float,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let refraction_mask_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-refraction-mask-texture",
+        width,
+        height,
+        wgpu::TextureFormat::R32Float,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let composite_texture = banger_create_water_texture(
+        device,
+        "banger-native-water-single-layer-composite-texture",
+        width,
+        height,
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let params_bytes = banger_single_layer_water_params_bytes(width, height);
+    let tile_mask_bytes = banger_single_layer_water_tile_mask_bytes(width, height);
+    let params_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-water-single-layer-params-buffer",
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        &params_bytes,
+    );
+    let tile_mask_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-water-single-layer-tile-mask-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &tile_mask_bytes,
+    );
+    let resource_hash = sha256_hex(
+        format!(
+            "banger-single-layer-water-v1:{width}:{height}:{allocation_index}:scene-depth-refraction-composite:{}:{}",
+            sha256_hex(&params_bytes),
+            sha256_hex(&tile_mask_bytes)
+        )
+        .as_bytes(),
+    );
+    BangerNativeSingleLayerWaterResources {
+        _scene_without_water_view: scene_without_water_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        _depth_without_water_view: depth_without_water_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        refraction_mask_view: refraction_mask_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        composite_view: composite_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        _scene_without_water_texture: scene_without_water_texture,
+        _depth_without_water_texture: depth_without_water_texture,
+        _refraction_mask_texture: refraction_mask_texture,
+        _composite_texture: composite_texture,
+        params_buffer,
+        tile_mask_buffer,
+        _resource_hash: resource_hash,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_create_water_texture(
+    device: &wgpu::Device,
+    label: &'static str,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage,
+        view_formats: &[],
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_single_layer_water_params_bytes(width: u32, height: u32) -> [u8; 48] {
+    let tile_width = width.max(1).div_ceil(8);
+    let tile_height = height.max(1).div_ceil(8);
+    let mut bytes = [0u8; 48];
+    for (slot, value) in [width.max(1), height.max(1), tile_width, tile_height]
+        .into_iter()
+        .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (slot, value) in [
+        0.18f32, // red absorption
+        0.055,  // green absorption
+        0.024,  // blue absorption
+        0.45,   // minimum water depth proxy
+        0.035,  // scattering red
+        0.17,   // scattering green
+        0.24,   // scattering blue
+        1.0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let offset = 16 + slot * 4;
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_single_layer_water_tile_mask_bytes(width: u32, height: u32) -> Vec<u8> {
+    let tile_count = width.max(1).div_ceil(8) * height.max(1).div_ceil(8);
+    let word_count = tile_count.max(1).div_ceil(32);
+    vec![0u8; word_count as usize * 4]
 }
 
 #[cfg(target_os = "windows")]
@@ -4427,6 +4586,57 @@ fn dispatch_banger_virtual_shadow_map_projection_filter(
 }
 
 #[cfg(target_os = "windows")]
+fn dispatch_banger_single_layer_water_composite(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+) {
+    encoder.clear_buffer(&frame_target.water.tile_mask_buffer, 0, None);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-single-layer-water-bind-group"),
+        layout: &scene_pipeline.single_layer_water_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.albedo_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.normal_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.material_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.composite_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.refraction_mask_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: frame_target.water.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: frame_target.water.tile_mask_buffer.as_entire_binding(),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("banger-native-single-layer-water-composite-compute-pass"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(&scene_pipeline.single_layer_water_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(frame_target.width.div_ceil(8), frame_target.height.div_ceil(8), 1);
+}
+
+#[cfg(target_os = "windows")]
 fn banger_vsm_compute_bind_entries<'a>(
     scene_pipeline: &'a BangerNativeScenePipeline,
     output_view: &'a wgpu::TextureView,
@@ -4546,6 +4756,20 @@ fn banger_vsm_storage_texture_compute_bind_group_layout(
             },
         ],
     })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_unfilterable_texture_bind_group_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -5126,14 +5350,83 @@ fn create_banger_first_scene_pipeline(
         compilation_options: Default::default(),
         cache: None,
     });
+    let single_layer_water_shader_source = banger_single_layer_water_composite_compute_wgsl();
+    let single_layer_water_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-single-layer-water-composite-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(single_layer_water_shader_source.into()),
+    });
+    let single_layer_water_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-single-layer-water-bind-group-layout"),
+            entries: &[
+                banger_unfilterable_texture_bind_group_layout_entry(0),
+                banger_unfilterable_texture_bind_group_layout_entry(1),
+                banger_unfilterable_texture_bind_group_layout_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::R32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let single_layer_water_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-single-layer-water-pipeline-layout"),
+            bind_group_layouts: &[Some(&single_layer_water_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let single_layer_water_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-single-layer-water-composite-pipeline"),
+        layout: Some(&single_layer_water_pipeline_layout),
+        module: &single_layer_water_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
             sha256_hex(vsm_physical_page_shader_source.as_bytes()),
             sha256_hex(vsm_projection_shader_source.as_bytes()),
+            sha256_hex(single_layer_water_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
             format,
@@ -5187,6 +5480,8 @@ fn create_banger_first_scene_pipeline(
         virtual_shadow_map_physical_page_pipeline,
         virtual_shadow_map_projection_bind_group_layout,
         virtual_shadow_map_projection_pipeline,
+        single_layer_water_bind_group_layout,
+        single_layer_water_pipeline,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -5288,6 +5583,63 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
     out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), 1.0);
     return out;
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_single_layer_water_composite_compute_wgsl() -> &'static str {
+    r#"
+struct SingleLayerWaterParams {
+    extent: vec4<u32>,
+    optical: vec4<f32>,
+    scattering: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var gbuffer_albedo: texture_2d<f32>;
+@group(0) @binding(1)
+var gbuffer_normal: texture_2d<f32>;
+@group(0) @binding(2)
+var gbuffer_material: texture_2d<f32>;
+@group(0) @binding(3)
+var water_composite: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(4)
+var refraction_mask: texture_storage_2d<r32float, write>;
+@group(0) @binding(5)
+var<uniform> params: SingleLayerWaterParams;
+@group(0) @binding(6)
+var<storage, read_write> water_tile_mask: array<atomic<u32>>;
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.extent.x || gid.y >= params.extent.y) {
+        return;
+    }
+    let pixel = vec2<i32>(i32(gid.x), i32(gid.y));
+    let albedo = textureLoad(gbuffer_albedo, pixel, 0).rgb;
+    let normal = normalize(textureLoad(gbuffer_normal, pixel, 0).xyz * 2.0 - vec3<f32>(1.0));
+    let material = textureLoad(gbuffer_material, pixel, 0);
+    let is_water = material.x > 2.5;
+    let roughness_hint = clamp(1.0 - material.y, 0.0, 1.0);
+    let water_depth = params.optical.w + material.z * 8.0;
+    let absorption = exp(-params.optical.rgb * water_depth);
+    let fresnel = pow(1.0 - clamp(abs(normal.y), 0.0, 1.0), 5.0);
+    let refract_strength = clamp(abs(normal.x) * 0.55 + abs(normal.z) * 0.55 + material.w + roughness_hint * 0.2, 0.0, 1.0);
+    let scattered = params.scattering.rgb * (0.18 + fresnel * 0.62 + material.w * 0.35);
+    let water_color = albedo * absorption + scattered;
+    let composite = select(albedo, water_color, is_water);
+    textureStore(water_composite, pixel, vec4<f32>(clamp(composite, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
+    textureStore(refraction_mask, pixel, vec4<f32>(select(0.0, refract_strength, is_water), 0.0, 0.0, 0.0));
+
+    if (is_water) {
+        let tile_x = gid.x / 8u;
+        let tile_y = gid.y / 8u;
+        let tile_index = tile_y * params.extent.z + tile_x;
+        let word_index = tile_index / 32u;
+        let bit_mask = 1u << (tile_index % 32u);
+        atomicOr(&water_tile_mask[word_index], bit_mask);
+    }
 }
 "#
 }
@@ -8988,6 +9340,29 @@ mod tests {
         assert!(source.contains("gbuffer_normal"));
         assert!(source.contains("gbuffer_material"));
         assert!(source.contains("gbuffer_emissive"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_single_layer_water_composite_contract() {
+        let params = banger_single_layer_water_params_bytes(1920, 1080);
+        assert_eq!(u32::from_le_bytes(params[0..4].try_into().unwrap()), 1920);
+        assert_eq!(u32::from_le_bytes(params[4..8].try_into().unwrap()), 1080);
+        assert_eq!(u32::from_le_bytes(params[8..12].try_into().unwrap()), 240);
+        assert_eq!(u32::from_le_bytes(params[12..16].try_into().unwrap()), 135);
+        assert!(f32::from_le_bytes(params[16..20].try_into().unwrap()) > 0.0);
+
+        let tile_mask = banger_single_layer_water_tile_mask_bytes(1920, 1080);
+        assert_eq!(tile_mask.len(), (240u32 * 135u32).div_ceil(32) as usize * 4);
+        assert_eq!(banger_single_layer_water_tile_mask_bytes(1, 1).len(), 4);
+
+        let shader = banger_single_layer_water_composite_compute_wgsl();
+        assert!(shader.contains("SingleLayerWaterParams"));
+        assert!(shader.contains("gbuffer_material"));
+        assert!(shader.contains("texture_storage_2d<rgba8unorm, write>"));
+        assert!(shader.contains("texture_storage_2d<r32float, write>"));
+        assert!(shader.contains("refraction_mask"));
+        assert!(shader.contains("atomicOr"));
     }
 
     #[cfg(target_os = "windows")]
