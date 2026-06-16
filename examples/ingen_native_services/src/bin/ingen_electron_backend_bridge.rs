@@ -5,6 +5,7 @@ use ingen_native_services::gpu_adapter_probe::{native_gpu_adapter_probe, NativeG
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::{env, fs};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -1681,10 +1682,11 @@ fn stage_banger_gltf_primitive(
     primitive_index: usize,
     primitive: &Value,
 ) -> Result<BangerMapsGpuPrimitiveStage, String> {
-    if let Some(extensions) = primitive.get("extensions").and_then(Value::as_object) {
-        if extensions.contains_key("KHR_draco_mesh_compression") {
-            return Err("KHR_draco_mesh_compression primitive decode pending before native upload".to_string());
-        }
+    if let Some(draco) = primitive
+        .get("extensions")
+        .and_then(|extensions| extensions.get("KHR_draco_mesh_compression"))
+    {
+        return stage_banger_draco_gltf_primitive(gltf, bin_chunk, mesh_index, primitive_index, primitive, draco);
     }
     let attributes = primitive
         .get("attributes")
@@ -1777,6 +1779,188 @@ fn stage_banger_gltf_primitive(
         wgpu_vertex_usage: "VERTEX|COPY_DST",
         wgpu_index_usage: "INDEX|COPY_DST",
     })
+}
+
+fn stage_banger_draco_gltf_primitive(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    mesh_index: usize,
+    primitive_index: usize,
+    primitive: &Value,
+    draco: &Value,
+) -> Result<BangerMapsGpuPrimitiveStage, String> {
+    let decoded = banger_decode_draco_primitive(gltf, bin_chunk, primitive, draco)
+        .map_err(|error| format!("mesh {mesh_index} primitive {primitive_index} {error}"))?;
+    let position = decoded
+        .attributes
+        .get("POSITION")
+        .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing decoded Draco POSITION"))?;
+    banger_maps_float_vec3_accessor_values(position, "POSITION")?;
+    let normals = match decoded.attributes.get("NORMAL") {
+        Some(stage) => Some(banger_maps_float_vec3_accessor_values(stage, "NORMAL")?),
+        None => None,
+    };
+    let texcoords = match decoded.attributes.get("TEXCOORD_0") {
+        Some(stage) => Some(banger_maps_float_vec2_accessor_values(stage, "TEXCOORD_0")?),
+        None => None,
+    };
+    if normals.as_ref().is_some_and(|values| values.len() != position.count) {
+        return Err(format!("mesh {mesh_index} primitive {primitive_index} decoded NORMAL count must match POSITION count"));
+    }
+    if texcoords.as_ref().is_some_and(|values| values.len() != position.count) {
+        return Err(format!("mesh {mesh_index} primitive {primitive_index} decoded TEXCOORD_0 count must match POSITION count"));
+    }
+    let material_color = primitive
+        .get("material")
+        .and_then(Value::as_u64)
+        .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
+        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+    let vertex_bytes = banger_maps_engine_vertex_buffer_bytes(
+        position,
+        normals.as_deref(),
+        texcoords.as_deref(),
+        material_color,
+    )?;
+    let primitive_attributes = primitive
+        .get("attributes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing attributes"))?;
+    let position_accessor = primitive_attributes
+        .get("POSITION")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("mesh {mesh_index} primitive {primitive_index} missing POSITION accessor"))? as usize;
+    Ok(BangerMapsGpuPrimitiveStage {
+        mesh_index,
+        primitive_index,
+        material_index: primitive.get("material").and_then(Value::as_u64).map(|value| value as usize),
+        mode: primitive.get("mode").and_then(Value::as_u64).unwrap_or(4) as u32,
+        position_accessor,
+        normal_accessor: primitive_attributes.get("NORMAL").and_then(Value::as_u64).map(|value| value as usize),
+        texcoord0_accessor: primitive_attributes.get("TEXCOORD_0").and_then(Value::as_u64).map(|value| value as usize),
+        index_accessor: primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize),
+        vertex_count: position.count,
+        index_count: decoded.index_count,
+        source_position_buffer_byte_count: position.bytes.len(),
+        vertex_buffer_byte_count: vertex_bytes.len(),
+        index_buffer_byte_count: decoded.index_bytes.len(),
+        vertex_buffer_hash: sha256_hex(&vertex_bytes),
+        index_buffer_hash: sha256_hex(&decoded.index_bytes),
+        index_format: decoded.index_format,
+        vertex_stride_bytes: 48,
+        vertex_layout: "float32x3_position_float32x3_normal_float32x2_uv_float32x4_base_color",
+        wgpu_vertex_usage: "VERTEX|COPY_DST",
+        wgpu_index_usage: "INDEX|COPY_DST",
+    })
+}
+
+struct BangerDecodedDracoPrimitive {
+    attributes: HashMap<String, BangerGltfAccessorStage>,
+    index_bytes: Vec<u8>,
+    index_count: usize,
+    index_format: &'static str,
+}
+
+fn banger_decode_draco_primitive(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    primitive: &Value,
+    draco: &Value,
+) -> Result<BangerDecodedDracoPrimitive, String> {
+    let buffer_view_index = draco
+        .get("bufferView")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "KHR_draco_mesh_compression missing bufferView".to_string())? as usize;
+    let compressed = banger_gltf_buffer_view_bytes(gltf, bin_chunk, buffer_view_index)?;
+    let decoded = std::panic::catch_unwind(|| draco_decoder::decode_mesh_with_config_sync(&compressed.bytes))
+        .map_err(|_| "KHR_draco_mesh_compression decode failed".to_string())?
+        .ok_or_else(|| "KHR_draco_mesh_compression decode failed".to_string())?;
+    let index_count = decoded.config.index_count() as usize;
+    let index_length = decoded.config.index_length() as usize;
+    if index_length > decoded.data.len() {
+        return Err("KHR_draco_mesh_compression decoded index range exceeds output buffer".to_string());
+    }
+    let index_format = if index_length == index_count * 2 {
+        "uint16"
+    } else if index_length == index_count * 4 {
+        "uint32"
+    } else {
+        return Err(format!(
+            "KHR_draco_mesh_compression decoded index length {index_length} does not match count {index_count}"
+        ));
+    };
+    let primitive_attributes = primitive
+        .get("attributes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "KHR_draco_mesh_compression primitive missing attributes".to_string())?;
+    let draco_attributes = draco
+        .get("attributes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "KHR_draco_mesh_compression missing attributes map".to_string())?;
+    let mut attributes = HashMap::new();
+    for (semantic, draco_attribute_id) in draco_attributes {
+        let draco_attribute_id = draco_attribute_id
+            .as_u64()
+            .ok_or_else(|| format!("KHR_draco_mesh_compression attribute {semantic} id is not an integer"))?
+            as usize;
+        let decoded_attribute = decoded
+            .config
+            .get_attribute(draco_attribute_id)
+            .ok_or_else(|| format!("KHR_draco_mesh_compression attribute {semantic} id {draco_attribute_id} missing after decode"))?;
+        let offset = decoded_attribute.offset() as usize;
+        let length = decoded_attribute.lenght() as usize;
+        let end = offset + length;
+        if end > decoded.data.len() {
+            return Err(format!("KHR_draco_mesh_compression attribute {semantic} range exceeds decoded buffer"));
+        }
+        let component_type = banger_draco_attribute_component_type(decoded_attribute.data_type())?;
+        let accessor_type = banger_draco_attribute_accessor_type(decoded_attribute.dim())?;
+        let normalized = primitive_attributes
+            .get(semantic)
+            .and_then(Value::as_u64)
+            .and_then(|accessor_index| banger_gltf_accessor_normalized(gltf, accessor_index as usize).ok())
+            .unwrap_or(false);
+        attributes.insert(
+            semantic.clone(),
+            BangerGltfAccessorStage {
+                bytes: decoded.data[offset..end].to_vec(),
+                count: decoded.config.vertex_count() as usize,
+                component_type,
+                normalized,
+                accessor_type,
+            },
+        );
+    }
+    if !attributes.contains_key("POSITION") {
+        return Err("KHR_draco_mesh_compression decoded primitive missing POSITION".to_string());
+    }
+    Ok(BangerDecodedDracoPrimitive {
+        attributes,
+        index_bytes: decoded.data[..index_length].to_vec(),
+        index_count,
+        index_format,
+    })
+}
+
+fn banger_draco_attribute_component_type(data_type: draco_decoder::AttributeDataType) -> Result<u32, String> {
+    match data_type {
+        draco_decoder::AttributeDataType::Int8 => Ok(5120),
+        draco_decoder::AttributeDataType::UInt8 => Ok(5121),
+        draco_decoder::AttributeDataType::Int16 => Ok(5122),
+        draco_decoder::AttributeDataType::UInt16 => Ok(5123),
+        draco_decoder::AttributeDataType::UInt32 => Ok(5125),
+        draco_decoder::AttributeDataType::Float32 => Ok(5126),
+        draco_decoder::AttributeDataType::Int32 => Err("KHR_draco_mesh_compression decoded Int32 vertex attributes are not supported".to_string()),
+    }
+}
+
+fn banger_draco_attribute_accessor_type(dim: u32) -> Result<String, String> {
+    match dim {
+        1 => Ok("SCALAR".to_string()),
+        2 => Ok("VEC2".to_string()),
+        3 => Ok("VEC3".to_string()),
+        4 => Ok("VEC4".to_string()),
+        other => Err(format!("KHR_draco_mesh_compression decoded attribute dimension {other} is unsupported")),
+    }
 }
 
 fn banger_maps_float_vec3_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 3]>, String> {
@@ -1928,7 +2112,12 @@ fn banger_maps_unknown_gltf_format_support() -> BangerMapsGltfFormatSupport {
 fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport {
     let extensions_used = banger_gltf_string_array(gltf, "extensionsUsed");
     let extensions_required = banger_gltf_string_array(gltf, "extensionsRequired");
-    let supported_extensions = ["KHR_materials_unlit", "KHR_mesh_quantization", "EXT_meshopt_compression"];
+    let supported_extensions = [
+        "KHR_draco_mesh_compression",
+        "KHR_materials_unlit",
+        "KHR_mesh_quantization",
+        "EXT_meshopt_compression",
+    ];
     let unsupported_used_extensions = extensions_used
         .iter()
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
@@ -1939,17 +2128,7 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let compression_blocker = ["KHR_draco_mesh_compression"]
-        .iter()
-        .find(|extension| {
-            extensions_used.iter().any(|item| item == **extension)
-                || extensions_required.iter().any(|item| item == **extension)
-        })
-        .map(|extension| match *extension {
-            "KHR_draco_mesh_compression" => "KHR_draco_mesh_compression decode is required before native vertex/index upload".to_string(),
-            _ => format!("{extension} support pending before native upload"),
-        })
-        .or_else(|| banger_maps_meshopt_format_blocker(gltf));
+    let compression_blocker = banger_maps_draco_format_blocker(gltf).or_else(|| banger_maps_meshopt_format_blocker(gltf));
     BangerMapsGltfFormatSupport {
         extensions_used,
         extensions_required,
@@ -1958,6 +2137,35 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         compression_blocker,
         upload_policy: "banger_interleaved_pbr_vertex_u16_u32_indices_material_texture_staging_v1",
     }
+}
+
+fn banger_maps_draco_format_blocker(gltf: &Value) -> Option<String> {
+    let meshes = gltf.get("meshes").and_then(Value::as_array)?;
+    for (mesh_index, mesh) in meshes.iter().enumerate() {
+        let primitives = mesh.get("primitives").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        for (primitive_index, primitive) in primitives.iter().enumerate() {
+            let Some(draco) = primitive
+                .get("extensions")
+                .and_then(|extensions| extensions.get("KHR_draco_mesh_compression"))
+            else {
+                continue;
+            };
+            let mode = primitive.get("mode").and_then(Value::as_u64).unwrap_or(4);
+            if !matches!(mode, 4 | 5) {
+                return Some(format!("KHR_draco_mesh_compression mesh {mesh_index} primitive {primitive_index} unsupported mode {mode}"));
+            }
+            if draco.get("bufferView").and_then(Value::as_u64).is_none() {
+                return Some(format!("KHR_draco_mesh_compression mesh {mesh_index} primitive {primitive_index} missing bufferView"));
+            }
+            let Some(attributes) = draco.get("attributes").and_then(Value::as_object) else {
+                return Some(format!("KHR_draco_mesh_compression mesh {mesh_index} primitive {primitive_index} missing attributes"));
+            };
+            if attributes.get("POSITION").and_then(Value::as_u64).is_none() {
+                return Some(format!("KHR_draco_mesh_compression mesh {mesh_index} primitive {primitive_index} missing POSITION attribute id"));
+            }
+        }
+    }
+    None
 }
 
 fn banger_gltf_string_array(gltf: &Value, key: &str) -> Vec<String> {
@@ -2190,6 +2398,17 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
         normalized,
         accessor_type,
     })
+}
+
+fn banger_gltf_accessor_normalized(gltf: &Value, accessor_index: usize) -> Result<bool, String> {
+    let accessors = gltf
+        .get("accessors")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gltf accessors array missing".to_string())?;
+    let accessor = accessors
+        .get(accessor_index)
+        .ok_or_else(|| format!("accessor {accessor_index} missing"))?;
+    Ok(accessor.get("normalized").and_then(Value::as_bool).unwrap_or(false))
 }
 
 struct BangerGltfBufferViewBytes {
@@ -3874,6 +4093,12 @@ fn banger_maps_render_mesh_from_primitive(
     bin_chunk: &[u8],
     primitive: &Value,
 ) -> Result<BangerRenderMeshBytes, String> {
+    if let Some(draco) = primitive
+        .get("extensions")
+        .and_then(|extensions| extensions.get("KHR_draco_mesh_compression"))
+    {
+        return banger_maps_render_mesh_from_draco_primitive(gltf, bin_chunk, primitive, draco);
+    }
     let attributes = primitive
         .get("attributes")
         .and_then(Value::as_object)
@@ -3902,6 +4127,37 @@ fn banger_maps_render_mesh_from_primitive(
         index_bytes,
         instance_bytes: banger_maps_tile_instance_bytes(),
         source: "banger_maps_3d_tiles_gltf_first_primitive",
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_render_mesh_from_draco_primitive(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    primitive: &Value,
+    draco: &Value,
+) -> Result<BangerRenderMeshBytes, String> {
+    let decoded = banger_decode_draco_primitive(gltf, bin_chunk, primitive, draco)?;
+    let position = decoded
+        .attributes
+        .get("POSITION")
+        .ok_or_else(|| "Draco render primitive missing POSITION".to_string())?;
+    banger_maps_float_vec3_accessor_values(position, "POSITION")?;
+    if position.count > u16::MAX as usize {
+        return Err(format!("render Draco primitive has {} vertices; current first draw path is u16", position.count));
+    }
+    let material_color = primitive
+        .get("material")
+        .and_then(Value::as_u64)
+        .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
+        .unwrap_or([0.54, 0.78, 0.92, 1.0]);
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(position, material_color)?;
+    let index_bytes = banger_maps_u16_index_bytes_from_draco(&decoded)?;
+    Ok(BangerRenderMeshBytes {
+        vertex_bytes,
+        index_bytes,
+        instance_bytes: banger_maps_tile_instance_bytes(),
+        source: "banger_maps_3d_tiles_draco_first_primitive",
     })
 }
 
@@ -3949,6 +4205,25 @@ fn banger_maps_position_accessor_to_render_vertices(
         }
     }
     Ok(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_u16_index_bytes_from_draco(decoded: &BangerDecodedDracoPrimitive) -> Result<Vec<u8>, String> {
+    match decoded.index_format {
+        "uint16" => Ok(decoded.index_bytes.clone()),
+        "uint32" => {
+            let mut bytes = Vec::with_capacity(decoded.index_count * 2);
+            for chunk in decoded.index_bytes.chunks_exact(4) {
+                let index = u32::from_le_bytes(chunk.try_into().expect("u32 Draco index bytes"));
+                if index > u16::MAX as u32 {
+                    return Err(format!("Draco u32 index {index} exceeds current u16 draw path"));
+                }
+                bytes.extend_from_slice(&(index as u16).to_le_bytes());
+            }
+            Ok(bytes)
+        }
+        other => Err(format!("unsupported Draco render index format {other}")),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -4592,23 +4867,33 @@ mod tests {
     }
 
     #[test]
-    fn reports_compressed_gltf_extension_blockers_before_gpu_staging() {
+    fn accepts_draco_gltf_schema_before_native_decode() {
         let glb = test_draco_glb_bytes();
         let decoded = decode_banger_glb_full(&glb).unwrap();
         let support = banger_maps_gltf_format_support(&decoded.gltf_value);
         assert_eq!(support.extensions_used, vec!["KHR_draco_mesh_compression".to_string()]);
         assert_eq!(support.extensions_required, vec!["KHR_draco_mesh_compression".to_string()]);
-        assert_eq!(support.unsupported_required_extensions, vec!["KHR_draco_mesh_compression".to_string()]);
+        assert!(support.unsupported_required_extensions.is_empty());
+        assert!(support.compression_blocker.is_none());
+        let error = match stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk) {
+            Ok(_) => panic!("invalid Draco fixture unexpectedly staged"),
+            Err(error) => error,
+        };
+        assert!(error.contains("KHR_draco_mesh_compression decode failed"));
+    }
+
+    #[test]
+    fn reports_malformed_draco_schema_before_native_decode() {
+        let json = br#"{"asset":{"version":"2.0"},"extensionsUsed":["KHR_draco_mesh_compression"],"extensionsRequired":["KHR_draco_mesh_compression"],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"extensions":{"KHR_draco_mesh_compression":{"bufferView":0,"attributes":{}}}}]}],"accessors":[{"componentType":5126,"count":3,"type":"VEC3"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"buffers":[{"byteLength":4}]}"#;
+        let glb = test_glb_with_json_bin(json, &[0, 1, 2, 3]);
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let support = banger_maps_gltf_format_support(&decoded.gltf_value);
+        assert!(support.unsupported_required_extensions.is_empty());
         assert!(support
             .compression_blocker
             .as_deref()
             .unwrap()
-            .contains("KHR_draco_mesh_compression"));
-        let error = match stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk) {
-            Ok(_) => panic!("compressed glTF unexpectedly staged without Draco decode"),
-            Err(error) => error,
-        };
-        assert!(error.contains("KHR_draco_mesh_compression"));
+            .contains("missing POSITION attribute id"));
     }
 
     #[test]
@@ -4833,11 +5118,15 @@ mod tests {
 
     fn test_draco_glb_bytes() -> Vec<u8> {
         let json = br#"{"asset":{"version":"2.0"},"extensionsUsed":["KHR_draco_mesh_compression"],"extensionsRequired":["KHR_draco_mesh_compression"],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"extensions":{"KHR_draco_mesh_compression":{"bufferView":0,"attributes":{"POSITION":0}}}}]}],"accessors":[{"componentType":5126,"count":3,"type":"VEC3"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"buffers":[{"byteLength":4}]}"#;
+        test_glb_with_json_bin(json, &[0, 1, 2, 3])
+    }
+
+    fn test_glb_with_json_bin(json: &[u8], bin: &[u8]) -> Vec<u8> {
         let mut json_chunk = json.to_vec();
         while json_chunk.len() % 4 != 0 {
             json_chunk.push(0x20);
         }
-        let mut bin_chunk = vec![0u8, 1, 2, 3];
+        let mut bin_chunk = bin.to_vec();
         while bin_chunk.len() % 4 != 0 {
             bin_chunk.push(0);
         }
