@@ -16352,16 +16352,8 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
       text: [
         "Je vais vérifier dans l'historique et revenir avec les passages pertinents.",
         "",
-        BRAIN_SEARCHARCHIVE_COMMAND
-      ].join("\n"),
-      createdAt: "2026-06-16T08:30:07.000Z",
-      attachments: [],
-      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-tool")
-    },
-    {
-      turnId: "searcharchive-demo-assistant-result",
-      role: "assistant",
-      text: [
+        BRAIN_SEARCHARCHIVE_COMMAND,
+        "",
         "SEARCHARCHIVE_RESULT",
         "schema=forge.brain.searcharchive.result.v1",
         "query=\"croissant four 180\"",
@@ -16402,7 +16394,7 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
       ].join("\n"),
       createdAt: "2026-06-16T08:30:15.000Z",
       attachments: [],
-      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-result")
+      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-tool")
     },
     {
       turnId: "searcharchive-demo-assistant-final",

@@ -600,13 +600,17 @@ struct BangerNativeScenePipeline {
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    indirect_draw_buffer: wgpu::Buffer,
     _material_buffer: Option<wgpu::Buffer>,
     _texture_staging_buffers: Vec<wgpu::Buffer>,
+    _residency_feedback_buffer: wgpu::Buffer,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
     mesh_source: &'static str,
     _selected_tile_id: Option<String>,
+    _indirect_args_hash: String,
+    _residency_feedback_hash: String,
     scene_mesh_hash: String,
     scene_graph_hash: String,
     instance_buffer_hash: String,
@@ -2964,8 +2968,10 @@ struct BangerNativeSceneGpuResource {
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    indirect_draw_buffer: wgpu::Buffer,
     material_buffer: Option<wgpu::Buffer>,
     texture_staging_buffers: Vec<wgpu::Buffer>,
+    residency_feedback_buffer: wgpu::Buffer,
     vertex_byte_count: usize,
     index_byte_count: usize,
     instance_byte_count: usize,
@@ -2974,6 +2980,8 @@ struct BangerNativeSceneGpuResource {
     instance_count: u32,
     mesh_source: &'static str,
     selected_tile_id: Option<String>,
+    indirect_args_hash: String,
+    residency_feedback_hash: String,
     resource_hash: String,
 }
 
@@ -3690,7 +3698,7 @@ fn render_child_surface_frame(
         pass.set_vertex_buffer(0, scene_pipeline.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, scene_pipeline.instance_buffer.slice(..));
         pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..scene_pipeline.index_count, 0, 0..scene_pipeline.instance_count);
+        pass.draw_indexed_indirect(&scene_pipeline.indirect_draw_buffer, 0);
     }
     dispatch_banger_hzb_build(&mut encoder, &frame_target.hzb);
     queue.submit(Some(encoder.finish()));
@@ -4288,13 +4296,17 @@ fn create_banger_first_scene_pipeline(
         vertex_buffer: gpu_resource.vertex_buffer,
         instance_buffer: gpu_resource.instance_buffer,
         index_buffer: gpu_resource.index_buffer,
+        indirect_draw_buffer: gpu_resource.indirect_draw_buffer,
         _material_buffer: gpu_resource.material_buffer,
         _texture_staging_buffers: gpu_resource.texture_staging_buffers,
+        _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
         mesh_source: gpu_resource.mesh_source,
         _selected_tile_id: gpu_resource.selected_tile_id,
+        _indirect_args_hash: gpu_resource.indirect_args_hash,
+        _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         scene_mesh_hash,
         scene_graph_hash,
         instance_buffer_hash,
@@ -4437,6 +4449,23 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             .collect::<String>()
             .as_bytes(),
     );
+    let vertex_count = (vertex_bytes.len() / 24) as u32;
+    let index_count = (index_bytes.len() / 2) as u32;
+    let instance_count = (instance_bytes.len() / 80) as u32;
+    let indirect_args_bytes = banger_indexed_indirect_args_bytes(index_count, instance_count);
+    let indirect_args_hash = sha256_hex(&indirect_args_bytes);
+    let residency_feedback_bytes = banger_maps_residency_feedback_bytes(
+        selected_tile_id.as_deref(),
+        source,
+        vertex_count,
+        index_count,
+        instance_count,
+        &vertex_hash,
+        &index_hash,
+        &material_hash,
+        &texture_hash,
+    );
+    let residency_feedback_hash = sha256_hex(&residency_feedback_bytes);
     let vertex_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-scene-vertex-buffer",
@@ -4448,6 +4477,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         "banger-native-scene-index-buffer",
         wgpu::BufferUsages::INDEX,
         &index_bytes,
+    );
+    let indirect_draw_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-scene-indexed-indirect-draw-args",
+        wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+        &indirect_args_bytes,
     );
     let instance_buffer = banger_create_mapped_buffer(
         device,
@@ -4475,26 +4510,98 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             )
         })
         .collect::<Vec<_>>();
+    let residency_feedback_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-maps-residency-feedback-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &residency_feedback_bytes,
+    );
     let resource_hash = sha256_hex(
-        format!("{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}")
+        format!(
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{residency_feedback_hash}"
+        )
             .as_bytes(),
     );
     BangerNativeSceneGpuResource {
-        vertex_count: (vertex_bytes.len() / 24) as u32,
-        index_count: (index_bytes.len() / 2) as u32,
-        instance_count: (instance_bytes.len() / 80) as u32,
+        vertex_count,
+        index_count,
+        instance_count,
         vertex_byte_count: vertex_bytes.len(),
         index_byte_count: index_bytes.len(),
         instance_byte_count: instance_bytes.len(),
         vertex_buffer,
         instance_buffer,
         index_buffer,
+        indirect_draw_buffer,
         material_buffer,
         texture_staging_buffers,
+        residency_feedback_buffer,
         mesh_source: source,
         selected_tile_id,
+        indirect_args_hash,
+        residency_feedback_hash,
         resource_hash,
     }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_indexed_indirect_args_bytes(index_count: u32, instance_count: u32) -> [u8; 20] {
+    let mut bytes = [0u8; 20];
+    for (slot, value) in [
+        index_count,
+        instance_count,
+        0u32, // first_index
+        0u32, // base_vertex as i32 bits
+        0u32, // first_instance
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_residency_feedback_bytes(
+    selected_tile_id: Option<&str>,
+    source: &str,
+    vertex_count: u32,
+    index_count: u32,
+    instance_count: u32,
+    vertex_hash: &str,
+    index_hash: &str,
+    material_hash: &str,
+    texture_hash: &str,
+) -> Vec<u8> {
+    let selected_tile_hash = sha256_hex(selected_tile_id.unwrap_or("no-selected-maps-tile").as_bytes());
+    let source_hash = sha256_hex(source.as_bytes());
+    let tile_count = selected_tile_id
+        .map(|value| value.split(',').filter(|entry| !entry.is_empty()).count() as u32)
+        .unwrap_or(0);
+    let mut bytes = Vec::with_capacity(80);
+    for value in [
+        0x4D_41_50_53u32, // MAPS
+        1u32,
+        tile_count,
+        vertex_count,
+        index_count,
+        instance_count,
+        banger_hash_prefix_u32(&selected_tile_hash),
+        banger_hash_prefix_u32(&source_hash),
+        banger_hash_prefix_u32(vertex_hash),
+        banger_hash_prefix_u32(index_hash),
+        banger_hash_prefix_u32(material_hash),
+        banger_hash_prefix_u32(texture_hash),
+    ] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hash_prefix_u32(hash: &str) -> u32 {
+    u32::from_str_radix(hash.get(0..8).unwrap_or("00000000"), 16).unwrap_or(0)
 }
 
 #[cfg(target_os = "windows")]
@@ -6550,6 +6657,37 @@ mod tests {
         assert!((f32::from_le_bytes(bytes[16..20].try_into().unwrap()) - 0.2).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(bytes[28..32].try_into().unwrap()), 7);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_maps_indirect_draw_args_and_residency_feedback() {
+        let args = banger_indexed_indirect_args_bytes(42, 3);
+        assert_eq!(u32::from_le_bytes(args[0..4].try_into().unwrap()), 42);
+        assert_eq!(u32::from_le_bytes(args[4..8].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(args[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(args[12..16].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(args[16..20].try_into().unwrap()), 0);
+
+        let feedback = banger_maps_residency_feedback_bytes(
+            Some("tile_a,tile_b"),
+            "banger_maps_3d_tiles_visible_tile_batch",
+            84,
+            42,
+            1,
+            &sha256_hex(b"vertex"),
+            &sha256_hex(b"index"),
+            &sha256_hex(b"material"),
+            &sha256_hex(b"texture"),
+        );
+        assert_eq!(feedback.len(), 48);
+        assert_eq!(u32::from_le_bytes(feedback[0..4].try_into().unwrap()), 0x4D_41_50_53);
+        assert_eq!(u32::from_le_bytes(feedback[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(feedback[8..12].try_into().unwrap()), 2);
+        assert_eq!(u32::from_le_bytes(feedback[12..16].try_into().unwrap()), 84);
+        assert_eq!(u32::from_le_bytes(feedback[16..20].try_into().unwrap()), 42);
+        assert_eq!(u32::from_le_bytes(feedback[20..24].try_into().unwrap()), 1);
+        assert_ne!(u32::from_le_bytes(feedback[24..28].try_into().unwrap()), 0);
     }
 
     #[cfg(target_os = "windows")]
