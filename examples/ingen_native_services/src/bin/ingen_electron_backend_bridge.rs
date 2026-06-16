@@ -619,10 +619,25 @@ struct BangerNativeScenePipeline {
 struct BangerNativeFrameTarget {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+    hzb: BangerNativeHzbResources,
     width: u32,
     height: u32,
     target_hash: String,
     depth_target_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeHzbResources {
+    _texture: wgpu::Texture,
+    _views: Vec<wgpu::TextureView>,
+    seed_pipeline: wgpu::ComputePipeline,
+    reduce_pipeline: wgpu::ComputePipeline,
+    seed_bind_group: wgpu::BindGroup,
+    reduce_bind_groups: Vec<wgpu::BindGroup>,
+    mip_count: u32,
+    width: u32,
+    height: u32,
+    _hzb_hash: String,
 }
 
 fn main() {
@@ -3497,7 +3512,7 @@ fn run_banger_native_host(
         scene_object_count: scene_pipeline.instance_count,
         scene_graph_hash: scene_pipeline.scene_graph_hash.clone(),
         instance_buffer_hash: scene_pipeline.instance_buffer_hash.clone(),
-        depth_format: "Depth24Plus",
+        depth_format: "Depth32Float",
         frame_target_policy: "persistent_resize_tracked_depth_target_v1",
         frame_target_hash: frame_target.target_hash.clone(),
         depth_target_hash: frame_target.depth_target_hash.clone(),
@@ -3675,6 +3690,7 @@ fn render_child_surface_frame(
         pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..scene_pipeline.index_count, 0, 0..scene_pipeline.instance_count);
     }
+    dispatch_banger_hzb_build(&mut encoder, &frame_target.hzb);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -3706,18 +3722,359 @@ fn create_banger_frame_target(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: depth_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let hzb = create_banger_hzb_resources(device, &depth_texture, width, height, allocation_index);
     BangerNativeFrameTarget {
         _depth_texture: depth_texture,
         depth_view,
+        hzb,
         width,
         height,
         target_hash,
         depth_target_hash,
     }
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_hzb_resources(
+    device: &wgpu::Device,
+    depth_texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    allocation_index: u32,
+) -> BangerNativeHzbResources {
+    let mip_count = banger_hzb_mip_count(width, height);
+    let hzb_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-child-host-hzb-r32float-pyramid"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: mip_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let hzb_views = (0..mip_count)
+        .map(|mip| {
+            hzb_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("banger-native-child-host-hzb-mip-view"),
+                format: Some(wgpu::TextureFormat::R32Float),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                usage: Some(wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: mip,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+            })
+        })
+        .collect::<Vec<_>>();
+    let depth_source_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("banger-native-child-host-depth-sampled-view"),
+        format: Some(wgpu::TextureFormat::Depth32Float),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+        aspect: wgpu::TextureAspect::DepthOnly,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
+    let seed_uniform = banger_create_mapped_buffer(
+        device,
+        "banger-native-child-host-hzb-seed-uniform",
+        wgpu::BufferUsages::UNIFORM,
+        &banger_u32x4_bytes([width, height, width, height]),
+    );
+    let reduce_uniforms = (1..mip_count)
+        .map(|mip| {
+            let src = banger_hzb_mip_size(width, height, mip - 1);
+            let dst = banger_hzb_mip_size(width, height, mip);
+            banger_create_mapped_buffer(
+                device,
+                "banger-native-child-host-hzb-reduce-uniform",
+                wgpu::BufferUsages::UNIFORM,
+                &banger_u32x4_bytes([src[0], src[1], dst[0], dst[1]]),
+            )
+        })
+        .collect::<Vec<_>>();
+    let seed_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-child-host-hzb-seed-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(banger_hzb_seed_compute_wgsl().into()),
+    });
+    let reduce_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-child-host-hzb-reduce-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(banger_hzb_reduce_compute_wgsl().into()),
+    });
+    let seed_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("banger-native-child-host-hzb-seed-bind-group-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::R32Float,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let reduce_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("banger-native-child-host-hzb-reduce-bind-group-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::R32Float,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let seed_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-child-host-hzb-seed-pipeline-layout"),
+        bind_group_layouts: &[Some(&seed_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let reduce_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-child-host-hzb-reduce-pipeline-layout"),
+        bind_group_layouts: &[Some(&reduce_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let seed_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-child-host-hzb-seed-pipeline"),
+        layout: Some(&seed_pipeline_layout),
+        module: &seed_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let reduce_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-child-host-hzb-reduce-pipeline"),
+        layout: Some(&reduce_pipeline_layout),
+        module: &reduce_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let seed_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-child-host-hzb-seed-bind-group"),
+        layout: &seed_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&depth_source_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&hzb_views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: seed_uniform.as_entire_binding(),
+            },
+        ],
+    });
+    let reduce_bind_groups = (1..mip_count)
+        .map(|mip| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("banger-native-child-host-hzb-reduce-bind-group"),
+                layout: &reduce_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&hzb_views[(mip - 1) as usize]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&hzb_views[mip as usize]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: reduce_uniforms[(mip - 1) as usize].as_entire_binding(),
+                    },
+                ],
+            })
+        })
+        .collect::<Vec<_>>();
+    BangerNativeHzbResources {
+        _texture: hzb_texture,
+        _views: hzb_views,
+        seed_pipeline,
+        reduce_pipeline,
+        seed_bind_group,
+        reduce_bind_groups,
+        mip_count,
+        width,
+        height,
+        _hzb_hash: banger_hzb_resource_hash(width, height, mip_count, allocation_index),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_banger_hzb_build(encoder: &mut wgpu::CommandEncoder, hzb: &BangerNativeHzbResources) {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("banger-native-child-host-hzb-build-compute-pass"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(&hzb.seed_pipeline);
+    pass.set_bind_group(0, &hzb.seed_bind_group, &[]);
+    pass.dispatch_workgroups(hzb.width.div_ceil(8), hzb.height.div_ceil(8), 1);
+    pass.set_pipeline(&hzb.reduce_pipeline);
+    for mip in 1..hzb.mip_count {
+        let size = banger_hzb_mip_size(hzb.width, hzb.height, mip);
+        pass.set_bind_group(0, &hzb.reduce_bind_groups[(mip - 1) as usize], &[]);
+        pass.dispatch_workgroups(size[0].div_ceil(8), size[1].div_ceil(8), 1);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_mip_count(width: u32, height: u32) -> u32 {
+    let mut size = width.max(height).max(1);
+    let mut mips = 1u32;
+    while size > 1 {
+        size = size.div_ceil(2);
+        mips += 1;
+    }
+    mips
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_mip_size(width: u32, height: u32, mip: u32) -> [u32; 2] {
+    [
+        (width >> mip).max(1),
+        (height >> mip).max(1),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_resource_hash(width: u32, height: u32, mip_count: u32, allocation_index: u32) -> String {
+    sha256_hex(
+        format!("banger-hzb-resource-v1:{width}:{height}:{mip_count}:r32float:{allocation_index}")
+            .as_bytes(),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn banger_u32x4_bytes(values: [u32; 4]) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    for (index, value) in values.into_iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_seed_compute_wgsl() -> &'static str {
+    r#"
+struct HzbUniform {
+    // x/y: source depth size, z/w: destination mip size.
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var source_depth: texture_depth_2d;
+@group(0) @binding(1) var target_hzb: texture_storage_2d<r32float, write>;
+@group(0) @binding(2) var<uniform> hzb: HzbUniform;
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= hzb.dims.z || gid.y >= hzb.dims.w) {
+        return;
+    }
+    let source_xy = vec2<i32>(
+        min(gid.x, max(hzb.dims.x, 1u) - 1u),
+        min(gid.y, max(hzb.dims.y, 1u) - 1u)
+    );
+    let depth = textureLoad(source_depth, source_xy, 0);
+    textureStore(target_hzb, vec2<i32>(gid.xy), vec4<f32>(depth, 0.0, 0.0, 0.0));
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_reduce_compute_wgsl() -> &'static str {
+    r#"
+struct HzbUniform {
+    // x/y: source mip size, z/w: destination mip size.
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var source_hzb: texture_2d<f32>;
+@group(0) @binding(1) var target_hzb: texture_storage_2d<r32float, write>;
+@group(0) @binding(2) var<uniform> hzb: HzbUniform;
+
+fn load_depth(xy: vec2<u32>) -> f32 {
+    let clamped_xy = min(xy, hzb.dims.xy - vec2<u32>(1u, 1u));
+    return textureLoad(source_hzb, vec2<i32>(clamped_xy), 0).x;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= hzb.dims.z || gid.y >= hzb.dims.w) {
+        return;
+    }
+    let source_xy = gid.xy * 2u;
+    let a = load_depth(source_xy);
+    let b = load_depth(source_xy + vec2<u32>(1u, 0u));
+    let c = load_depth(source_xy + vec2<u32>(0u, 1u));
+    let d = load_depth(source_xy + vec2<u32>(1u, 1u));
+    textureStore(target_hzb, vec2<i32>(gid.xy), vec4<f32>(max(max(a, b), max(c, d)), 0.0, 0.0, 0.0));
+}
+"#
 }
 
 #[cfg(target_os = "windows")]
@@ -3899,7 +4256,7 @@ fn create_banger_first_scene_pipeline(
             conservative: false,
         },
         depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24Plus,
+            format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
@@ -3939,7 +4296,7 @@ fn create_banger_first_scene_pipeline(
         scene_mesh_hash,
         scene_graph_hash,
         instance_buffer_hash,
-        depth_format: wgpu::TextureFormat::Depth24Plus,
+        depth_format: wgpu::TextureFormat::Depth32Float,
         shader_source_hash,
         render_pipeline_hash,
     })
@@ -5486,15 +5843,28 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn hashes_persistent_frame_targets_by_size_and_generation() {
-        let (first_target, first_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth24Plus, 1);
-        let (same_target, same_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth24Plus, 1);
-        let (resized_target, resized_depth) = banger_frame_target_hashes(1920, 1080, wgpu::TextureFormat::Depth24Plus, 2);
+        let (first_target, first_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth32Float, 1);
+        let (same_target, same_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth32Float, 1);
+        let (resized_target, resized_depth) = banger_frame_target_hashes(1920, 1080, wgpu::TextureFormat::Depth32Float, 2);
         assert_eq!(first_target, same_target);
         assert_eq!(first_depth, same_depth);
         assert_ne!(first_target, resized_target);
         assert_ne!(first_depth, resized_depth);
         assert_eq!(first_target.len(), 64);
         assert_eq!(first_depth.len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn sizes_hzb_pyramid_for_child_surface_depth() {
+        assert_eq!(banger_hzb_mip_count(1, 1), 1);
+        assert_eq!(banger_hzb_mip_count(1280, 720), 12);
+        assert_eq!(banger_hzb_mip_size(1280, 720, 0), [1280, 720]);
+        assert_eq!(banger_hzb_mip_size(1280, 720, 1), [640, 360]);
+        assert_eq!(banger_hzb_mip_size(1280, 720, 11), [1, 1]);
+        assert_eq!(banger_hzb_resource_hash(1280, 720, 12, 1).len(), 64);
+        assert!(banger_hzb_seed_compute_wgsl().contains("texture_depth_2d"));
+        assert!(banger_hzb_reduce_compute_wgsl().contains("texture_storage_2d<r32float, write>"));
     }
 
     #[test]
