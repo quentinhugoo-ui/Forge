@@ -9,14 +9,8 @@ $QuotedRoot = Quote-PwshLiteral $Root
 
 $UiCommand = @"
 cd $QuotedRoot
-Write-Host "InGen native front: classic build + launch" -ForegroundColor Cyan
-`$env:FORGE_CARGO_SESSION = "desktop-classic"
-.\scripts\forge-cargo.ps1 build --manifest-path examples\ingen_native_front\Cargo.toml
-if (`$LASTEXITCODE -ne 0) {
-    Write-Host "Build failed." -ForegroundColor Red
-    exit `$LASTEXITCODE
-}
-Start-Process -FilePath (Join-Path `$PWD ".codex-targets\desktop-classic\debug\ingen-native-front.exe")
+Write-Host "InGen Electron shell: build freshness + launch" -ForegroundColor Cyan
+cmd.exe /c examples\ingen_electron_shell\run_ingen_electron_shell.cmd
 "@
 
 Start-Process powershell.exe -ArgumentList @(

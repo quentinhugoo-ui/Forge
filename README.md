@@ -2,7 +2,7 @@
 
 Canonical backup: https://github.com/quentinhugoo-ui/Forge.git
 
-Forge is a local agent workbench: a Rust/KASM compute core, a native Rust/Slint front, a direct agent CLI (BrainCommand in, verified compact projection out), and a persistent brain/memory layer wired to the Godel machinery.
+Forge is a local agent workbench: a Rust/KASM compute core, an Electron/React product shell backed by native Rust services, a direct agent CLI (BrainCommand in, verified compact projection out), and a persistent brain/memory layer wired to the Godel machinery.
 
 The product direction is simple: shorten the path between intent, memory, proof, compute and action. Do not add pipelines when a shorter verified circuit can exist.
 
@@ -13,7 +13,7 @@ The product direction is simple: shorten the path between intent, memory, proof,
 - Monster compute path: `src/monster.rs`.
 - Brain and memory: `src/brain.rs`.
 - Godel machine: `src/godel.rs`.
-- Native front: `examples/ingen_native_front/**`.
+- Product frontend: `examples/ingen_electron_shell/**`.
 - Native/shared services: `examples/ingen_native_services/**`.
 - Direct agent/service surface: native Rust crates only.
 - Main UI sections: Forge shell, Alpha, WebExplorer peripheral, Banger/3D, trading, and real-estate/real-estate-main.
@@ -43,10 +43,10 @@ For the exact live architecture and agent rules, `AGENTS.md` wins over this READ
 ```powershell
 cargo check --lib --tests
 cargo test brain --lib
-cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests
-cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib
-cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit
 cargo check --manifest-path examples\ingen_native_services\Cargo.toml
+cd examples\ingen_electron_shell
+npm.cmd run typecheck
+npm.cmd run build
 ```
 
 If MSVC is needed on Windows:
