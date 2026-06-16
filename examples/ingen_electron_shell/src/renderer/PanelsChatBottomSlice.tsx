@@ -1264,10 +1264,13 @@ type AssistantMarkdownBlock =
   | { kind: "facts"; items: AssistantFactItem[] }
   | { kind: "divider" }
   | { kind: "learning_interrupt"; interrupt: BrainLearningInterrupt }
+  | { kind: "search_archive_result"; result: AssistantSearchArchiveResult }
+  | { kind: "search_archive_demo_start" }
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
 const CONTEXT_COMPACTION_COMMAND = "/context_compaction_";
+const SEARCH_ARCHIVE_DEMO_START_MARKER = "[[searcharchive_demo_start]]";
 
 type TranscriptContextCompactionState = "compressing" | "compressed";
 type SpecializedBrainActivationCommand = `/${string}brain_`;
@@ -1288,6 +1291,27 @@ interface AssistantFactItem {
 interface AssistantMacroListItem {
   label: string;
   body: string;
+}
+
+interface AssistantSearchArchiveHit {
+  rank: number;
+  sessionTitle: string;
+  role: string;
+  createdAt: string;
+  matchedField: string;
+  score: string;
+  snippet: string;
+  openRef: string;
+}
+
+interface AssistantSearchArchiveResult {
+  query: string;
+  scope: string;
+  matchCount: string;
+  returnedCount: string;
+  truncated: boolean;
+  proofHash: string;
+  hits: AssistantSearchArchiveHit[];
 }
 
 interface TranscriptCodeActEvent {
@@ -1540,6 +1564,14 @@ function isCodeActMetadataLine(line: string): boolean {
   );
 }
 
+function isCodeActMetadataContinuation(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("/")) {
+    return false;
+  }
+  return /^\s/.test(line) || /^[a-zA-Z_][\w-]*\s*[:=]/.test(trimmed) || /^[{[\]},]/.test(trimmed);
+}
+
 function codeActMetadataDisplayText(line: string): string {
   const trimmed = line.trim();
   const result = /^R(?:e|\u00e9)sultat\s*:\s*(.*)$/i.exec(trimmed);
@@ -1737,6 +1769,89 @@ function assistantMacroListItems(items: string[]): AssistantMacroListItem[] | nu
   return macroItems as AssistantMacroListItem[];
 }
 
+function unquoteSearchArchiveValue(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  return trimmed;
+}
+
+function searchArchiveValue(line: string, key: string): string {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^\\s*${escapedKey}\\s*[:=]\\s*(.*)$`).exec(line);
+  return match ? unquoteSearchArchiveValue(match[1] ?? "") : "";
+}
+
+function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveResult {
+  const result: AssistantSearchArchiveResult = {
+    query: "",
+    scope: "",
+    matchCount: "0",
+    returnedCount: "0",
+    truncated: false,
+    proofHash: "",
+    hits: []
+  };
+  let activeHit: AssistantSearchArchiveHit | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === "SEARCHARCHIVE_RESULT" || trimmed === "hits:") {
+      continue;
+    }
+    const rank = /^\-\s+rank:\s*(\d+)/.exec(trimmed);
+    if (rank) {
+      activeHit = {
+        rank: Number(rank[1]),
+        sessionTitle: "",
+        role: "",
+        createdAt: "",
+        matchedField: "",
+        score: "",
+        snippet: "",
+        openRef: ""
+      };
+      result.hits.push(activeHit);
+      continue;
+    }
+    if (activeHit) {
+      const sessionTitle = searchArchiveValue(trimmed, "session_title");
+      const role = searchArchiveValue(trimmed, "role");
+      const createdAt = searchArchiveValue(trimmed, "created_at");
+      const matchedField = searchArchiveValue(trimmed, "matched_field");
+      const score = searchArchiveValue(trimmed, "score");
+      const snippet = searchArchiveValue(trimmed, "snippet");
+      const openRef = searchArchiveValue(trimmed, "open_ref");
+      if (sessionTitle) activeHit.sessionTitle = sessionTitle;
+      if (role) activeHit.role = role;
+      if (createdAt) activeHit.createdAt = createdAt;
+      if (matchedField) activeHit.matchedField = matchedField;
+      if (score) activeHit.score = score;
+      if (snippet) activeHit.snippet = snippet;
+      if (openRef) activeHit.openRef = openRef;
+    }
+    const query = searchArchiveValue(trimmed, "query");
+    const scope = searchArchiveValue(trimmed, "scope");
+    const matchCount = searchArchiveValue(trimmed, "match_count");
+    const returnedCount = searchArchiveValue(trimmed, "returned_count");
+    const truncated = searchArchiveValue(trimmed, "truncated");
+    const proofHash = searchArchiveValue(trimmed, "proof_hash");
+    if (query) result.query = query;
+    if (scope) result.scope = scope;
+    if (matchCount) result.matchCount = matchCount;
+    if (returnedCount) result.returnedCount = returnedCount;
+    if (truncated) result.truncated = truncated === "true";
+    if (proofHash) result.proofHash = proofHash;
+  }
+
+  return result;
+}
+
 function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   const lines = normalizeAssistantMarkdownText(text).split("\n");
   const blocks: AssistantMarkdownBlock[] = [];
@@ -1770,6 +1885,25 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       lastEvent = null;
       continue;
     }
+    if (line === SEARCH_ARCHIVE_DEMO_START_MARKER) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "search_archive_demo_start" });
+      continue;
+    }
+    if (line === "SEARCHARCHIVE_RESULT") {
+      flushParagraph();
+      flushList();
+      const resultLines = [rawLine];
+      while (lineIndex + 1 < lines.length && lines[lineIndex + 1].trim()) {
+        resultLines.push(lines[lineIndex + 1]);
+        lineIndex += 1;
+      }
+      blocks.push({ kind: "search_archive_result", result: parseSearchArchiveResultBlock(resultLines) });
+      skippingCodeActMetadata = false;
+      lastEvent = null;
+      continue;
+    }
     if (isCodeActMetadataLine(line)) {
       if (lastEvent) {
         lastEvent.detail = codeActMetadataDisplayText(line);
@@ -1784,6 +1918,12 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       if (lastEvent && !lastEvent.detail) {
         lastEvent.detail = shellPayloadDisplayText(line);
       }
+      flushParagraph();
+      flushList();
+      sawCodeActMetadata = true;
+      continue;
+    }
+    if (skippingCodeActMetadata && isCodeActMetadataContinuation(rawLine)) {
       flushParagraph();
       flushList();
       sawCodeActMetadata = true;
@@ -2864,18 +3004,6 @@ function BrainSegmentCodeActIcon({ phase }: { phase: "changing" | "changed" }) {
   );
 }
 
-function SearchArchiveCodeActIcon() {
-  return (
-    <svg className="searchArchiveIcon" viewBox="0 0 24 24" aria-hidden="true">
-      <path className="searchArchiveBox" d="M4.5 8.5h9.8v8.8a1.7 1.7 0 0 1-1.7 1.7H6.2a1.7 1.7 0 0 1-1.7-1.7V8.5Z" />
-      <path className="searchArchiveLid" d="M3.8 6.1h11.2v2.4H3.8V6.1Z" />
-      <path className="searchArchiveLine" d="M7.3 11.1h4.1" />
-      <circle className="searchArchiveLens" cx="15.5" cy="14.5" r="3.2" />
-      <path className="searchArchiveHandle" d="m17.9 16.9 2.5 2.5" />
-    </svg>
-  );
-}
-
 function NewObjectCodeActIcon() {
   return (
     <span className="cubeIconBox" aria-hidden="true">
@@ -2945,7 +3073,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
   if (command === BRAIN_PLAN_COMMAND) return <ListChecks />;
-  if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <SearchArchiveCodeActIcon />;
+  if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <ModuleLogo id="searcharchive" />;
   if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
   if (command === BRAIN_GOOGLE_AGENDA_COMMAND) return <CalendarCodeActIcon />;
@@ -3368,6 +3496,134 @@ function AssistantLearningInterruptCard({
   );
 }
 
+function searchArchiveHighlightTerms(query: string): string[] {
+  return [...new Set(query.split(/[\s,;]+/).map((term) => term.trim()).filter((term) => term.length >= 2))];
+}
+
+function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix: string): ReactNode[] {
+  const terms = searchArchiveHighlightTerms(query);
+  if (terms.length === 0) {
+    return [text];
+  }
+  const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index));
+    }
+    nodes.push(<mark key={`${keyPrefix}-${match.index}`}>{match[0]}</mark>);
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return nodes;
+}
+
+function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: AssistantSearchArchiveResult; messageId: string; blockIndex: number }) {
+  const resultCount = result.returnedCount || String(result.hits.length);
+  return (
+    <section className="searchArchiveResultCard" aria-label="Search archive result">
+      <header className="searchArchiveResultCard__header">
+        <span className="searchArchiveResultCard__icon" aria-hidden="true">
+          <ModuleLogo id="searcharchive" />
+        </span>
+        <span className="searchArchiveResultCard__title">Archive search</span>
+        <span className="searchArchiveResultCard__meta">{resultCount} returned</span>
+      </header>
+      <div className="searchArchiveResultCard__query">
+        <span>query</span>
+        <code>{result.query || "empty"}</code>
+      </div>
+      <ol className="searchArchiveResultCard__hits">
+        {result.hits.map((hit, hitIndex) => (
+          <li className="searchArchiveResultCard__hit" key={`${messageId}-search-hit-${blockIndex}-${hit.rank}-${hitIndex}`}>
+            <div className="searchArchiveResultCard__hitTop">
+              <strong>{hit.sessionTitle || "Untitled session"}</strong>
+              <span>{hit.role || "message"}</span>
+              {hit.score ? <span>score {hit.score}</span> : null}
+            </div>
+            <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${hitIndex}`)}</p>
+            <div className="searchArchiveResultCard__hitBottom">
+              <span>{hit.matchedField || "message_text"}</span>
+              {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
+              {hit.openRef ? <code>{hit.openRef}</code> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {result.truncated || result.proofHash ? (
+        <footer className="searchArchiveResultCard__footer">
+          {result.truncated ? <span>truncated</span> : <span>complete</span>}
+          {result.proofHash ? <code>{result.proofHash}</code> : null}
+        </footer>
+      ) : null}
+    </section>
+  );
+}
+
+function SearchArchiveDemoStartCard({ agentName }: { agentName: string }) {
+  const [started, setStarted] = useState(false);
+  const demoEvent = transcriptCodeActEvent(
+    BRAIN_SEARCHARCHIVE_COMMAND,
+    `${BRAIN_SEARCHARCHIVE_COMMAND} template_proof_hash=sha256:demo query="croissant four 180" session_scope=all content_scope=messages top_k=3`
+  );
+  const demoResult = parseSearchArchiveResultBlock([
+    "SEARCHARCHIVE_RESULT",
+    "schema=forge.brain.searcharchive.result.v1",
+    "query=\"croissant four 180\"",
+    "scope=all",
+    "match_count=2",
+    "returned_count=2",
+    "truncated=false",
+    "proof_hash=sha256:demo-searcharchive-loop-proof",
+    "hits:",
+    "  - rank: 1",
+    "    source_type: session_message",
+    "    session_id: \"searcharchive-loop-demo-memory\"",
+    "    session_title: \"Archive source - patisserie budget\"",
+    "    turn_id: \"demo-memory-assistant-recipe\"",
+    "    role: assistant",
+    "    created_at: \"2026-06-15T09:43:12.000Z\"",
+    "    matched_field: message_text",
+    "    score: 19",
+    "    snippet: \"On garde le budget croissant a 24 euros, cuisson au four a 180 degres pendant 17 minutes, puis repos 8 minutes.\"",
+    "    open_ref=forge://archive/session/searcharchive-loop-demo-memory?turn=demo-memory-assistant-recipe",
+    "  - rank: 2",
+    "    source_type: session_message",
+    "    session_id: \"searcharchive-loop-demo-memory\"",
+    "    session_title: \"Archive source - patisserie budget\"",
+    "    turn_id: \"demo-memory-user-budget\"",
+    "    role: user",
+    "    created_at: \"2026-06-15T09:42:55.000Z\"",
+    "    matched_field: message_text",
+    "    score: 12",
+    "    snippet: \"Retrouve moi la note budget croissant et la temperature du four pour samedi.\"",
+    "    open_ref=forge://archive/session/searcharchive-loop-demo-memory?turn=demo-memory-user-budget"
+  ]);
+
+  return (
+    <section className="searchArchiveDemoCard" aria-label="SearchArchive loop stream demo">
+      <button className="searchArchiveDemoCard__start" type="button" onClick={() => setStarted(true)} disabled={started}>
+        <span className="searchArchiveDemoCard__startIcon" aria-hidden="true">
+          <ModuleLogo id="searcharchive" />
+        </span>
+        <span>{started ? "Started" : "Start"}</span>
+      </button>
+      {started ? (
+        <div className="searchArchiveDemoFlow">
+          <div className="searchArchiveDemoFlow__turn searchArchiveDemoFlow__turn--user">Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.</div>
+          <div className="searchArchiveDemoFlow__turn searchArchiveDemoFlow__turn--assistant">Je lance le CodeAct d'archive, je recois le template, puis je renvoie le template rempli pour executer la recherche.</div>
+          <TranscriptCodeActEventLine agentName={agentName} event={demoEvent} writing />
+          <SearchArchiveResultCard blockIndex={0} messageId="searcharchive-demo" result={demoResult} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function specializedBrainActivationCommandsFromText(text: string): string[] {
   const commands = new Set<string>();
   for (const match of text.matchAll(/\/[a-zA-Z0-9_]+brain_/g)) {
@@ -3465,6 +3721,12 @@ function AssistantMarkdownText({
               parallelSessionIndex={parallelSessionIndex}
             />
           );
+        }
+        if (block.kind === "search_archive_result") {
+          return <SearchArchiveResultCard blockIndex={index} key={`${messageId}-searcharchive-${index}`} messageId={messageId} result={block.result} />;
+        }
+        if (block.kind === "search_archive_demo_start") {
+          return <SearchArchiveDemoStartCard agentName={agentName} key={`${messageId}-searcharchive-demo-${index}`} />;
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";

@@ -161,6 +161,18 @@ export function ComputeIcon() {
   );
 }
 
+export function SearchArchiveIcon() {
+  return (
+    <ModuleLogoFrame viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 8.5h9.8v8.8a1.7 1.7 0 0 1-1.7 1.7H6.2a1.7 1.7 0 0 1-1.7-1.7V8.5Z" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+      <path d="M3.8 6.1h11.2v2.4H3.8V6.1Z" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+      <path d="M7.3 11.1h4.1" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+      <circle cx="15.5" cy="14.5" r="3.2" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+      <path d="m17.9 16.9 2.5 2.5" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+    </ModuleLogoFrame>
+  );
+}
+
 export function ModuleLogo({ id }: { id: string }) {
   if (id === "gmail") return <GmailIcon />;
   if (id === "outlook") return <OutlookIcon />;
@@ -170,5 +182,6 @@ export function ModuleLogo({ id }: { id: string }) {
   if (id === "whatsapp") return <WhatsappIcon />;
   if (id === "scrapling") return <ScraplingIcon />;
   if (id === "compute") return <ComputeIcon />;
+  if (id === "searcharchive") return <SearchArchiveIcon />;
   return <CubeIcon />;
 }
