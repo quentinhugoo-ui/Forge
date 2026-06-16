@@ -11066,7 +11066,7 @@ ol.assistantText__list li::before {
 }
 
 .brainLearningRegistry__head {
-  align-items: stretch;
+  align-items: center;
 }
 
 .brainCustomCodeActs__head {
@@ -11160,8 +11160,8 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__tabs {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 5px;
-  align-items: stretch;
+  gap: 14px;
+  align-items: center;
   min-width: 0;
 }
 
@@ -11169,28 +11169,33 @@ ol.assistantText__list li::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   min-width: 0;
-  min-height: 26px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in oklab, #ffbf48, transparent 76%);
-  border-radius: 6px;
+  min-height: 22px;
+  padding: 0 0 3px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
   color: var(--forge-muted);
   background: transparent;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+  transition: border-color 160ms ease, color 160ms ease, opacity 160ms ease;
 }
 
 .brainLearningRegistry__tab:hover,
 .brainLearningRegistry__tab:focus-visible,
 .brainLearningRegistry__tab--active {
-  border-color: color-mix(in oklab, #ffbf48, transparent 42%);
+  border-bottom-color: color-mix(in oklab, #ffbf48, transparent 38%);
   color: #f1d596;
-  background: color-mix(in oklab, #ffbf48, transparent 92%);
+  background: transparent;
   outline: 0;
+}
+
+.brainLearningRegistry__tab:focus-visible {
+  outline: 1px solid color-mix(in oklab, #ffbf48, transparent 50%);
+  outline-offset: 3px;
 }
 
 .brainLearningRegistry__panel {

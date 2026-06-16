@@ -314,21 +314,18 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   id: BrainLearningRegistryCategory;
   label: string;
   title: string;
-  glyph: string;
   placeholder: string;
 }> = [
   {
     id: "lesson",
     label: "Lessons",
     title: "The agent reviews mistakes and useful outcomes, then turns them into durable rules and skills it can reuse in future sessions.",
-    glyph: "lesson-book",
     placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
   {
     id: "skill",
     label: "Skills",
     title: "Reusable agent skills extracted from repeated useful actions, patterns, and workflows.",
-    glyph: "zap",
     placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
   }
 ];
@@ -940,7 +937,6 @@ function BrainLearningRegistry() {
               onClick={() => selectCategory(item.id)}
               onKeyDown={onCategoryTabKeyDown}
             >
-              <Glyph kind={item.glyph} size={13} />
               {item.label}
             </button>
           ))}
