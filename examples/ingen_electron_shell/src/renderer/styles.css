@@ -7277,7 +7277,7 @@ ol.assistantText__list li::before {
   left: var(--chat-left);
   bottom: var(--composer-bottom);
   display: grid;
-  grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 88px 26px;
+  grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 26px;
   align-items: stretch;
   width: var(--chat-width);
   min-height: 82px;
@@ -7677,7 +7677,7 @@ ol.assistantText__list li::before {
 }
 
 .composer__input {
-  grid-column: 3 / 6;
+  grid-column: 3 / 5;
   grid-row: 1;
   width: 100%;
   min-width: 0;
@@ -7759,60 +7759,8 @@ ol.assistantText__list li::before {
   background: var(--forge-focus-ring);
 }
 
-.composer__providers {
-  grid-column: 4;
-  grid-row: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 28px);
-  gap: 2px;
-  align-self: end;
-  justify-self: end;
-  z-index: 4;
-}
-
-.providerDot {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  color: var(--forge-muted);
-  background: transparent !important;
-  border: 0 !important;
-  opacity: 0.54;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.providerDot--connected {
-  color: var(--forge-text);
-  opacity: 0.82;
-}
-
-.providerDot--connected[aria-label="Claude"] {
-  color: #d97745;
-}
-
-.providerDot--active {
-  color: var(--forge-text);
-  opacity: 1;
-}
-
-.providerDot--active[aria-label="Claude"] {
-  color: #d97745;
-}
-
-.providerDot:hover {
-  color: var(--forge-text);
-  opacity: 1;
-}
-
-.providerDot:focus-visible {
-  outline: 0 !important;
-}
-
 .composer__send {
-  grid-column: 5;
+  grid-column: 4;
   grid-row: 1;
   display: grid;
   place-items: center;
@@ -8495,7 +8443,9 @@ ol.assistantText__list li::before {
   }
 
   .bottomControls__flipButton svg,
-  .bottomControls__flipText {
+  .bottomControls__flipText,
+  .bottomControls__llmActive,
+  .bottomControls__llmProvider {
     animation: none;
     transition: none;
   }
@@ -8506,7 +8456,11 @@ ol.assistantText__list li::before {
 
   .bottomControls__flipButton:hover svg,
   .bottomControls__flipButton:focus-visible svg,
-  .bottomControls__flipButton:active svg {
+  .bottomControls__flipButton:active svg,
+  .bottomControls__llmActive:hover,
+  .bottomControls__llmActive:focus-visible,
+  .bottomControls__llmProvider:hover,
+  .bottomControls__llmProvider:focus-visible {
     transform: none;
   }
 }
@@ -8515,11 +8469,102 @@ ol.assistantText__list li::before {
   grid-column: 4 / 6;
   justify-self: end;
   display: grid;
-  grid-template-columns: 10px max-content max-content 10px;
+  grid-template-columns: 22px max-content max-content 10px;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   width: max-content;
   min-width: 0;
+  overflow: visible;
+}
+
+.bottomControls__llmSelector {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  min-width: 22px;
+  height: 20px;
+  z-index: 5;
+}
+
+.bottomControls__llmRail {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 4px);
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.bottomControls__llmActive,
+.bottomControls__llmProvider {
+  display: grid !important;
+  place-items: center;
+  width: 22px;
+  min-width: 22px;
+  height: 20px !important;
+  min-height: 20px;
+  padding: 0 !important;
+  color: color-mix(in oklab, var(--forge-text), transparent 12%) !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  opacity: 0.9;
+  cursor: pointer;
+  transition:
+    color 150ms ease-out,
+    opacity 150ms ease-out,
+    transform 210ms cubic-bezier(0.2, 0.74, 0.18, 1);
+}
+
+.bottomControls__llmProvider {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px) scale(0.88);
+  transition-delay: calc(var(--llm-provider-index, 0) * 28ms);
+}
+
+.bottomControls__llmSelector--open .bottomControls__llmProvider {
+  opacity: 0.72;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+}
+
+.bottomControls__llmActive:hover,
+.bottomControls__llmActive:focus-visible,
+.bottomControls__llmActive[aria-expanded="true"],
+.bottomControls__llmProvider:hover,
+.bottomControls__llmProvider:focus-visible {
+  color: var(--forge-text) !important;
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.bottomControls__llmSelector--open .bottomControls__llmActive {
+  opacity: 1;
+}
+
+.bottomControls__llmActive--anthropic,
+.bottomControls__llmProvider--anthropic {
+  color: #d97745 !important;
+}
+
+.bottomControls__llmProvider:not(.bottomControls__llmProvider--connected) {
+  opacity: 0.38;
+}
+
+.bottomControls__llmSelector--open .bottomControls__llmProvider:not(.bottomControls__llmProvider--connected):hover,
+.bottomControls__llmSelector--open .bottomControls__llmProvider:not(.bottomControls__llmProvider--connected):focus-visible {
+  opacity: 0.72;
+}
+
+.bottomControls__llmActive:focus-visible,
+.bottomControls__llmProvider:focus-visible {
+  outline: 1px solid color-mix(in oklab, currentColor, transparent 54%) !important;
+  outline-offset: 2px;
 }
 
 .bottomControls__flipButton {
@@ -8694,6 +8739,31 @@ ol.assistantText__list li::before {
   transition:
     color 140ms ease-out,
     text-shadow 140ms ease-out;
+}
+
+.bottomControls .bottomControls__llmActive,
+.bottomControls .bottomControls__llmProvider {
+  display: grid !important;
+  place-items: center;
+  width: 22px;
+  min-width: 22px;
+  height: 20px !important;
+  min-height: 20px;
+  padding: 0 !important;
+  overflow: visible;
+  color: color-mix(in oklab, var(--forge-text), transparent 12%) !important;
+  font-size: 0;
+  text-align: center;
+}
+
+.bottomControls .bottomControls__llmActive--anthropic,
+.bottomControls .bottomControls__llmProvider--anthropic {
+  color: #d97745 !important;
+}
+
+.bottomControls .bottomControls__llmActive::before,
+.bottomControls .bottomControls__llmProvider::before {
+  content: none !important;
 }
 
 .shell--widget-mode .bottomControls button::before {
@@ -13388,7 +13458,7 @@ ol.assistantText__list li::before {
     --composer-upload-min-size: 60px;
     --composer-input-height: var(--composer-upload-min-size);
     bottom: 30px;
-    grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 84px 26px;
+    grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 26px;
     min-height: 74px;
     height: auto;
     padding: 7px;
@@ -13430,7 +13500,7 @@ ol.assistantText__list li::before {
   --composer-input-height: var(--composer-upload-min-size);
   left: var(--chat-left);
   bottom: var(--composer-bottom);
-  grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 88px 26px;
+  grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 26px;
   min-height: 82px;
   height: auto;
   padding: 8px;

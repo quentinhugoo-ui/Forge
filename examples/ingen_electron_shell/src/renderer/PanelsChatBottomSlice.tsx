@@ -4608,6 +4608,7 @@ export function PanelsChatBottomSlice({
   const [draft, setDraft] = useState(snapshot.composer.chatText);
   const [focusedParallelIndex, setFocusedParallelIndex] = useState(0);
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
+  const [llmSelectorOpen, setLlmSelectorOpen] = useState(false);
   const [selfDirectedMenuStage, setSelfDirectedMenuStage] = useState<"idle" | "console">("idle");
   const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
@@ -4618,6 +4619,7 @@ export function PanelsChatBottomSlice({
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
   const permissionControlRef = useRef<HTMLDivElement>(null);
+  const llmSelectorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   const composerResetFenceRef = useRef(false);
@@ -4721,6 +4723,30 @@ export function PanelsChatBottomSlice({
   }, [permissionMenuOpen]);
 
   useEffect(() => {
+    if (!llmSelectorOpen) {
+      return;
+    }
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && llmSelectorRef.current?.contains(target)) {
+        return;
+      }
+      setLlmSelectorOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setLlmSelectorOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [llmSelectorOpen]);
+
+  useEffect(() => {
     const focusComposer = () => inputRef.current?.focus();
     globalThis.window?.addEventListener(IMAGE_EDIT_STAGED_EVENT, focusComposer);
     return () => globalThis.window?.removeEventListener(IMAGE_EDIT_STAGED_EVENT, focusComposer);
@@ -4808,6 +4834,8 @@ export function PanelsChatBottomSlice({
 
   const dispatch = panelsChatBottomStore.dispatch;
   const providers = snapshot.composer.providers;
+  const activeProvider = providers.find((provider) => provider.provider === snapshot.composer.selectedProvider) ?? providers.find((provider) => provider.active) ?? providers[0];
+  const inactiveProviders = providers.filter((provider) => provider.provider !== activeProvider?.provider);
   const uploadPreviews = snapshot.composer.uploadPreviews;
   const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = useMemo(() => snapshot.transcript.filter((message) => message.role !== "system"), [snapshot.transcript]);
@@ -5395,23 +5423,6 @@ export function PanelsChatBottomSlice({
             }}
           />
         )}
-        <div className="composer__providers" aria-label="LLM providers">
-          {providers.map((provider) => (
-            <button
-              type="button"
-              className={[
-                "providerDot",
-                provider.connected ? "providerDot--connected" : "",
-                provider.active ? "providerDot--active" : ""
-              ].filter(Boolean).join(" ")}
-              key={provider.provider}
-              aria-label={provider.label}
-              onClick={() => void dispatch({ kind: provider.connected ? "select_llm" : "open_llm_providers", provider: provider.provider })}
-            >
-              <ProviderLogo provider={provider.provider} size={15} />
-            </button>
-          ))}
-        </div>
         <button
           type="submit"
           className={[
@@ -5555,13 +5566,51 @@ export function PanelsChatBottomSlice({
           <strong>MINI</strong>
         </button>
         <div className="bottomControls__models">
-          <button
-            type="button"
-            className="bottomControls__flipButton bottomControls__flipButton--model"
-            onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
-          >
-            <ChevronsUpDown aria-hidden="true" size={9} strokeWidth={2.1} />
-          </button>
+          {activeProvider ? (
+            <div
+              ref={llmSelectorRef}
+              className={[
+                "bottomControls__llmSelector",
+                llmSelectorOpen ? "bottomControls__llmSelector--open" : ""
+              ].filter(Boolean).join(" ")}
+            >
+              <div className="bottomControls__llmRail" aria-hidden={!llmSelectorOpen}>
+                {inactiveProviders.map((provider, index) => (
+                  <button
+                    type="button"
+                    className={[
+                      "bottomControls__llmProvider",
+                      `bottomControls__llmProvider--${provider.provider}`,
+                      provider.connected ? "bottomControls__llmProvider--connected" : ""
+                    ].filter(Boolean).join(" ")}
+                    style={{ "--llm-provider-index": index } as CSSProperties}
+                    key={provider.provider}
+                    aria-label={provider.connected ? `Use ${provider.label}` : `Connect ${provider.label}`}
+                    tabIndex={llmSelectorOpen ? undefined : -1}
+                    onClick={() => {
+                      setLlmSelectorOpen(false);
+                      void dispatch({ kind: provider.connected ? "select_llm" : "open_llm_providers", provider: provider.provider });
+                    }}
+                  >
+                    <ProviderLogo provider={provider.provider} size={15} />
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className={[
+                  "bottomControls__llmActive",
+                  `bottomControls__llmActive--${activeProvider.provider}`
+                ].filter(Boolean).join(" ")}
+                aria-label={`Change LLM provider, current provider ${activeProvider.label}`}
+                aria-haspopup="menu"
+                aria-expanded={llmSelectorOpen}
+                onClick={() => setLlmSelectorOpen((open) => !open)}
+              >
+                <ProviderLogo provider={activeProvider.provider} size={15} />
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             className="bottomControls__modelButton"
