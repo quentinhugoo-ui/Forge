@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "e8c226d265dc915d1b6374286e49b667c8a7d76afac27008fa69c6d4419c3d91"
+    "ipc_manifest_hash": "db05c3ab760a50967df20e37a6c0fe55077ba80b883d2d0f202fe711bf00c286"
   },
   "checks": [
     {
@@ -149,5 +149,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "e9dc6805e61c8b8669a8d24ef1a0bfabd759304f34a21a02931a908445a4e1ca"
+  "proof_hash": "1ac35f8b793b96a52540ac836660d6ca23b82783880859715ffa09b9994c5219"
 }
