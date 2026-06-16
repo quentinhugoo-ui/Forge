@@ -3516,49 +3516,40 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
 
 function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: AssistantSearchArchiveResult; messageId: string; blockIndex: number }) {
   const resultCount = result.returnedCount || String(result.hits.length);
+  const terms = searchArchiveHighlightTerms(result.query);
   return (
-    <section className="searchArchiveResultCard searchArchiveResultCard--live" aria-label="Search Archive live result">
+    <section className="searchArchiveResultCard" aria-label="Search Archive result chunks">
       <header className="searchArchiveResultCard__header">
         <span className="searchArchiveResultCard__icon" aria-hidden="true">
           <ModuleLogo id="searcharchive" />
         </span>
         <span className="searchArchiveResultCard__title">Search Archive</span>
-        <span className="searchArchiveResultCard__meta">{resultCount} found</span>
+        <span className="searchArchiveResultCard__meta">{resultCount} chunks</span>
       </header>
-      <div className="searchArchiveResultCard__scan" aria-hidden="true">
-        <span />
-      </div>
-      <div className="searchArchiveResultCard__query">
-        <span>query</span>
-        <code>{result.query || "empty"}</code>
-      </div>
+      {terms.length > 0 ? (
+        <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
+          {terms.map((term) => <span key={`${messageId}-search-term-${blockIndex}-${term}`}>{term}</span>)}
+        </div>
+      ) : null}
       <ol className="searchArchiveResultCard__hits">
         {result.hits.map((hit, hitIndex) => (
           <li
             className="searchArchiveResultCard__hit"
             key={`${messageId}-search-hit-${blockIndex}-${hit.rank}-${hitIndex}`}
-            style={{ "--search-archive-hit-index": hitIndex } as CSSProperties}
           >
             <div className="searchArchiveResultCard__hitTop">
               <strong>{hit.sessionTitle || "Untitled session"}</strong>
+              {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
               <span>{hit.role || "message"}</span>
-              {hit.score ? <span>score {hit.score}</span> : null}
             </div>
             <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${hitIndex}`)}</p>
             <div className="searchArchiveResultCard__hitBottom">
+              <span>chunk {hit.rank || hitIndex + 1}</span>
               <span>{hit.matchedField || "message_text"}</span>
-              {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
-              {hit.openRef ? <code>{hit.openRef}</code> : null}
             </div>
           </li>
         ))}
       </ol>
-      {result.truncated || result.proofHash ? (
-        <footer className="searchArchiveResultCard__footer">
-          {result.truncated ? <span>truncated</span> : <span>complete</span>}
-          {result.proofHash ? <code>{result.proofHash}</code> : null}
-        </footer>
-      ) : null}
     </section>
   );
 }

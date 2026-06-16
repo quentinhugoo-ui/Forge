@@ -6904,145 +6904,105 @@ ol.assistantText__list li::before {
 }
 
 .searchArchiveResultCard {
-  position: relative;
-  overflow: hidden;
   display: grid;
-  gap: 10px;
-  width: min(720px, 100%);
-  margin: 4px 0;
-  padding: 12px;
-  color: color-mix(in oklab, var(--forge-text), transparent 4%);
-  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 18%);
-  border: 1px solid color-mix(in oklab, #8fb7ff, transparent 72%);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 color-mix(in oklab, white, transparent 96%);
-}
-
-.searchArchiveResultCard--live::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, transparent, color-mix(in oklab, #8fb7ff, transparent 78%), transparent),
-    radial-gradient(circle at 14% 24%, color-mix(in oklab, #8fb7ff, transparent 86%), transparent 26%);
-  opacity: 0.55;
-  transform: translateX(-62%);
-  animation: searchArchiveCardSweep 2.8s ease-in-out infinite;
+  gap: 8px;
+  width: min(560px, 100%);
+  margin: 2px 0;
+  padding: 4px 0 2px;
+  color: color-mix(in oklab, var(--forge-text), transparent 6%);
 }
 
 .searchArchiveResultCard__header {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-width: 0;
 }
 
 .searchArchiveResultCard__icon {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  color: #8fb7ff;
-}
-
-.searchArchiveResultCard--live .searchArchiveResultCard__icon {
-  animation: searchArchiveIconPulse 1.15s ease-in-out infinite;
+  width: 18px;
+  height: 18px;
+  color: color-mix(in oklab, #8fb7ff, var(--forge-muted) 28%);
+  opacity: 0.82;
 }
 
 .searchArchiveResultCard__icon .sidebarModule__logo {
-  width: 19px;
-  height: 19px;
+  width: 15px;
+  height: 15px;
 }
 
 .searchArchiveResultCard__title {
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 720;
+  color: color-mix(in oklab, var(--forge-text), transparent 12%);
+  font-size: 11.5px;
+  font-weight: 680;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .searchArchiveResultCard__meta,
-.searchArchiveResultCard__query span,
 .searchArchiveResultCard__hitTop span,
 .searchArchiveResultCard__hitBottom,
-.searchArchiveResultCard__footer {
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 12%);
-  font-size: 10.5px;
-  font-weight: 620;
+.searchArchiveResultCard__hitTop time {
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 6%);
+  font-size: 10px;
+  font-weight: 560;
   line-height: 1.25;
 }
 
-.searchArchiveResultCard__query {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+.searchArchiveResultCard__keywords {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  gap: 5px;
 }
 
-.searchArchiveResultCard__scan {
-  position: relative;
-  overflow: hidden;
-  height: 3px;
-  background: color-mix(in oklab, #8fb7ff, transparent 88%);
+.searchArchiveResultCard__keywords span {
+  padding: 1px 6px 2px;
+  color: color-mix(in oklab, #b7d0ff, var(--forge-text) 18%);
+  background: color-mix(in oklab, #8fb7ff, transparent 91%);
   border-radius: 999px;
-}
-
-.searchArchiveResultCard__scan span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 42%;
-  background: linear-gradient(90deg, transparent, #8fb7ff, transparent);
-  border-radius: inherit;
-  animation: searchArchiveScanRail 1.35s ease-in-out infinite;
-}
-
-.searchArchiveResultCard code {
-  overflow: hidden;
-  border-color: color-mix(in oklab, #8fb7ff, transparent 78%);
-  background: color-mix(in oklab, #8fb7ff, transparent 94%);
-  color: color-mix(in oklab, #b7d0ff, var(--forge-text) 16%);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 620;
+  line-height: 1.35;
 }
 
 .searchArchiveResultCard__hits {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .searchArchiveResultCard__hit {
-  position: relative;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 9px 10px;
-  background: color-mix(in oklab, var(--forge-bg), transparent 45%);
-  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 90%);
-  border-radius: 7px;
-  animation: searchArchiveHitIn 520ms ease-out both;
-  animation-delay: calc(var(--search-archive-hit-index, 0) * 120ms);
+  padding: 7px 0 8px;
+  border-top: 1px solid color-mix(in oklab, var(--forge-text), transparent 92%);
+}
+
+.searchArchiveResultCard__hit:first-child {
+  border-top: 0;
 }
 
 .searchArchiveResultCard__hitTop {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
 }
 
 .searchArchiveResultCard__hitTop strong {
   overflow: hidden;
-  color: color-mix(in oklab, var(--forge-text), white 3%);
-  font-size: 12px;
-  font-weight: 700;
+  color: color-mix(in oklab, var(--forge-text), transparent 10%);
+  font-size: 11px;
+  font-weight: 660;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7050,79 +7010,28 @@ ol.assistantText__list li::before {
 
 .searchArchiveResultCard__hit p {
   margin: 0;
-  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
-  font-size: 12.5px;
-  line-height: 1.5;
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 12%);
+  font-size: 12px;
+  line-height: 1.43;
 }
 
 .searchArchiveResultCard__hit mark {
-  padding: 0 3px;
-  color: #f8fbff;
-  background: color-mix(in oklab, #8fb7ff, transparent 58%);
-  border-radius: 4px;
+  padding: 0 2px;
+  color: color-mix(in oklab, #d8e6ff, var(--forge-text) 12%);
+  background: color-mix(in oklab, #8fb7ff, transparent 83%);
+  border-radius: 3px;
 }
 
-.searchArchiveResultCard__hitBottom,
-.searchArchiveResultCard__footer {
+.searchArchiveResultCard__hitBottom {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-}
-
-.searchArchiveResultCard__hitBottom code,
-.searchArchiveResultCard__footer code {
-  min-width: 0;
-  max-width: 100%;
-}
-
-@keyframes searchArchiveCardSweep {
-  0% {
-    transform: translateX(-68%);
-  }
-  52% {
-    transform: translateX(42%);
-  }
-  100% {
-    transform: translateX(118%);
-  }
-}
-
-@keyframes searchArchiveIconPulse {
-  0%,
-  100% {
-    opacity: 0.72;
-    transform: scale(0.94);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.04);
-  }
-}
-
-@keyframes searchArchiveScanRail {
-  0% {
-    transform: translateX(-110%);
-  }
-  100% {
-    transform: translateX(240%);
-  }
-}
-
-@keyframes searchArchiveHitIn {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @media (max-width: 720px) {
   .searchArchiveResultCard__header {
-    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-columns: 18px minmax(0, 1fr);
   }
 
   .searchArchiveResultCard__meta {
@@ -7130,18 +7039,8 @@ ol.assistantText__list li::before {
   }
 
   .searchArchiveResultCard__hitTop,
-  .searchArchiveResultCard__hitBottom,
-  .searchArchiveResultCard__footer {
+  .searchArchiveResultCard__hitBottom {
     flex-wrap: wrap;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .searchArchiveResultCard--live::before,
-  .searchArchiveResultCard--live .searchArchiveResultCard__icon,
-  .searchArchiveResultCard__scan span,
-  .searchArchiveResultCard__hit {
-    animation: none;
   }
 }
 
