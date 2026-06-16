@@ -615,6 +615,10 @@ struct BangerNativeScenePipeline {
     _shared_residency_page_table_buffer: wgpu::Buffer,
     _shared_residency_compacted_feedback_buffer: wgpu::Buffer,
     _shared_residency_budget_buffer: wgpu::Buffer,
+    _lumen_surface_card_buffer: wgpu::Buffer,
+    _lumen_surface_cache_feedback_buffer: wgpu::Buffer,
+    _lumen_screen_probe_buffer: wgpu::Buffer,
+    _lumen_radiance_cache_buffer: wgpu::Buffer,
     virtual_shadow_map_page_table_buffer: wgpu::Buffer,
     virtual_shadow_map_page_flags_buffer: wgpu::Buffer,
     virtual_shadow_map_page_request_buffer: wgpu::Buffer,
@@ -646,6 +650,10 @@ struct BangerNativeScenePipeline {
     _residency_feedback_hash: String,
     _shared_residency_page_table_hash: String,
     _shared_residency_compacted_feedback_hash: String,
+    _lumen_surface_card_hash: String,
+    _lumen_surface_cache_feedback_hash: String,
+    _lumen_screen_probe_hash: String,
+    _lumen_radiance_cache_hash: String,
     _virtual_shadow_map_page_table_hash: String,
     _virtual_shadow_map_page_request_hash: String,
     _virtual_shadow_map_projection_hash: String,
@@ -664,10 +672,24 @@ struct BangerNativeFrameTarget {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     hzb: BangerNativeHzbResources,
+    gbuffer: BangerNativeGBufferResources,
     width: u32,
     height: u32,
     target_hash: String,
     depth_target_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeGBufferResources {
+    _albedo_texture: wgpu::Texture,
+    albedo_view: wgpu::TextureView,
+    _normal_texture: wgpu::Texture,
+    normal_view: wgpu::TextureView,
+    _material_texture: wgpu::Texture,
+    material_view: wgpu::TextureView,
+    _emissive_texture: wgpu::Texture,
+    emissive_view: wgpu::TextureView,
+    _resource_hash: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -3026,6 +3048,10 @@ struct BangerNativeSceneGpuResource {
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
     shared_residency_budget_buffer: wgpu::Buffer,
+    lumen_surface_card_buffer: wgpu::Buffer,
+    lumen_surface_cache_feedback_buffer: wgpu::Buffer,
+    lumen_screen_probe_buffer: wgpu::Buffer,
+    lumen_radiance_cache_buffer: wgpu::Buffer,
     virtual_shadow_map_page_table_buffer: wgpu::Buffer,
     virtual_shadow_map_page_flags_buffer: wgpu::Buffer,
     virtual_shadow_map_page_request_buffer: wgpu::Buffer,
@@ -3054,6 +3080,10 @@ struct BangerNativeSceneGpuResource {
     residency_feedback_hash: String,
     shared_residency_page_table_hash: String,
     shared_residency_compacted_feedback_hash: String,
+    lumen_surface_card_hash: String,
+    lumen_surface_cache_feedback_hash: String,
+    lumen_screen_probe_hash: String,
+    lumen_radiance_cache_hash: String,
     virtual_shadow_map_page_table_hash: String,
     virtual_shadow_map_page_request_hash: String,
     virtual_shadow_map_projection_hash: String,
@@ -3741,20 +3771,46 @@ fn render_child_surface_frame(
         label: Some("banger-native-child-host-encoder"),
     });
     {
-        let color_attachments = [Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: clear_color[0],
-                    g: clear_color[1],
-                    b: clear_color[2],
-                    a: clear_color[3],
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        })];
+        let color_attachments = [
+            Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear_color[0],
+                        g: clear_color[1],
+                        b: clear_color[2],
+                        a: clear_color[3],
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &frame_target.gbuffer.albedo_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: banger_gbuffer_clear_ops([0.0, 0.0, 0.0, 0.0]),
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &frame_target.gbuffer.normal_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: banger_gbuffer_clear_ops([0.5, 0.5, 1.0, 0.0]),
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &frame_target.gbuffer.material_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: banger_gbuffer_clear_ops([0.0, 0.0, 0.0, 0.0]),
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &frame_target.gbuffer.emissive_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: banger_gbuffer_clear_ops([0.0, 0.0, 0.0, 0.0]),
+            }),
+        ];
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("banger-native-child-host-mesh-depth-pass"),
             color_attachments: &color_attachments,
@@ -3818,15 +3874,92 @@ fn create_banger_frame_target(
     });
     let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let hzb = create_banger_hzb_resources(device, &depth_texture, width, height, allocation_index);
+    let gbuffer = create_banger_gbuffer_resources(device, width, height, allocation_index);
     BangerNativeFrameTarget {
         _depth_texture: depth_texture,
         depth_view,
         hzb,
+        gbuffer,
         width,
         height,
         target_hash,
         depth_target_hash,
     }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_gbuffer_clear_ops(color: [f64; 4]) -> wgpu::Operations<wgpu::Color> {
+    wgpu::Operations {
+        load: wgpu::LoadOp::Clear(wgpu::Color {
+            r: color[0],
+            g: color[1],
+            b: color[2],
+            a: color[3],
+        }),
+        store: wgpu::StoreOp::Store,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_gbuffer_color_target_state() -> wgpu::ColorTargetState {
+    wgpu::ColorTargetState {
+        format: wgpu::TextureFormat::Rgba16Float,
+        blend: Some(wgpu::BlendState::REPLACE),
+        write_mask: wgpu::ColorWrites::ALL,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_gbuffer_resources(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    allocation_index: u32,
+) -> BangerNativeGBufferResources {
+    let albedo = banger_create_gbuffer_texture(device, "banger-native-gbuffer-albedo", width, height);
+    let normal = banger_create_gbuffer_texture(device, "banger-native-gbuffer-normal", width, height);
+    let material = banger_create_gbuffer_texture(device, "banger-native-gbuffer-material", width, height);
+    let emissive = banger_create_gbuffer_texture(device, "banger-native-gbuffer-emissive", width, height);
+    let resource_hash = sha256_hex(
+        format!("banger-gbuffer-v1:{width}:{height}:rgba16float:{allocation_index}:albedo-normal-material-emissive")
+            .as_bytes(),
+    );
+    BangerNativeGBufferResources {
+        albedo_view: albedo.create_view(&wgpu::TextureViewDescriptor::default()),
+        normal_view: normal.create_view(&wgpu::TextureViewDescriptor::default()),
+        material_view: material.create_view(&wgpu::TextureViewDescriptor::default()),
+        emissive_view: emissive.create_view(&wgpu::TextureViewDescriptor::default()),
+        _albedo_texture: albedo,
+        _normal_texture: normal,
+        _material_texture: material,
+        _emissive_texture: emissive,
+        _resource_hash: resource_hash,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_create_gbuffer_texture(
+    device: &wgpu::Device,
+    label: &'static str,
+    width: u32,
+    height: u32,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -4663,11 +4796,17 @@ fn create_banger_first_scene_pipeline(
             resource: uniform_buffer.as_entire_binding(),
         }],
     });
-    let targets = [Some(wgpu::ColorTargetState {
-        format,
-        blend: Some(wgpu::BlendState::REPLACE),
-        write_mask: wgpu::ColorWrites::ALL,
-    })];
+    let targets = [
+        Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        }),
+        Some(banger_gbuffer_color_target_state()),
+        Some(banger_gbuffer_color_target_state()),
+        Some(banger_gbuffer_color_target_state()),
+        Some(banger_gbuffer_color_target_state()),
+    ];
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("banger-native-first-scene-pipeline"),
         layout: Some(&pipeline_layout),
@@ -5026,6 +5165,10 @@ fn create_banger_first_scene_pipeline(
         _shared_residency_page_table_buffer: gpu_resource.shared_residency_page_table_buffer,
         _shared_residency_compacted_feedback_buffer: gpu_resource.shared_residency_compacted_feedback_buffer,
         _shared_residency_budget_buffer: gpu_resource.shared_residency_budget_buffer,
+        _lumen_surface_card_buffer: gpu_resource.lumen_surface_card_buffer,
+        _lumen_surface_cache_feedback_buffer: gpu_resource.lumen_surface_cache_feedback_buffer,
+        _lumen_screen_probe_buffer: gpu_resource.lumen_screen_probe_buffer,
+        _lumen_radiance_cache_buffer: gpu_resource.lumen_radiance_cache_buffer,
         virtual_shadow_map_page_table_buffer: gpu_resource.virtual_shadow_map_page_table_buffer,
         virtual_shadow_map_page_flags_buffer: gpu_resource.virtual_shadow_map_page_flags_buffer,
         virtual_shadow_map_page_request_buffer: gpu_resource.virtual_shadow_map_page_request_buffer,
@@ -5057,6 +5200,10 @@ fn create_banger_first_scene_pipeline(
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         _shared_residency_page_table_hash: gpu_resource.shared_residency_page_table_hash,
         _shared_residency_compacted_feedback_hash: gpu_resource.shared_residency_compacted_feedback_hash,
+        _lumen_surface_card_hash: gpu_resource.lumen_surface_card_hash,
+        _lumen_surface_cache_feedback_hash: gpu_resource.lumen_surface_cache_feedback_hash,
+        _lumen_screen_probe_hash: gpu_resource.lumen_screen_probe_hash,
+        _lumen_radiance_cache_hash: gpu_resource.lumen_radiance_cache_hash,
         _virtual_shadow_map_page_table_hash: gpu_resource.virtual_shadow_map_page_table_hash,
         _virtual_shadow_map_page_request_hash: gpu_resource.virtual_shadow_map_page_request_hash,
         _virtual_shadow_map_projection_hash: gpu_resource.virtual_shadow_map_projection_hash,
@@ -5092,6 +5239,14 @@ struct VertexOut {
     @location(3) material_kind: f32,
 };
 
+struct FragmentOut {
+    @location(0) scene_color: vec4<f32>,
+    @location(1) gbuffer_albedo: vec4<f32>,
+    @location(2) gbuffer_normal: vec4<f32>,
+    @location(3) gbuffer_material: vec4<f32>,
+    @location(4) gbuffer_emissive: vec4<f32>,
+};
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
@@ -5114,7 +5269,7 @@ fn vs_main(
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut) -> FragmentOut {
     let normal = normalize(in.normal_hint);
     let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
     let view_fade = clamp(length(in.world_pos.xz) / 58.0, 0.0, 1.0);
@@ -5126,7 +5281,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let lit = in.color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
-    return vec4<f32>(max(fogged, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
+    var out: FragmentOut;
+    out.scene_color = vec4<f32>(max(fogged, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
+    out.gbuffer_albedo = vec4<f32>(clamp(in.color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
+    out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
+    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), 1.0);
+    return out;
 }
 "#
 }
@@ -5258,6 +5419,16 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             + residency_feedback_bytes.len()
             + meshlet_cluster_cull_feedback_bytes.len(),
     );
+    let lumen_surface_card_bytes = banger_lumen_surface_card_bytes(&meshlet_cluster_bytes);
+    let lumen_surface_cache_feedback_bytes =
+        banger_lumen_surface_cache_feedback_bytes(&lumen_surface_card_bytes);
+    let lumen_screen_probe_bytes = banger_lumen_screen_probe_bytes(meshlet_cluster_count);
+    let lumen_radiance_cache_bytes =
+        banger_lumen_radiance_cache_bytes(&lumen_surface_card_bytes, &lumen_screen_probe_bytes);
+    let lumen_surface_card_hash = sha256_hex(&lumen_surface_card_bytes);
+    let lumen_surface_cache_feedback_hash = sha256_hex(&lumen_surface_cache_feedback_bytes);
+    let lumen_screen_probe_hash = sha256_hex(&lumen_screen_probe_bytes);
+    let lumen_radiance_cache_hash = sha256_hex(&lumen_radiance_cache_bytes);
     let vsm_page_table_bytes = banger_virtual_shadow_map_page_table_bytes(meshlet_cluster_count, 1);
     let vsm_page_flags_bytes = banger_virtual_shadow_map_page_flags_bytes(meshlet_cluster_count);
     let vsm_page_request_bytes = banger_virtual_shadow_map_page_request_bytes(meshlet_cluster_count);
@@ -5391,6 +5562,30 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         &shared_residency_budget_bytes,
     );
+    let lumen_surface_card_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-lumen-surface-card-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &lumen_surface_card_bytes,
+    );
+    let lumen_surface_cache_feedback_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-lumen-surface-cache-feedback-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &lumen_surface_cache_feedback_bytes,
+    );
+    let lumen_screen_probe_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-lumen-screen-probe-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &lumen_screen_probe_bytes,
+    );
+    let lumen_radiance_cache_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-lumen-radiance-cache-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &lumen_radiance_cache_bytes,
+    );
     let virtual_shadow_map_page_table_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-vsm-page-table-buffer",
@@ -5509,7 +5704,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}"
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}"
         )
             .as_bytes(),
     );
@@ -5536,6 +5731,10 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
         shared_residency_budget_buffer,
+        lumen_surface_card_buffer,
+        lumen_surface_cache_feedback_buffer,
+        lumen_screen_probe_buffer,
+        lumen_radiance_cache_buffer,
         virtual_shadow_map_page_table_buffer,
         virtual_shadow_map_page_flags_buffer,
         virtual_shadow_map_page_request_buffer,
@@ -5558,6 +5757,10 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         residency_feedback_hash,
         shared_residency_page_table_hash,
         shared_residency_compacted_feedback_hash,
+        lumen_surface_card_hash,
+        lumen_surface_cache_feedback_hash,
+        lumen_screen_probe_hash,
+        lumen_radiance_cache_hash,
         virtual_shadow_map_page_table_hash,
         virtual_shadow_map_page_request_hash,
         virtual_shadow_map_projection_hash,
@@ -6198,6 +6401,126 @@ fn banger_align_u64(value: u64, alignment: u64) -> u64 {
         return value;
     }
     value.div_ceil(alignment) * alignment
+}
+
+#[cfg(target_os = "windows")]
+const BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE: usize = 64;
+
+#[cfg(target_os = "windows")]
+const BANGER_LUMEN_SCREEN_PROBE_RECORD_STRIDE: usize = 32;
+
+#[cfg(target_os = "windows")]
+fn banger_lumen_surface_card_bytes(meshlet_cluster_bytes: &[u8]) -> Vec<u8> {
+    let mut cards = Vec::with_capacity(
+        meshlet_cluster_bytes.len()
+            .max(BANGER_MESHLET_CLUSTER_METADATA_STRIDE)
+            / BANGER_MESHLET_CLUSTER_METADATA_STRIDE
+            * BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE,
+    );
+    for (card_index, cluster) in meshlet_cluster_bytes
+        .chunks_exact(BANGER_MESHLET_CLUSTER_METADATA_STRIDE)
+        .enumerate()
+    {
+        let center_x = f32::from_le_bytes(cluster[0..4].try_into().expect("cluster center x"));
+        let center_y = f32::from_le_bytes(cluster[4..8].try_into().expect("cluster center y"));
+        let center_z = f32::from_le_bytes(cluster[8..12].try_into().expect("cluster center z"));
+        let radius = f32::from_le_bytes(cluster[12..16].try_into().expect("cluster radius"));
+        let normal_x = f32::from_le_bytes(cluster[16..20].try_into().expect("cluster normal x"));
+        let normal_y = f32::from_le_bytes(cluster[20..24].try_into().expect("cluster normal y"));
+        let normal_z = f32::from_le_bytes(cluster[24..28].try_into().expect("cluster normal z"));
+        let lod_error = f32::from_le_bytes(cluster[28..32].try_into().expect("cluster lod"));
+        let cluster_hash = u32::from_le_bytes(cluster[60..64].try_into().expect("cluster hash"));
+        for value in [
+            0x4C_53_43_44u32, // LSCD
+            1,
+            card_index as u32,
+            cluster_hash,
+        ] {
+            cards.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [
+            center_x, center_y, center_z, radius,
+            normal_x, normal_y, normal_z, lod_error,
+            (card_index as f32 + 1.0) * radius.max(0.001), 0.0, 0.0, 1.0,
+        ] {
+            cards.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    if cards.is_empty() {
+        cards.resize(BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE, 0);
+    }
+    cards
+}
+
+#[cfg(target_os = "windows")]
+fn banger_lumen_surface_cache_feedback_bytes(surface_card_bytes: &[u8]) -> Vec<u8> {
+    let card_count = (surface_card_bytes.len() / BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE).max(1);
+    let mut bytes = Vec::with_capacity(card_count * 32);
+    for card_index in 0..card_count {
+        let card_offset = card_index * BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE;
+        let card_hash = u32::from_le_bytes(
+            surface_card_bytes[card_offset + 12..card_offset + 16]
+                .try_into()
+                .expect("surface card hash"),
+        );
+        for value in [
+            0x4C_46_44_42u32, // LFDB
+            1,
+            card_index as u32,
+            card_hash,
+            1, // requested this frame.
+            0,
+            0,
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_lumen_screen_probe_bytes(cluster_count: u32) -> Vec<u8> {
+    let probe_count = cluster_count.max(1).min(256);
+    let mut bytes = Vec::with_capacity(probe_count as usize * BANGER_LUMEN_SCREEN_PROBE_RECORD_STRIDE);
+    for probe_index in 0..probe_count {
+        for value in [
+            0x4C_50_52_42u32, // LPRB
+            1,
+            probe_index,
+            probe_count,
+            probe_index % 16,
+            probe_index / 16,
+            0,
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_lumen_radiance_cache_bytes(surface_card_bytes: &[u8], screen_probe_bytes: &[u8]) -> Vec<u8> {
+    let card_count = (surface_card_bytes.len() / BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE).max(1);
+    let probe_count = (screen_probe_bytes.len() / BANGER_LUMEN_SCREEN_PROBE_RECORD_STRIDE).max(1);
+    let mut bytes = Vec::with_capacity(64);
+    for value in [
+        0x4C_52_44_43u32, // LRDC
+        1,
+        card_count as u32,
+        probe_count as u32,
+        banger_hash_prefix_u32(&sha256_hex(surface_card_bytes)),
+        banger_hash_prefix_u32(&sha256_hex(screen_probe_bytes)),
+        0,
+        0,
+    ] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [0.02f32, 0.08, 0.16, 1.0, 0.0, 0.0, 0.0, 0.0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -8633,6 +8956,38 @@ mod tests {
         assert_eq!(u32::from_le_bytes(budget[0..4].try_into().unwrap()), 0x42_55_44_47);
         assert_eq!(u32::from_le_bytes(budget[8..12].try_into().unwrap()), 3);
         assert_eq!(banger_align_u64(4097, 4096), 8192);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_lumen_gbuffer_surface_cards_and_cache_seeds() {
+        let clusters = banger_meshlet_cluster_metadata_bytes(
+            &banger_cube_vertex_bytes(),
+            &banger_cube_index_bytes(),
+            "banger_cube_test_mesh",
+        );
+        let cards = banger_lumen_surface_card_bytes(&clusters);
+        assert_eq!(cards.len() % BANGER_LUMEN_SURFACE_CARD_RECORD_STRIDE, 0);
+        assert_eq!(u32::from_le_bytes(cards[0..4].try_into().unwrap()), 0x4C_53_43_44);
+        assert_eq!(u32::from_le_bytes(cards[4..8].try_into().unwrap()), 1);
+
+        let feedback = banger_lumen_surface_cache_feedback_bytes(&cards);
+        assert_eq!(u32::from_le_bytes(feedback[0..4].try_into().unwrap()), 0x4C_46_44_42);
+        assert_eq!(u32::from_le_bytes(feedback[16..20].try_into().unwrap()), 1);
+
+        let probes = banger_lumen_screen_probe_bytes(17);
+        assert_eq!(probes.len(), 17 * BANGER_LUMEN_SCREEN_PROBE_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(probes[0..4].try_into().unwrap()), 0x4C_50_52_42);
+
+        let radiance = banger_lumen_radiance_cache_bytes(&cards, &probes);
+        assert_eq!(u32::from_le_bytes(radiance[0..4].try_into().unwrap()), 0x4C_52_44_43);
+        assert_ne!(u32::from_le_bytes(radiance[16..20].try_into().unwrap()), 0);
+
+        let source = banger_native_first_scene_wgsl();
+        assert!(source.contains("gbuffer_albedo"));
+        assert!(source.contains("gbuffer_normal"));
+        assert!(source.contains("gbuffer_material"));
+        assert!(source.contains("gbuffer_emissive"));
     }
 
     #[cfg(target_os = "windows")]
