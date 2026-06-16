@@ -1563,7 +1563,7 @@ export interface CitySuggestionResult {
 
 export type SearchArchiveSessionScope = "current" | "recent" | "archived" | "all";
 export type SearchArchiveScope = SearchArchiveSessionScope;
-export type SearchArchiveSourceType = "session_message" | "attachment";
+export type SearchArchiveSourceType = "session_title" | "session_message" | "attachment";
 export type SearchArchiveContentScope = "messages" | "files" | "artifacts" | "all";
 export type SearchArchiveFileOrigin = "uploaded" | "created_in_app" | "all";
 export type SearchArchiveCreatedInAppSource =
@@ -1636,7 +1636,7 @@ export interface SearchArchiveHit {
   turnId: string;
   role: "user" | "assistant" | "system";
   createdAt: string;
-  matchedField: "message_text" | "attachment_name" | "attachment_text";
+  matchedField: "session_title" | "message_text" | "attachment_name" | "attachment_text";
   snippet: string;
   contextBefore: SearchArchiveContextLine[];
   contextAfter: SearchArchiveContextLine[];

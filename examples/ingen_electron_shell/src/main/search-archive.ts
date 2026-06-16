@@ -130,6 +130,18 @@ function archiveMessageAttachments(message: { attachments?: ChatArchiveAttachmen
   return Array.isArray(message.attachments) ? message.attachments : [];
 }
 
+function sessionTitleMessage(session: ChatArchiveSession): ChatArchiveMessage {
+  const createdAt = session.updatedAt || session.createdAt || `${session.date}T00:00:00.000Z`;
+  return {
+    turnId: `session-title-${stableSearchArchiveHash({ sessionId: session.sessionId, title: session.title }).slice(0, 16)}`,
+    role: "system",
+    text: session.title,
+    createdAt,
+    attachments: [],
+    proofHash: stableSearchArchiveHash({ sessionId: session.sessionId, title: session.title, createdAt })
+  };
+}
+
 export function stableSearchArchiveHash(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
 }
@@ -335,6 +347,19 @@ export function searchArchiveSessions(
   }).filter((session) => sessionInDateRange(session, request.dateFrom, request.dateTo));
 
   for (const session of searchableSessions) {
+    const includeTitles = contentScope === "messages" || contentScope === "all";
+    const titleScore = includeTitles ? scoreText(session.title, query, queryTerms) : 0;
+    if (titleScore > 0) {
+      candidates.push({
+        session,
+        message: sessionTitleMessage(session),
+        messageIndex: -1,
+        sourceType: "session_title",
+        matchedField: "session_title",
+        matchedText: session.title,
+        score: titleScore + recencyBonus(session.updatedAt)
+      });
+    }
     session.messages.forEach((message, messageIndex) => {
       const includeMessages = contentScope === "messages" || contentScope === "all";
       const includeFiles = contentScope === "files" || contentScope === "artifacts" || contentScope === "all";
@@ -487,12 +512,16 @@ export function archiveSessionProofHash(session: ChatArchiveSession): string {
 
 function searchHit(candidate: SearchCandidate, query: string, contextTurns: number, rank: number, request: SearchArchiveRequest): SearchArchiveHit {
   const { session, message, messageIndex } = candidate;
-  const contextBefore = session.messages
-    .slice(Math.max(0, messageIndex - contextTurns), messageIndex)
-    .map(contextLine);
-  const contextAfter = session.messages
-    .slice(messageIndex + 1, Math.min(session.messages.length, messageIndex + 1 + contextTurns))
-    .map(contextLine);
+  const contextBefore = messageIndex >= 0
+    ? session.messages
+        .slice(Math.max(0, messageIndex - contextTurns), messageIndex)
+        .map(contextLine)
+    : [];
+  const contextAfter = messageIndex >= 0
+    ? session.messages
+        .slice(messageIndex + 1, Math.min(session.messages.length, messageIndex + 1 + contextTurns))
+        .map(contextLine)
+    : [];
   const attachments = archiveMessageAttachments(message).map((attachment) => attachmentRef(session.sessionId, attachment, request));
   const evidenceHash = stableSearchArchiveHash({
     sessionId: session.sessionId,

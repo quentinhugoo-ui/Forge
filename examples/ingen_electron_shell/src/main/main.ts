@@ -15334,6 +15334,70 @@ function persistChatArchiveSoon(): void {
     });
 }
 
+function ensureBackendSessionArchiveShells(): void {
+  let projection: RustBackendProjection;
+  try {
+    projection = rustBackend();
+  } catch {
+    return;
+  }
+  let changed = false;
+  for (const backendSession of projection.sessions) {
+    if (!backendSession.sessionId || !backendSession.label.trim()) {
+      continue;
+    }
+    const existing = chatArchiveSessions.get(backendSession.sessionId);
+    if (existing) {
+      if (existing.messages.length === 0) {
+        const workspaceLabel = sessionWorkspaceLabel(backendSession.section);
+        const nextArchived = backendSession.archived;
+        if (
+          existing.title !== backendSession.label ||
+          existing.date !== backendSession.date ||
+          existing.section !== backendSession.section ||
+          existing.workspaceLabel !== workspaceLabel ||
+          existing.archived !== nextArchived
+        ) {
+          existing.title = backendSession.label;
+          existing.date = backendSession.date;
+          existing.section = backendSession.section;
+          existing.workspaceLabel = workspaceLabel;
+          existing.archived = nextArchived;
+          existing.updatedAt = new Date().toISOString();
+          existing.proofHash = archiveSessionProofHash(existing);
+          changed = true;
+        }
+      }
+      continue;
+    }
+    const createdAt = `${backendSession.date || todayIsoDate()}T00:00:00.000Z`;
+    const session: ChatArchiveSession = {
+      schema: "forge.brain.chat_session_archive.v1",
+      sessionId: backendSession.sessionId,
+      title: backendSession.label,
+      section: backendSession.section,
+      workspaceLabel: sessionWorkspaceLabel(backendSession.section),
+      date: backendSession.date || todayIsoDate(),
+      createdAt,
+      updatedAt: createdAt,
+      archived: backendSession.archived,
+      messages: [],
+      proofHash: ""
+    };
+    session.proofHash = archiveSessionProofHash(session);
+    chatArchiveSessions.set(session.sessionId, session);
+    changed = true;
+  }
+  if (changed) {
+    persistChatArchiveSoon();
+  }
+}
+
+function canonicalSearchArchiveSessions(): ChatArchiveSession[] {
+  ensureBackendSessionArchiveShells();
+  return Array.from(chatArchiveSessions.values());
+}
+
 function archiveMetaForSession(session: SidebarSessionItem): ChatArchiveSessionMeta {
   const archived = session.archived || (session.sessionId !== "" && session.sessionId === sidebarState.archivedSessionId);
   return {
@@ -15569,7 +15633,7 @@ function syncLocalChatSessionsFromArchive(): void {
 function restoreChatSessionToCanvas(sessionId: string): boolean {
   if (sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID) {
     ensureSearchArchiveLoopDemoSession();
-    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopRealDemoArchiveSession());
   }
   const archiveSession = chatArchiveSessions.get(sessionId);
   if (!archiveSession) return false;
@@ -15671,7 +15735,7 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
 
 async function searchChatArchive(request: SearchArchiveRequest): Promise<SearchArchiveResult> {
   await loadChatArchive();
-  return searchArchiveSessions(Array.from(chatArchiveSessions.values()), request);
+  return searchArchiveSessions(canonicalSearchArchiveSessions(), request);
 }
 
 function isSearchArchiveRequest(value: unknown): value is SearchArchiveRequest {
@@ -15701,7 +15765,7 @@ function isSearchArchiveRequest(value: unknown): value is SearchArchiveRequest {
 async function localSearchArchiveStatus(request: SearchArchiveRequest, session?: SidebarSessionItem): Promise<TranscriptMessage> {
   await loadChatArchive();
   const executableRequest = { ...request, currentSessionId: request.currentSessionId ?? session?.sessionId };
-  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), executableRequest);
+  const result = searchArchiveSessions(canonicalSearchArchiveSessions(), executableRequest);
   const text = renderSearchArchiveResult(result);
   return {
     id: `assistant-searcharchive-${Date.now()}`,
@@ -15742,7 +15806,7 @@ async function executeAssistantSearchArchiveCodeAct(message: TranscriptMessage, 
   }
   await loadChatArchive();
   const executableRequest = { ...codeAct.request, currentSessionId: codeAct.request.currentSessionId ?? session?.sessionId };
-  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), executableRequest);
+  const result = searchArchiveSessions(canonicalSearchArchiveSessions(), executableRequest);
   return {
     ...message,
     text: `${message.text.trimEnd()}\n\n${renderSearchArchiveResult(result)}`,
@@ -16382,28 +16446,6 @@ function assistantPatternDemoArchiveSession(): ChatArchiveSession {
   };
 }
 
-function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
-  const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
-  const messages: ChatArchiveMessage[] = [
-    { turnId: "demo-memory-user-budget", role: "user", text: "Retrouve moi la note budget croissant et la temperature du four pour samedi.", createdAt: "2026-06-15T09:42:55.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-user-budget") },
-    { turnId: "demo-memory-assistant-recipe", role: "assistant", text: "On garde le budget croissant a 24 euros, cuisson au four a 180 degres pendant 17 minutes, puis repos 8 minutes.", createdAt: "2026-06-15T09:43:12.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-assistant-recipe") },
-    { turnId: "demo-memory-user-later", role: "user", text: "Plus tard dans la session, verifie que le four reste bien a 180 degres si on double les croissants.", createdAt: "2026-06-15T10:18:33.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-user-later") }
-  ];
-  return {
-    schema: "forge.brain.chat_session_archive.v1",
-    sessionId: SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID,
-    title: "Patisserie Budget",
-    section: "forge",
-    workspaceLabel,
-    date: "2026-06-15",
-    createdAt: "2026-06-15T09:42:55.000Z",
-    updatedAt: "2026-06-15T09:43:12.000Z",
-    archived: true,
-    messages,
-    proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
-  };
-}
-
 function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
   const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const messages: ChatArchiveMessage[] = [
@@ -16619,30 +16661,104 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
   };
 }
 
+function searchArchiveLoopDemoRequestForSessions(sessions: ChatArchiveSession[]): SearchArchiveRequest {
+  const candidates: SearchArchiveRequest[] = [
+    { query: "witcher", keywords: ["witcher"], sessionScope: "all", contentScope: "all", topK: 10, contextTurns: 2 },
+    { query: "wither", keywords: ["wither"], sessionScope: "all", contentScope: "all", topK: 10, contextTurns: 2 },
+    { query: "mononoke", keywords: ["mononoke"], sessionScope: "all", contentScope: "all", topK: 10, contextTurns: 2 },
+    { query: "musculation", keywords: ["musculation"], sessionScope: "all", contentScope: "all", topK: 10, contextTurns: 2 }
+  ];
+  for (const candidate of candidates) {
+    if (searchArchiveSessions(sessions, candidate).hits.length > 0) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
+function searchArchiveLoopDemoSummary(result: SearchArchiveResult): string {
+  if (result.hits.length === 0) {
+    return "Je n'ai pas retrouve de transcript canonique correspondant. La session peut etre visible dans l'historique, mais elle n'a pas encore de messages archivables dans la source canonique.";
+  }
+  const sessionTitles = Array.from(new Set(result.hits.map((hit) => hit.sessionTitle))).slice(0, 3);
+  const suffix = result.hits.length > 1 ? "morceaux utiles" : "morceau utile";
+  return `J'ai retrouve ${result.hits.length} ${suffix}, regroupes par session. Sessions concernees: ${sessionTitles.join(", ")}.`;
+}
+
+function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
+  const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
+  const sourceSessions = Array.from(chatArchiveSessions.values())
+    .filter((session) =>
+      session.sessionId !== SEARCHARCHIVE_LOOP_DEMO_SESSION_ID &&
+      session.sessionId !== SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID &&
+      session.sessionId !== ASSISTANT_PATTERN_DEMO_SESSION_ID
+    );
+  const request = searchArchiveLoopDemoRequestForSessions(sourceSessions);
+  const result = searchArchiveSessions(sourceSessions, request);
+  const queryText = request.query || request.keywords?.join(" ") || "archive";
+  const messages: ChatArchiveMessage[] = [
+    {
+      turnId: "searcharchive-demo-user",
+      role: "user",
+      text: `Retrouve les passages existants sur ${queryText}.`,
+      createdAt: "2026-06-16T08:30:00.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash("searcharchive-demo-user-real")
+    },
+    {
+      turnId: "searcharchive-demo-assistant-tool",
+      role: "assistant",
+      text: [
+        "Je vais verifier dans l'historique et revenir avec les passages pertinents.",
+        "",
+        BRAIN_SEARCHARCHIVE_COMMAND,
+        "",
+        renderSearchArchiveResult(result)
+      ].join("\n"),
+      createdAt: "2026-06-16T08:30:15.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-assistant-tool-real", result: result.proofHash })
+    },
+    {
+      turnId: "searcharchive-demo-assistant-final",
+      role: "assistant",
+      text: searchArchiveLoopDemoSummary(result),
+      createdAt: "2026-06-16T08:30:21.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-assistant-final-real", result: result.proofHash })
+    }
+  ];
+  return {
+    schema: "forge.brain.chat_session_archive.v1",
+    sessionId: SEARCHARCHIVE_LOOP_DEMO_SESSION_ID,
+    title: "Loop stream archive test",
+    section: "forge",
+    workspaceLabel,
+    date: "2026-06-16",
+    createdAt: "2026-06-16T08:30:00.000Z",
+    updatedAt: "2026-06-16T08:30:21.000Z",
+    archived: false,
+    messages,
+    proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
+  };
+}
+
 function ensureSearchArchiveLoopDemoSession(): void {
   const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
-  if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID)) {
-    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID, searchArchiveLoopDemoMemoryArchiveSession());
-  } else {
-    const memorySession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID)!;
-    const initialMemory = searchArchiveLoopDemoMemoryArchiveSession();
-    memorySession.workspaceLabel = workspaceLabel;
-    memorySession.title = initialMemory.title;
-    memorySession.messages = initialMemory.messages;
-    memorySession.updatedAt = initialMemory.updatedAt;
-    memorySession.proofHash = archiveSessionProofHash(memorySession);
-    memorySession.archived = true;
-  }
+  const removedFakeMemory = chatArchiveSessions.delete(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID);
   if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
-    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopRealDemoArchiveSession());
   } else {
     const demoSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)!;
-    const initialDemo = searchArchiveLoopDemoArchiveSession();
+    const initialDemo = searchArchiveLoopRealDemoArchiveSession();
     demoSession.workspaceLabel = workspaceLabel;
     demoSession.messages = initialDemo.messages;
     demoSession.updatedAt = initialDemo.updatedAt;
     demoSession.proofHash = archiveSessionProofHash(demoSession);
     demoSession.archived = false;
+  }
+  if (removedFakeMemory) {
+    persistChatArchiveSoon();
   }
   const localDemo = localChatSessions.find((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
   if (localDemo) {
@@ -16687,6 +16803,7 @@ function ensureAssistantPatternDemoSession(): void {
 
 function backendSessionItems(): SidebarSessionItem[] {
   ensureAssistantPatternDemoSession();
+  ensureBackendSessionArchiveShells();
   ensureSearchArchiveLoopDemoSession();
   if (chatArchiveLoaded) {
     syncLocalChatSessionsFromArchive();
