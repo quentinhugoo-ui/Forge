@@ -3505,7 +3505,11 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
     if (match.index > cursor) {
       nodes.push(text.slice(cursor, match.index));
     }
-    nodes.push(<mark key={`${keyPrefix}-${match.index}`}>{match[0]}</mark>);
+    nodes.push(
+      <mark className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill" key={`${keyPrefix}-${match.index}`}>
+        {match[0]}
+      </mark>
+    );
     cursor = match.index + match[0].length;
   }
   if (cursor < text.length) {
@@ -3524,7 +3528,11 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
       <div className="searchArchiveResultCard__summary">
         {terms.length > 0 ? (
           <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
-            {terms.map((term) => <span key={`${messageId}-search-term-${blockIndex}-${term}`}>{term}</span>)}
+            {terms.map((term) => (
+              <span className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill" key={`${messageId}-search-term-${blockIndex}-${term}`}>
+                {term}
+              </span>
+            ))}
           </div>
         ) : null}
         <span className="searchArchiveResultCard__meta">{resultLabel}</span>

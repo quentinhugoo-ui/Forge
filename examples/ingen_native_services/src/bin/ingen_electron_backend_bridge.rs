@@ -601,6 +601,7 @@ struct BangerNativeScenePipeline {
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     indirect_draw_buffer: wgpu::Buffer,
+    _meshlet_cluster_buffer: wgpu::Buffer,
     _material_buffer: Option<wgpu::Buffer>,
     _texture_staging_buffers: Vec<wgpu::Buffer>,
     _residency_feedback_buffer: wgpu::Buffer,
@@ -610,6 +611,8 @@ struct BangerNativeScenePipeline {
     mesh_source: &'static str,
     _selected_tile_id: Option<String>,
     _indirect_args_hash: String,
+    _meshlet_cluster_hash: String,
+    _meshlet_cluster_count: u32,
     _residency_feedback_hash: String,
     scene_mesh_hash: String,
     scene_graph_hash: String,
@@ -2974,6 +2977,7 @@ struct BangerNativeSceneGpuResource {
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     indirect_draw_buffer: wgpu::Buffer,
+    meshlet_cluster_buffer: wgpu::Buffer,
     material_buffer: Option<wgpu::Buffer>,
     texture_staging_buffers: Vec<wgpu::Buffer>,
     residency_feedback_buffer: wgpu::Buffer,
@@ -2986,6 +2990,8 @@ struct BangerNativeSceneGpuResource {
     mesh_source: &'static str,
     selected_tile_id: Option<String>,
     indirect_args_hash: String,
+    meshlet_cluster_hash: String,
+    meshlet_cluster_count: u32,
     residency_feedback_hash: String,
     resource_hash: String,
 }
@@ -4409,6 +4415,7 @@ fn create_banger_first_scene_pipeline(
         instance_buffer: gpu_resource.instance_buffer,
         index_buffer: gpu_resource.index_buffer,
         indirect_draw_buffer: gpu_resource.indirect_draw_buffer,
+        _meshlet_cluster_buffer: gpu_resource.meshlet_cluster_buffer,
         _material_buffer: gpu_resource.material_buffer,
         _texture_staging_buffers: gpu_resource.texture_staging_buffers,
         _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
@@ -4418,6 +4425,8 @@ fn create_banger_first_scene_pipeline(
         mesh_source: gpu_resource.mesh_source,
         _selected_tile_id: gpu_resource.selected_tile_id,
         _indirect_args_hash: gpu_resource.indirect_args_hash,
+        _meshlet_cluster_hash: gpu_resource.meshlet_cluster_hash,
+        _meshlet_cluster_count: gpu_resource.meshlet_cluster_count,
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         scene_mesh_hash,
         scene_graph_hash,
@@ -4566,6 +4575,11 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let instance_count = (instance_bytes.len() / 80) as u32;
     let indirect_args_bytes = banger_indexed_indirect_args_bytes(index_count, instance_count);
     let indirect_args_hash = sha256_hex(&indirect_args_bytes);
+    let meshlet_cluster_bytes =
+        banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, source);
+    let meshlet_cluster_hash = sha256_hex(&meshlet_cluster_bytes);
+    let meshlet_cluster_count =
+        (meshlet_cluster_bytes.len() / BANGER_MESHLET_CLUSTER_METADATA_STRIDE) as u32;
     let residency_feedback_bytes = banger_maps_residency_feedback_bytes(
         selected_tile_id.as_deref(),
         source,
@@ -4595,6 +4609,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         "banger-native-scene-indexed-indirect-draw-args",
         wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
         &indirect_args_bytes,
+    );
+    let meshlet_cluster_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-meshlet-cluster-metadata-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &meshlet_cluster_bytes,
     );
     let instance_buffer = banger_create_mapped_buffer(
         device,
@@ -4630,7 +4650,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{residency_feedback_hash}"
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{residency_feedback_hash}"
         )
             .as_bytes(),
     );
@@ -4645,12 +4665,15 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         instance_buffer,
         index_buffer,
         indirect_draw_buffer,
+        meshlet_cluster_buffer,
         material_buffer,
         texture_staging_buffers,
         residency_feedback_buffer,
         mesh_source: source,
         selected_tile_id,
         indirect_args_hash,
+        meshlet_cluster_hash,
+        meshlet_cluster_count,
         residency_feedback_hash,
         resource_hash,
     }
@@ -4672,6 +4695,183 @@ fn banger_indexed_indirect_args_bytes(index_count: u32, instance_count: u32) -> 
         bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+#[cfg(target_os = "windows")]
+const BANGER_MESHLET_CLUSTER_METADATA_STRIDE: usize = 64;
+
+#[cfg(target_os = "windows")]
+const BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT: usize = 128;
+
+#[cfg(target_os = "windows")]
+fn banger_meshlet_cluster_metadata_bytes(
+    vertex_bytes: &[u8],
+    index_bytes: &[u8],
+    source: &str,
+) -> Vec<u8> {
+    let indices = index_bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes(chunk.try_into().expect("u16 index chunk")) as u32)
+        .collect::<Vec<_>>();
+    let triangle_count = indices.len() / 3;
+    if vertex_bytes.len() < 24 || triangle_count == 0 {
+        return banger_empty_meshlet_cluster_metadata_bytes(source);
+    }
+    let cluster_triangle_limit = BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT.max(1);
+    let mut bytes = Vec::with_capacity(
+        triangle_count.div_ceil(cluster_triangle_limit) * BANGER_MESHLET_CLUSTER_METADATA_STRIDE,
+    );
+    for cluster_index in 0..triangle_count.div_ceil(cluster_triangle_limit) {
+        let first_triangle = cluster_index * cluster_triangle_limit;
+        let end_triangle = ((cluster_index + 1) * cluster_triangle_limit).min(triangle_count);
+        let first_index = first_triangle * 3;
+        let index_count = (end_triangle - first_triangle) * 3;
+        bytes.extend_from_slice(&banger_meshlet_cluster_metadata_record_bytes(
+            vertex_bytes,
+            &indices[first_index..first_index + index_count],
+            first_index as u32,
+            index_count as u32,
+            cluster_index as u32,
+            source,
+        ));
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_empty_meshlet_cluster_metadata_bytes(source: &str) -> Vec<u8> {
+    banger_meshlet_cluster_metadata_record_bytes(&[], &[], 0, 0, 0, source).to_vec()
+}
+
+#[cfg(target_os = "windows")]
+fn banger_meshlet_cluster_metadata_record_bytes(
+    vertex_bytes: &[u8],
+    indices: &[u32],
+    first_index: u32,
+    index_count: u32,
+    cluster_index: u32,
+    source: &str,
+) -> [u8; BANGER_MESHLET_CLUSTER_METADATA_STRIDE] {
+    let mut referenced_positions = Vec::new();
+    let mut min_vertex = u32::MAX;
+    let mut max_vertex = 0u32;
+    for index in indices {
+        if let Some(position) = banger_render_vertex_position(vertex_bytes, *index) {
+            referenced_positions.push(position);
+            min_vertex = min_vertex.min(*index);
+            max_vertex = max_vertex.max(*index);
+        }
+    }
+    let (center, radius) = banger_meshlet_cluster_bounds(&referenced_positions);
+    let cone_axis = banger_meshlet_cluster_average_normal(vertex_bytes, indices);
+    let triangle_count = (index_count / 3).max(1);
+    let lod_error = (radius / (triangle_count as f32).sqrt()).max(0.0001);
+    let first_vertex = if min_vertex == u32::MAX { 0 } else { min_vertex };
+    let vertex_count = if min_vertex == u32::MAX {
+        0
+    } else {
+        max_vertex.saturating_sub(min_vertex).saturating_add(1)
+    };
+    let material_bin = cluster_index;
+    let source_hash = sha256_hex(source.as_bytes());
+    let cluster_seed_hash = sha256_hex(
+        format!(
+            "{source}:{cluster_index}:{first_index}:{index_count}:{first_vertex}:{vertex_count}:{radius:.6}:{lod_error:.6}"
+        )
+        .as_bytes(),
+    );
+    let mut bytes = [0u8; BANGER_MESHLET_CLUSTER_METADATA_STRIDE];
+    for (slot, value) in [
+        center[0],
+        center[1],
+        center[2],
+        radius,
+        cone_axis[0],
+        cone_axis[1],
+        cone_axis[2],
+        lod_error,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (slot, value) in [
+        first_index,
+        index_count,
+        first_vertex,
+        vertex_count,
+        material_bin,
+        0x4D_53_48_4Cu32, // MSHL
+        banger_hash_prefix_u32(&source_hash),
+        banger_hash_prefix_u32(&cluster_seed_hash),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let offset = 32 + slot * 4;
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_render_vertex_position(vertex_bytes: &[u8], vertex_index: u32) -> Option<[f32; 3]> {
+    let offset = vertex_index as usize * 24;
+    if offset + 12 > vertex_bytes.len() {
+        return None;
+    }
+    Some([
+        f32::from_le_bytes(vertex_bytes[offset..offset + 4].try_into().ok()?),
+        f32::from_le_bytes(vertex_bytes[offset + 4..offset + 8].try_into().ok()?),
+        f32::from_le_bytes(vertex_bytes[offset + 8..offset + 12].try_into().ok()?),
+    ])
+}
+
+#[cfg(target_os = "windows")]
+fn banger_meshlet_cluster_bounds(positions: &[[f32; 3]]) -> ([f32; 3], f32) {
+    if positions.is_empty() {
+        return ([0.0, 0.0, 0.0], 0.0);
+    }
+    let mut center = [0.0f32; 3];
+    for position in positions {
+        center[0] += position[0];
+        center[1] += position[1];
+        center[2] += position[2];
+    }
+    let inv_count = 1.0 / positions.len() as f32;
+    center = [center[0] * inv_count, center[1] * inv_count, center[2] * inv_count];
+    let mut radius = 0.0f32;
+    for position in positions {
+        radius = radius.max(
+            ((position[0] - center[0]).powi(2)
+                + (position[1] - center[1]).powi(2)
+                + (position[2] - center[2]).powi(2))
+            .sqrt(),
+        );
+    }
+    (center, radius)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_meshlet_cluster_average_normal(vertex_bytes: &[u8], indices: &[u32]) -> [f32; 3] {
+    let mut normal = [0.0f32; 3];
+    for triangle in indices.chunks_exact(3) {
+        let Some(a) = banger_render_vertex_position(vertex_bytes, triangle[0]) else { continue };
+        let Some(b) = banger_render_vertex_position(vertex_bytes, triangle[1]) else { continue };
+        let Some(c) = banger_render_vertex_position(vertex_bytes, triangle[2]) else { continue };
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        normal[0] += ab[1] * ac[2] - ab[2] * ac[1];
+        normal[1] += ab[2] * ac[0] - ab[0] * ac[2];
+        normal[2] += ab[0] * ac[1] - ab[1] * ac[0];
+    }
+    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    if length <= 0.0001 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [normal[0] / length, normal[1] / length, normal[2] / length]
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -6777,6 +6977,42 @@ mod tests {
         assert!((f32::from_le_bytes(bytes[16..20].try_into().unwrap()) - 0.2).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(bytes[28..32].try_into().unwrap()), 7);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_meshlet_cluster_metadata_from_render_buffers() {
+        let mut vertex_bytes = Vec::new();
+        for position in [
+            [0.0_f32, 0.0, 0.0],
+            [1.0_f32, 0.0, 0.0],
+            [1.0_f32, 1.0, 0.0],
+            [0.0_f32, 1.0, 0.0],
+        ] {
+            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75] {
+                vertex_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let mut index_bytes = Vec::new();
+        for index in [0u16, 1, 2, 0, 2, 3] {
+            index_bytes.extend_from_slice(&index.to_le_bytes());
+        }
+        let clusters = banger_meshlet_cluster_metadata_bytes(
+            &vertex_bytes,
+            &index_bytes,
+            "banger_maps_3d_tiles_visible_tile_batch",
+        );
+        assert_eq!(clusters.len(), BANGER_MESHLET_CLUSTER_METADATA_STRIDE);
+        assert!((f32::from_le_bytes(clusters[0..4].try_into().unwrap()) - 0.5).abs() < 0.0001);
+        assert!((f32::from_le_bytes(clusters[4..8].try_into().unwrap()) - 0.5).abs() < 0.0001);
+        assert!(f32::from_le_bytes(clusters[12..16].try_into().unwrap()) > 0.70);
+        assert!((f32::from_le_bytes(clusters[24..28].try_into().unwrap()) - 1.0).abs() < 0.0001);
+        assert!(f32::from_le_bytes(clusters[28..32].try_into().unwrap()) > 0.0);
+        assert_eq!(u32::from_le_bytes(clusters[32..36].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(clusters[36..40].try_into().unwrap()), 6);
+        assert_eq!(u32::from_le_bytes(clusters[40..44].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(clusters[44..48].try_into().unwrap()), 4);
+        assert_eq!(u32::from_le_bytes(clusters[52..56].try_into().unwrap()), 0x4D_53_48_4C);
     }
 
     #[cfg(target_os = "windows")]
