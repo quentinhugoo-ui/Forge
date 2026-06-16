@@ -222,8 +222,10 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("accessMode: \"cesium-ion\"");
     expect(mainSource).toContain("accessMode: \"google-map-tiles-api-key\"");
     expect(mainSource).not.toContain("accessMode: \"render-proxy\"");
-    expect(mainSource).not.toContain("cesiumIonAccessTokenUrl");
-    expect(mainSource).not.toContain("/api/banger/cesium-ion-token");
+    expect(mainSource).toContain("source: \"cesium-ion-token-broker\"");
+    expect(mainSource).toContain("FORGE_BANGER_CESIUM_ION_TOKEN_URL");
+    expect(mainSource).toContain("/api/banger/cesium-ion-token");
+    expect(canvasSurfacesSource).toContain("config.cesiumIonAccessTokenUrl");
     expect(mainSource).not.toContain("FORGE_BANGER_GOOGLE_TILES_BACKEND_URL");
     expect(mainSource).toContain("rootRequestTtlHours: 3");
     expect(mainSource).toContain("showCreditsOnScreen: true");

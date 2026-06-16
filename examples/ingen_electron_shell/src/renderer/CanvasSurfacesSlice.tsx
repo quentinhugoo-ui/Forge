@@ -274,7 +274,32 @@ function redactedTilesetEndpoint(value?: string): string {
 
 async function resolveCesiumIonAccessToken(config: BangerGoogleTilesConfigResult): Promise<string | undefined> {
   const embedded = config.cesiumIonAccessToken?.trim();
-  return embedded || undefined;
+  if (embedded) {
+    return embedded;
+  }
+  const tokenUrl = config.cesiumIonAccessTokenUrl?.trim();
+  if (!tokenUrl) {
+    return undefined;
+  }
+  const response = await fetch(tokenUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Cesium ion token broker status ${response.status}`);
+  }
+  const payload = await response.json() as {
+    accepted?: unknown;
+    error?: unknown;
+    message?: unknown;
+    token?: unknown;
+  };
+  const token = typeof payload.token === "string" ? payload.token.trim() : "";
+  if (payload.accepted === true && token) {
+    return token;
+  }
+  const reason =
+    typeof payload.message === "string" ? payload.message :
+      typeof payload.error === "string" ? payload.error :
+        "token missing";
+  throw new Error(`Cesium ion token broker rejected: ${reason}`);
 }
 
 function googleMapsEndpointFromRootTilesetUrl(value: string): string | undefined {
