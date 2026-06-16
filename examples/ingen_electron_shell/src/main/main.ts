@@ -18007,21 +18007,22 @@ function installIpc(): void {
     };
     const base = {
       schema,
-      source: "render-resolver-proxy" as const,
+      source: "cesium-ion-direct" as const,
+      accessMode: "cesium-ion" as const,
       provider: "google_photorealistic_3d_tiles" as const,
       rendererModel: "cesium_for_unreal_style_3d_tileset" as const,
       rootTilesetUrl: "",
       nativeStreamer: {
         schema: "forge.banger.native_3d_tiles_streamer.v1" as const,
         authority: "banger_native_engine" as const,
-        status: "contract_ready_visual_fallback_active",
+        status: "contract_ready_direct_cesium_required",
         rootIngestionStage: "3d_tiles_root_json_manifest_ingestion",
         traversalStage: "screen_space_error_priority_queue_with_tile_budget",
         contentDecodeStage: "b3dm_glb_gltf_mesh_material_texture_decode",
         georeferenceStage: "wgs84_ecef_to_enu_floating_origin",
         gpuSubmissionStage: "meshlet_or_indexed_mesh_upload_pending",
-        visualFallback: "cesiumjs_photorealistic_tiles_until_native_submission_promoted",
-        blocker: "native_gltf_material_texture_submission_not_promoted"
+        visualFallback: "none_direct_cesium_required",
+        blocker: "cesium_or_google_direct_credentials_required"
       },
       directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json" as const,
       requestBudget: 18,
@@ -18067,18 +18068,16 @@ function installIpc(): void {
         proofHash: hashJson({ schema, accepted: false, reason: "bad_sender" })
       };
     }
-    const renderBaseUrl = (
-      process.env.FORGE_BANGER_GOOGLE_TILES_BACKEND_URL ??
-      process.env.FORGE_REAL_ESTATE_BACKEND_URL ??
-      process.env.FORGE_RENDER_BACKEND_URL ??
-      "https://forge-6cai.onrender.com"
-    ).trim().replace(/\/+$/, "");
-    if (renderBaseUrl) {
+    const cesiumIonAccessToken = (process.env.CESIUM_ACCESS_TOKEN ?? process.env.VITE_CESIUM_ACCESS_TOKEN ?? "").trim();
+    const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
+    if (cesiumIonAccessToken) {
       const result = {
         ...base,
         accepted: true,
-        rootTilesetUrl: `${renderBaseUrl}/api/banger/google-tiles/root.json`,
-        cesiumIonAccessTokenUrl: `${renderBaseUrl}/api/banger/cesium-ion-token`
+        source: "cesium-ion-direct" as const,
+        accessMode: "cesium-ion" as const,
+        rootTilesetUrl: "ion://google-photorealistic-3d-tiles",
+        cesiumIonAccessToken
       };
       return {
         ...result,
@@ -18088,8 +18087,8 @@ function installIpc(): void {
           provider: result.provider,
           rendererModel: result.rendererModel,
           source: result.source,
-          endpoint: result.directRootTilesetEndpoint,
-          transportEndpoint: result.rootTilesetUrl,
+          accessMode: result.accessMode,
+          tokenFingerprint: hashJson(cesiumIonAccessToken).slice(0, 16),
           requestBudget: result.requestBudget,
           lod: result.lod,
           georeference: result.georeference,
@@ -18098,40 +18097,40 @@ function installIpc(): void {
         })
       };
     }
-    const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
-    const cesiumIonAccessToken = (process.env.CESIUM_ACCESS_TOKEN ?? process.env.VITE_CESIUM_ACCESS_TOKEN ?? "").trim();
-    if (!apiKey) {
-      return {
+    if (apiKey) {
+      const result = {
         ...base,
-        accepted: false,
-        error: {
-          code: "shadow_only",
-          message: "Set GOOGLE_MAP_TILES_API_KEY to stream Google Photorealistic 3D Tiles in Banger.",
-          proofHash: hashJson({ schema, configured: false })
-        },
-        proofHash: hashJson({ schema, accepted: false, configured: false })
+        source: "google-map-tiles-direct" as const,
+        accessMode: "google-map-tiles-api-key" as const,
+        accepted: true,
+        rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`
+      };
+      return {
+        ...result,
+        proofHash: hashJson({
+          schema,
+          accepted: true,
+          endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
+          source: result.source,
+          accessMode: result.accessMode,
+          keyFingerprint: hashJson(apiKey).slice(0, 16),
+          requestBudget: result.requestBudget,
+          lod: result.lod,
+          georeference: result.georeference,
+          attribution: result.attribution,
+          initialView
+        })
       };
     }
-    const result = {
-      ...base,
-      source: "electron-main-env" as const,
-      accepted: true,
-      rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`,
-      cesiumIonAccessToken: cesiumIonAccessToken || undefined
-    };
     return {
-      ...result,
-      proofHash: hashJson({
-        schema,
-        accepted: true,
-        endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
-        keyFingerprint: hashJson(apiKey).slice(0, 16),
-        requestBudget: result.requestBudget,
-        lod: result.lod,
-        georeference: result.georeference,
-        attribution: result.attribution,
-        initialView
-      })
+      ...base,
+      accepted: false,
+      error: {
+        code: "shadow_only",
+        message: "Set CESIUM_ACCESS_TOKEN for Cesium ion direct mode, or GOOGLE_MAP_TILES_API_KEY for direct Google Map Tiles.",
+        proofHash: hashJson({ schema, configured: false })
+      },
+      proofHash: hashJson({ schema, accepted: false, configured: false })
     };
   });
   ipcMain.handle("forge:dispatch-header-command", (event, command: unknown): HeaderCommandResult => {
