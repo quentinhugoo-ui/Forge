@@ -548,12 +548,12 @@ impl BangerMapsTilesetContract {
             native_streamer: BangerMapsNative3DTilesStreamer {
                 schema: "forge.banger.native_3d_tiles_streamer.v1",
                 authority: "banger_native_engine",
-                status: "native_first_tile_draw_ready_direct_tiles_required",
+                status: "native_visible_tile_batch_draw_ready_direct_tiles_required",
                 root_ingestion_stage: "3d_tiles_root_json_manifest_ingestion",
                 traversal_stage: "screen_space_error_priority_queue_with_tile_budget",
                 content_decode_stage: "b3dm_glb_gltf_mesh_material_texture_decode",
                 georeference_stage: "wgs84_ecef_to_enu_floating_origin_live",
-                gpu_submission_stage: "first_visible_tile_indexed_mesh_wgpu_draw_ready",
+                gpu_submission_stage: "visible_tile_batch_indexed_mesh_wgpu_draw_ready",
                 visual_fallback: "none_direct_tiles_required",
                 blocker: "screen_space_error_traversal_material_texture_streaming_required_for_full_cesium_parity",
             },
@@ -2770,6 +2770,7 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) -> Option<Vec<u8>> {
     if materials.is_empty() {
         return None;
@@ -2788,6 +2789,7 @@ fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) ->
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn banger_maps_texture_staging_resource_bytes(
     gltf: &Value,
     bin_chunk: &[u8],
@@ -4585,51 +4587,31 @@ fn banger_maps_first_visible_tile_gpu_resource(
 ) -> Result<BangerNativeSceneGpuResource, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
     let maps_render_space_transform = banger_maps_render_space_transform();
-    let record = banger_maps_select_visible_draw_record(&ingest, maps_render_space_transform)
-        .ok_or_else(|| "Banger Maps native render blocked: no visible decoded tile record selected".to_string())?;
-    let bytes = fs::read(&record.cache_path)
-        .map_err(|error| format!("Banger Maps native render blocked: selected tile read failed: {error}"))?;
-    let (gltf_value, bin_chunk, tile_transform) = match record.container {
-        "b3dm" => {
-            let (b3dm, glb_bytes) = decode_banger_b3dm(&bytes)?;
-            let decoded = decode_banger_glb_full(glb_bytes)?;
-            (
-                decoded.gltf_value,
-                decoded.bin_chunk,
-                banger_b3dm_tile_content_transform(record.tile_global_transform, b3dm.rtc_center),
-            )
-        }
-        "glb" => {
-            let decoded = decode_banger_glb_full(&bytes)?;
-            (decoded.gltf_value, decoded.bin_chunk, record.tile_global_transform)
-        }
-        _ => {
-            return Err(format!(
-                "Banger Maps native render blocked: selected container {} is not drawable yet",
-                record.container
-            ))
-        }
-    };
-    let mesh = banger_maps_render_mesh_from_gltf(
-        &gltf_value,
-        bin_chunk,
-        maps_render_space_transform,
-        tile_transform,
-    )?;
-    let (_, materials, textures) = stage_banger_gltf_payload(&gltf_value, bin_chunk)?;
-    let material_bytes = banger_maps_material_resource_bytes(&materials);
-    let texture_staging_bytes = banger_maps_texture_staging_resource_bytes(&gltf_value, bin_chunk, &textures)?;
+    let selected_tile_id = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
+        .into_iter()
+        .take(banger_maps_visible_tile_batch_limit())
+        .map(|record| record.tile_id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mesh = banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(&ingest)?;
     Ok(banger_native_scene_gpu_resource_from_mesh_bytes(
         device,
         mesh,
-        material_bytes,
-        texture_staging_bytes,
-        Some(record.tile_id.clone()),
+        None,
+        Vec::new(),
+        (!selected_tile_id.is_empty()).then_some(selected_tile_id),
     ))
 }
 
 #[cfg(target_os = "windows")]
 fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
+    ingest: &BangerMapsRootIngestProjection,
+) -> Result<BangerRenderMeshBytes, String> {
+    banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(ingest)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(
     ingest: &BangerMapsRootIngestProjection,
 ) -> Result<BangerRenderMeshBytes, String> {
     if !ingest.ok {
@@ -4673,45 +4655,18 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
     let mut primitive_errors = Vec::new();
     let maps_render_space_transform = banger_maps_render_space_transform();
     let selected_records = banger_maps_visible_draw_records(ingest, maps_render_space_transform);
-    for record in selected_records {
-        let bytes = match fs::read(&record.cache_path) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                primitive_errors.push(format!("{} read failed: {error}", record.tile_id));
-                continue;
-            }
-        };
-        let candidate = match record.container {
-            "b3dm" => decode_banger_b3dm(&bytes)
-                .and_then(|(b3dm, glb_bytes)| {
-                    let decoded = decode_banger_glb_full(glb_bytes)?;
-                    banger_maps_render_mesh_from_gltf(
-                        &decoded.gltf_value,
-                        decoded.bin_chunk,
-                        maps_render_space_transform,
-                        banger_b3dm_tile_content_transform(
-                            record.tile_global_transform,
-                            b3dm.rtc_center,
-                        ),
-                    )
-                }),
-            "glb" => decode_banger_glb_full(&bytes)
-                .and_then(|decoded| {
-                    banger_maps_render_mesh_from_gltf(
-                        &decoded.gltf_value,
-                        decoded.bin_chunk,
-                        maps_render_space_transform,
-                        record.tile_global_transform,
-                    )
-                }),
-            _ => Err(format!("render mesh unsupported container {}", record.container)),
-        };
-        if let Ok(mesh) = candidate {
-            return Ok(mesh);
+    let mut drawable_meshes = Vec::new();
+    for record in selected_records.into_iter().take(banger_maps_visible_tile_batch_limit()) {
+        match banger_maps_render_mesh_for_record(record, maps_render_space_transform) {
+            Ok(mesh) => drawable_meshes.push(mesh),
+            Err(error) => primitive_errors.push(format!("{}: {error}", record.tile_id)),
         }
-        if let Err(error) = candidate {
-            primitive_errors.push(format!("{}: {error}", record.tile_id));
-        }
+    }
+    if drawable_meshes.len() == 1 {
+        return Ok(drawable_meshes.remove(0));
+    }
+    if drawable_meshes.len() > 1 {
+        return banger_maps_concat_visible_tile_meshes(drawable_meshes);
     }
     Err(format!(
         "Banger Maps native render blocked: no drawable glTF primitive after staging ({})",
@@ -4720,13 +4675,71 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_select_visible_draw_record<'a>(
-    ingest: &'a BangerMapsRootIngestProjection,
+fn banger_maps_render_mesh_for_record(
+    record: &BangerMapsContentDecodeRecord,
     maps_render_space_transform: [f64; 16],
-) -> Option<&'a BangerMapsContentDecodeRecord> {
-    banger_maps_visible_draw_records(ingest, maps_render_space_transform)
-        .into_iter()
-        .next()
+) -> Result<BangerRenderMeshBytes, String> {
+    let bytes = fs::read(&record.cache_path).map_err(|error| format!("read failed: {error}"))?;
+    match record.container {
+        "b3dm" => decode_banger_b3dm(&bytes).and_then(|(b3dm, glb_bytes)| {
+            let decoded = decode_banger_glb_full(glb_bytes)?;
+            banger_maps_render_mesh_from_gltf(
+                &decoded.gltf_value,
+                decoded.bin_chunk,
+                maps_render_space_transform,
+                banger_b3dm_tile_content_transform(record.tile_global_transform, b3dm.rtc_center),
+            )
+        }),
+        "glb" => decode_banger_glb_full(&bytes).and_then(|decoded| {
+            banger_maps_render_mesh_from_gltf(
+                &decoded.gltf_value,
+                decoded.bin_chunk,
+                maps_render_space_transform,
+                record.tile_global_transform,
+            )
+        }),
+        _ => Err(format!("render mesh unsupported container {}", record.container)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_visible_tile_batch_limit() -> usize {
+    env::var("FORGE_BANGER_MAPS_VISIBLE_DRAW_BATCH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8)
+        .min(64)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_concat_visible_tile_meshes(
+    meshes: Vec<BangerRenderMeshBytes>,
+) -> Result<BangerRenderMeshBytes, String> {
+    let mut vertex_bytes = Vec::new();
+    let mut index_bytes = Vec::new();
+    for mesh in meshes {
+        let vertex_base = vertex_bytes.len() / 24;
+        let vertex_count = mesh.vertex_bytes.len() / 24;
+        if vertex_base + vertex_count > u16::MAX as usize + 1 {
+            return Err(format!(
+                "visible tile batch exceeds uint16 index range: {} vertices",
+                vertex_base + vertex_count
+            ));
+        }
+        vertex_bytes.extend_from_slice(&mesh.vertex_bytes);
+        for index in mesh.index_bytes.chunks_exact(2) {
+            let local_index = u16::from_le_bytes(index.try_into().expect("u16 index chunk"));
+            let global_index = local_index as usize + vertex_base;
+            index_bytes.extend_from_slice(&(global_index as u16).to_le_bytes());
+        }
+    }
+    Ok(BangerRenderMeshBytes {
+        vertex_bytes,
+        index_bytes,
+        instance_bytes: banger_maps_tile_instance_bytes(),
+        source: "banger_maps_3d_tiles_visible_tile_batch",
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -4777,10 +4790,21 @@ fn banger_maps_visible_tile_score(
     ];
     let geometric_error = tile.and_then(|tile| tile.geometric_error).unwrap_or(1.0).max(0.001);
     let radius = banger_maps_estimated_tile_radius(tile, geometric_error);
-    if !banger_maps_sphere_intersects_cpu_frustum(to_center, radius, camera) {
+    let has_bounding_volume = tile
+        .map(|tile| tile.bounding_volume_kind.as_str() != "none")
+        .unwrap_or(false);
+    if has_bounding_volume && !banger_maps_sphere_intersects_cpu_frustum(to_center, radius, camera) {
         return 0.0;
     }
-    let distance = banger_vec3_dot_f64(to_center, camera.forward).max(camera.near);
+    let distance = if has_bounding_volume {
+        banger_vec3_dot_f64(to_center, camera.forward).max(camera.near)
+    } else {
+        banger_vec3_length_f64([
+            camera.target[0] - camera.eye[0],
+            camera.target[1] - camera.eye[1],
+            camera.target[2] - camera.eye[2],
+        ])
+    };
     let screen_space_error =
         geometric_error * camera.viewport_height / (2.0 * distance * (camera.fovy_radians * 0.5).tan());
     let depth_bias = tile.map(|tile| tile.depth as f64 * 0.001).unwrap_or(0.0);
@@ -4790,6 +4814,7 @@ fn banger_maps_visible_tile_score(
 #[cfg(target_os = "windows")]
 struct BangerMapsCpuCamera {
     eye: [f64; 3],
+    target: [f64; 3],
     forward: [f64; 3],
     right: [f64; 3],
     up: [f64; 3],
@@ -4823,6 +4848,7 @@ fn banger_maps_cpu_camera() -> BangerMapsCpuCamera {
     let up = banger_vec3_cross_f64(right, forward);
     BangerMapsCpuCamera {
         eye,
+        target,
         forward,
         right,
         up,
@@ -5847,16 +5873,55 @@ mod tests {
         assert_eq!(mesh.instance_bytes.len(), 80);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn batches_visible_maps_tiles_into_one_indexed_draw_mesh() {
+        let cache_dir = env::temp_dir().join(format!(
+            "forge-banger-render-batch-test-{}",
+            sha256_hex(format!("{:?}", SystemTime::now()).as_bytes())
+        ));
+        let source_dir = cache_dir.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let root_path = source_dir.join("tileset.json");
+        fs::write(source_dir.join("a.glb"), test_glb_bytes()).unwrap();
+        fs::write(source_dir.join("b.glb"), test_glb_bytes()).unwrap();
+        fs::write(
+            &root_path,
+            br#"{"asset":{"version":"1.1"},"root":{"geometricError":10,"children":[{"geometricError":10,"content":{"uri":"a.glb"}},{"geometricError":9,"content":{"uri":"b.glb"}}]}}"#,
+        )
+        .unwrap();
+        let bytes = fs::read(&root_path).unwrap();
+        let projection = summarize_banger_maps_root(
+            root_path.to_str().unwrap(),
+            &cache_dir,
+            &cache_dir.join("root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+            Some(true),
+            Some(true),
+            Some(true),
+        );
+        let mesh = banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(&projection).unwrap();
+        assert_eq!(mesh.source, "banger_maps_3d_tiles_visible_tile_batch");
+        assert_eq!(mesh.vertex_bytes.len(), 6 * 24);
+        assert_eq!(mesh.index_bytes.len(), 6 * 2);
+        assert_eq!(mesh.instance_bytes.len(), 80);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
+    }
+
     #[test]
     fn maps_contract_reports_first_native_indexed_tile_draw_ready() {
         let contract = BangerMapsTilesetContract::google_photorealistic_default();
         assert_eq!(
             contract.native_streamer.status,
-            "native_first_tile_draw_ready_direct_tiles_required"
+            "native_visible_tile_batch_draw_ready_direct_tiles_required"
         );
         assert_eq!(
             contract.native_streamer.gpu_submission_stage,
-            "first_visible_tile_indexed_mesh_wgpu_draw_ready"
+            "visible_tile_batch_indexed_mesh_wgpu_draw_ready"
         );
         assert_eq!(
             contract.native_streamer.blocker,
