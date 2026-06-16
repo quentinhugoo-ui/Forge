@@ -87,7 +87,7 @@ import {
 import { ModuleLogo } from "./module-logos";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
-const COMPOSER_MAX_INPUT_HEIGHT = 360;
+const COMPOSER_MAX_INPUT_HEIGHT = 132;
 const COMPOSER_SINGLE_LINE_HEIGHT_TOLERANCE_PX = 8;
 const CHAT_KEY_COLOR_EVENT = "ingen:chat-key-color";
 export const IMAGE_EDIT_STAGED_EVENT = "ingen:image-edit-staged";
