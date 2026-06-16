@@ -28,7 +28,6 @@ pub const BRAIN_SKILL_PROMOTION_REF_PREFIX: &str = "refs/brain/skill-promotion/"
 pub const BRAIN_SEARCHARCHIVE_COMMAND: &str = "/searcharchive_";
 pub const BRAIN_SEARCHARCHIVE_RESULT_SCHEMA: &str = "forge.brain.searcharchive.result.v1";
 pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_";
-pub const BRAIN_RENAME_SESSION_RESULT_SCHEMA: &str = "forge.brain.rename_session.result.v1";
 pub const BRAIN_WEBSEARCH_COMMAND: &str = "/websearch_";
 pub const BRAIN_WEBSEARCH_RESULT_SCHEMA: &str = "forge.websearch.result.v1";
 pub const BRAIN_CODEDOCS_COMMAND: &str = "/codedocs_";
@@ -587,7 +586,6 @@ pub fn publish_brain_skill_promotion(
 pub fn brain_general_codeact_templates() -> Vec<BrainGeneralCodeActTemplate> {
     vec![
         brain_searcharchive_codeact_template(),
-        brain_rename_session_codeact_template(),
         brain_websearch_codeact_template(),
         brain_googleweb_codeact_template(),
         brain_scrapers_codeact_template(),
@@ -740,34 +738,6 @@ pub fn brain_searcharchive_codeact_template() -> BrainGeneralCodeActTemplate {
                     "restore_context".to_string(),
                 ],
                 description: "Result mode; default returns snippets and refs, restore_context may fetch more in a second bounded call.".to_string(),
-            },
-        ],
-    };
-    template.proof_hash = Hash::for_blob(canonical_brain_general_codeact_template(&template).as_bytes()).as_hex();
-    template
-}
-
-pub fn brain_rename_session_codeact_template() -> BrainGeneralCodeActTemplate {
-    let mut template = BrainGeneralCodeActTemplate {
-        command: BRAIN_RENAME_SESSION_COMMAND.to_string(),
-        section: "general".to_string(),
-        purpose: "Rename the current session from the LLM's short title for the first user message topic. Preferred activation is an internal prefix tag /rename_session_<short title>_ before visible prose; the app strips the tag, uses the title everywhere the session name appears, and keeps Brain archive history aligned without visible rename chatter.".to_string(),
-        result_schema: BRAIN_RENAME_SESSION_RESULT_SCHEMA.to_string(),
-        proof_hash: String::new(),
-        slots: vec![
-            BrainCodeActTemplateSlot {
-                name: "title".to_string(),
-                required: true,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Short relevant session title used in /rename_session_<short title>_: 2-5 natural words, grammatically correct and specific. Do not copy the full prompt.".to_string(),
-            },
-            BrainCodeActTemplateSlot {
-                name: "reason".to_string(),
-                required: false,
-                default_value: String::new(),
-                allowed_values: Vec::new(),
-                description: "Optional compact reason for the title choice; not displayed in the sidebar.".to_string(),
             },
         ],
     };

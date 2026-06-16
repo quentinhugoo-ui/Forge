@@ -10,12 +10,17 @@ const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "Pane
 describe("session rename CodeAct", () => {
   it("uses only the silent /rename_session_<title>_ prefix tag", () => {
     expect(brainSource).toContain('pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_"');
+    expect(brainSource).not.toContain("BRAIN_RENAME_SESSION_RESULT_SCHEMA");
+    expect(brainSource).not.toContain("brain_rename_session_codeact_template");
     expect(brainSource).toContain("/rename_session_<short title>_");
     expect(brainSource).toContain("The app strips the tag before display");
     expect(brainSource).toContain("relevant, grammatically correct 2-5 word session title");
     expect(brainSource).toContain("Use a relevant, grammatically correct 2-5 word title");
     expect(brainSource).toContain("Never mention, explain, echo, format, or discuss this rename action");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
+    expect(generatedSource).not.toContain("BRAIN_RENAME_SESSION_RESULT_SCHEMA");
+    expect(generatedSource).not.toContain("BRAIN_RENAME_SESSION_COMMAND,");
+    expect(generatedSource).not.toContain("{ command: BRAIN_RENAME_SESSION_COMMAND");
     expect(generatedSource).toContain("/rename_session_<short title>_");
     expect(generatedSource).toContain("The app strips the tag before display");
     expect(generatedSource).toContain("relevant, grammatically correct 2-5 word session title");

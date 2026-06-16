@@ -8,7 +8,6 @@ export const FORGE_ELECTRON_IPC_CONTRACT_SOURCE = "rust:ingen-electron-ipc-contr
 export const BRAIN_SEARCHARCHIVE_COMMAND = "/searcharchive_" as const;
 export const BRAIN_SEARCHARCHIVE_RESULT_SCHEMA = "forge.brain.searcharchive.result.v1" as const;
 export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;
-export const BRAIN_RENAME_SESSION_RESULT_SCHEMA = "forge.brain.rename_session.result.v1" as const;
 export const BRAIN_WEBSEARCH_COMMAND = "/websearch_" as const;
 export const BRAIN_WEBSEARCH_RESULT_SCHEMA = "forge.websearch.result.v1" as const;
 export const BRAIN_CODEDOCS_COMMAND = "/codedocs_" as const;
@@ -99,7 +98,6 @@ export const BRAIN_CODING_VISIBLE_CATALOG = "CODING_BRAIN v1\\nPurpose: active s
 
 export const BRAIN_CODEACT_COMMANDS = [
 BRAIN_SEARCHARCHIVE_COMMAND,
-BRAIN_RENAME_SESSION_COMMAND,
 BRAIN_WEBSEARCH_COMMAND,
 BRAIN_CODEDOCS_COMMAND,
 BRAIN_GITHUB_MCP_COMMAND,
@@ -138,7 +136,6 @@ export type BrainCodeActCommand = (typeof BRAIN_CODEACT_COMMANDS)[number];
 
 export const BRAIN_CODEACT_COMMAND_DESCRIPTIONS = [
   { command: BRAIN_SEARCHARCHIVE_COMMAND, description: BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION },
-  { command: BRAIN_RENAME_SESSION_COMMAND, description: BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION },
   { command: BRAIN_WEBSEARCH_COMMAND, description: BRAIN_WEBSEARCH_COMMAND_DESCRIPTION },
   { command: BRAIN_CODEDOCS_COMMAND, description: BRAIN_CODEDOCS_COMMAND_DESCRIPTION },
   { command: BRAIN_GITHUB_MCP_COMMAND, description: BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION },

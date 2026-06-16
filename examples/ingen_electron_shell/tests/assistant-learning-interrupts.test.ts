@@ -21,6 +21,7 @@ import {
 
 const root = process.cwd();
 const mainSource = readFileSync(join(root, "src", "main", "main.ts"), "utf8");
+const domainBrainSource = readFileSync(join(root, "src", "main", "domain-brain-codeact.ts"), "utf8");
 const rendererSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const learningSource = readFileSync(join(root, "src", "renderer", "assistant-learning-interrupts.ts"), "utf8");
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
@@ -237,6 +238,12 @@ describe("assistant learning interrupts", () => {
     expect(learningSource).not.toContain("General Brain stays read-only");
     expect(rendererSource).toContain("brainSpecializedCodeActsFromNewBrainText(text)");
     expect(rendererSource).toContain("brainSpecializedBrainModificationsFromText(text)");
+    expect(mainSource).toContain("executeAssistantDomainBrainCodeActs(assistantMessage)");
+    expect(domainBrainSource).toContain("DOMAIN_BRAIN_RESULT v1");
+    expect(domainBrainSource).toContain("specialized_codeacts=");
+    expect(domainBrainSource).toContain("BRAIN_LOCAL_ACTIONS_COMMAND");
+    expect(domainBrainSource).toContain("extractNewBrainResult(text)");
+    expect(domainBrainSource).toContain("extractModifyBrainResult(text)");
     expect(rendererSource).toContain("activateBrainSpecializedBrain(command");
     expect(rendererSource).toContain("source: \"host_generated_newbrain\"");
     expect(rendererSource).toContain("parseBrainLearningInterruptLine(rawLine)");

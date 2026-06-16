@@ -334,7 +334,7 @@ const BRAIN_LEARNING_MACRO_PREFIX = "• ";
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
-const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<BrainCodeActCommand>(["/gmail_com", BRAIN_RENAME_SESSION_COMMAND]);
+const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<string>(["/gmail_com", BRAIN_RENAME_SESSION_COMMAND]);
 
 const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>> = {
   "/sciencebrain_": "Switch to science mode for math, engineering, simulation, 3D, or technical analysis.",
