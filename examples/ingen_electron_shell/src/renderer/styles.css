@@ -22,6 +22,8 @@
   --self-directed-wine: #9f1239;
   --self-directed-gold: #e9c46a;
   --self-directed-icon: color-mix(in oklab, var(--self-directed-cyan), var(--self-directed-purple) 34%);
+  --self-directed-flow-duration: 18s;
+  --self-directed-flow-easing: ease-in-out;
 }
 
 html.ingen-widget-mode {
@@ -4086,7 +4088,7 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.045);
   animation:
     composerQuestionnaireEnter 180ms ease-out both,
-    permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+    permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire::before {
@@ -4114,13 +4116,13 @@ button {
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire__option::after {
   background: var(--self-directed-spectrum);
   background-size: 155% 100%;
-  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire__option:hover,
@@ -8192,13 +8194,13 @@ ol.assistantText__list li::before {
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .permissionModeTrigger--selfDirected > svg:first-child {
   color: var(--self-directed-icon);
   opacity: 1;
-  animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedIconFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .permissionModeMenu {
@@ -8324,7 +8326,7 @@ ol.assistantText__list li::before {
   border-radius: inherit !important;
   opacity: 0.72;
   pointer-events: none;
-  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -8351,7 +8353,7 @@ ol.assistantText__list li::before {
 .permissionModeOption--selfDirected .permissionModeOption__icon,
 .permissionModeOption--selfDirected.permissionModeOption--selected .permissionModeOption__icon {
   color: var(--self-directed-icon);
-  animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedIconFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .permissionModeOption--selfDirected .permissionModeOption__label {
@@ -8361,7 +8363,7 @@ ol.assistantText__list li::before {
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite;
 }
 
 .permissionModeOption--selfDirected .permissionModeOption__detail {
@@ -8570,20 +8572,32 @@ ol.assistantText__list li::before {
   0% {
     color: var(--self-directed-teal);
   }
-  16% {
+  11% {
     color: var(--self-directed-cyan);
   }
-  32% {
+  23% {
     color: var(--self-directed-indigo);
   }
-  50% {
+  33% {
     color: var(--self-directed-purple);
   }
-  68% {
+  42% {
     color: var(--self-directed-wine);
   }
-  84% {
+  50% {
     color: var(--self-directed-gold);
+  }
+  58% {
+    color: var(--self-directed-wine);
+  }
+  67% {
+    color: var(--self-directed-purple);
+  }
+  77% {
+    color: var(--self-directed-indigo);
+  }
+  89% {
+    color: var(--self-directed-cyan);
   }
   100% {
     color: var(--self-directed-teal);

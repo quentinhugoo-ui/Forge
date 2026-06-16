@@ -4663,6 +4663,7 @@ export function PanelsChatBottomSlice({
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
   const [llmSelectorOpen, setLlmSelectorOpen] = useState(false);
   const [selfDirectedMenuStage, setSelfDirectedMenuStage] = useState<"idle" | "console">("idle");
+  const [selfDirectedColorCycle, setSelfDirectedColorCycle] = useState(0);
   const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
@@ -5117,10 +5118,19 @@ export function PanelsChatBottomSlice({
       void dispatch({ kind: "permission_mode_selected", value: mode });
     }
   };
+  const togglePermissionMenu = () => {
+    const opening = !permissionMenuOpen;
+    if (opening && permissionMode === "self-directed") {
+      setSelfDirectedColorCycle((cycle) => cycle + 1);
+    }
+    setPermissionMenuOpen((open) => !open);
+  };
   useEffect(() => {
     if (permissionMode !== "self-directed") {
       cancelSelfDirectedDraft();
+      return;
     }
+    setSelfDirectedColorCycle((cycle) => cycle + 1);
   }, [cancelSelfDirectedDraft, permissionMode]);
   useEffect(() => () => clearSelfDirectedTimers(), [clearSelfDirectedTimers]);
   useEffect(() => {
@@ -5508,6 +5518,7 @@ export function PanelsChatBottomSlice({
       <nav className="bottomControls" aria-label="Bottom controls">
         <div className="permissionModeControl" ref={permissionControlRef}>
           <button
+            key={`permission-trigger-${permissionMode === "self-directed" ? selfDirectedColorCycle : "static"}`}
             type="button"
             className={[
               "permissionModeTrigger",
@@ -5516,7 +5527,7 @@ export function PanelsChatBottomSlice({
             aria-haspopup="menu"
             aria-expanded={permissionMenuOpen}
             aria-controls={permissionMenuOpen ? permissionMenuId : undefined}
-            onClick={() => setPermissionMenuOpen((open) => !open)}
+            onClick={togglePermissionMenu}
           >
             <PermissionModeIcon mode={permissionMode} />
             <span>{permissionModeShortLabel(permissionMode)}</span>
@@ -5526,6 +5537,7 @@ export function PanelsChatBottomSlice({
           </button>
           {permissionMenuOpen ? (
             <div
+              key={`permission-menu-${selfDirectedColorCycle}`}
               className={[
                 "permissionModeMenu",
                 selfDirectedMenuStage !== "idle" ? "permissionModeMenu--selfDirectedFlow" : "",
