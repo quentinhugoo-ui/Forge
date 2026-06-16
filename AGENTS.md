@@ -40,7 +40,7 @@ LLM's behalf.
 - Use `rg` for search and compact command outputs for large files.
 - For large/repeated/numerical/document-heavy work, use InGen direct-command discipline first: keep raw data on disk, exchange compact manifests, hashes and artifacts.
 - Commit and push meaningful work to GitHub before risky cleanup.
-- `master` is the only finished code line. Task branches and worktrees are temporary staging areas only; completed agent work must be merged into `master`, pushed to GitHub, then the temporary worktree and branch must be removed.
+- `master` is the live code line used by the desktop app. Work directly on `master` by default, commit meaningful changes and push `origin/master` frequently. Use a branch or worktree only for risky, large, parallel or explicitly isolated work.
 
 ## Coding Doctrine
 
@@ -138,25 +138,22 @@ Use these coordination files before adding new frontend actors:
 - `examples/ingen_electron_shell/contract/src/main.rs`
 - `examples/ingen_electron_shell/scripts/final-cutover-audit.mjs`
 
-## Master-Only Worktree Rule
+## Fast Master Workflow
 
-`master` is the only durable source of code. Every finished coding or documentation task must land in `master` before the agent stops. A task branch is only a temporary safety buffer, not a delivery target.
+`master` is the live integration line and the desktop app reads from the main Forge worktree. The default path is simple: agents edit `master` directly, run targeted checks, commit intentional changes and push `origin/master`.
+
+Do not create task worktrees by default. Use a branch or worktree only when the task is risky, large, parallel, experimental or explicitly marked as isolated by the user.
 
 For every task:
 
-1. Start in the main worktree with `git status --short --branch` and identify unrelated dirty files exactly.
-2. Create a dedicated temporary worktree and branch named `codex/<task-name>`.
-3. Work only inside that temporary worktree. Do not edit `master` directly while developing the change.
+1. Start with `git status --short --branch` and name exact dirty files.
+2. Preserve user changes. If dirty files overlap the task, inspect them and continue carefully or ask.
+3. Edit the smallest file set that solves the request.
 4. Run the narrowest meaningful checks. Run `npm.cmd run typecheck` when TypeScript changed.
-5. Commit the task branch and push it to GitHub as a backup.
-6. Return to the main worktree, merge the completed task branch into `master`, run the relevant checks again from `master`, and push `master`.
-7. Remove the temporary worktree.
-8. Delete the local and remote task branch after `master` contains the work.
-9. End with `master` as the only remaining source of the completed code.
+5. Commit meaningful successful work on `master`.
+6. Push `origin/master` after meaningful progress so GitHub remains the backup.
 
-Never stop after only pushing a task branch unless the user explicitly asks for a branch/PR handoff instead of integration. Never leave a completed task sitting in a worktree. Never leave uncommitted source changes without naming the exact path and reason.
-
-Do not merge unrelated or unfinished worktrees. If `master` cannot be updated, report the exact blocker: path, branch/worktree, dirty files, failed command and what is needed to finish.
+Never leave successful source changes uncommitted without naming the exact path and reason. Never discard user changes. If a branch/worktree was explicitly used, it is temporary: merge successful work back to `master`, push `master`, then remove the temporary branch/worktree.
 
 ## Useful Checks
 
