@@ -4364,26 +4364,79 @@ function WidgetSessionDrawer({
   sessionName,
   open,
   onToggle,
+  onNewSession,
   children
 }: {
   sessionName: string;
   open: boolean;
   onToggle: () => void;
+  onNewSession?: () => void;
   children: ReactNode;
 }) {
   const label = sessionName.trim() || "New session";
+  const [newSessionExpanding, setNewSessionExpanding] = useState(false);
+  const newSessionTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (newSessionTimerRef.current !== null) {
+        window.clearTimeout(newSessionTimerRef.current);
+      }
+    };
+  }, []);
+  const startNewSession = useCallback(() => {
+    if (!onNewSession || newSessionExpanding) {
+      return;
+    }
+    setNewSessionExpanding(true);
+    onNewSession();
+    newSessionTimerRef.current = window.setTimeout(() => {
+      setNewSessionExpanding(false);
+      newSessionTimerRef.current = null;
+    }, 780);
+  }, [newSessionExpanding, onNewSession]);
   return (
     <div className={["widgetSessionDrawer", open ? "widgetSessionDrawer--open" : ""].filter(Boolean).join(" ")}>
       <section className="widgetSessionDrawer__panel" aria-label={`Session ${label}`}>
-        <button
-          type="button"
-          className="widgetSessionTab"
-          aria-expanded={open}
-          title={label}
-          onClick={onToggle}
-        >
-          <span className="widgetSessionTab__label">{label}</span>
-        </button>
+        <div className="widgetSessionTabsRail">
+          <button
+            type="button"
+            className="widgetSessionTab"
+            aria-expanded={open}
+            title={label}
+            onClick={onToggle}
+          >
+            <span className="widgetSessionTab__label">{label}</span>
+          </button>
+          {onNewSession ? (
+            <button
+              type="button"
+              className={[
+                "widgetNewSessionTab",
+                newSessionExpanding ? "widgetNewSessionTab--expanding" : ""
+              ].filter(Boolean).join(" ")}
+              aria-label="New session"
+              aria-busy={newSessionExpanding}
+              title="New session"
+              onClick={startNewSession}
+            >
+              <svg
+                className="widgetNewSessionTab__icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <g stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.65" vectorEffect="non-scaling-stroke">
+                  <path d="M12 3.75v16.5" />
+                  <path d="M3.75 12h16.5" />
+                </g>
+              </svg>
+              <span className="widgetNewSessionTab__label">New session</span>
+            </button>
+          ) : null}
+        </div>
         <div className="widgetSessionDrawer__body" aria-hidden={!open}>
           {open ? children : null}
         </div>
@@ -5012,6 +5065,10 @@ export function PanelsChatBottomSlice({
       setWidgetPanelOpen(false);
     }
   }, [widgetSessionTabVisible]);
+  const startWidgetNewSessionFromTab = useCallback(() => {
+    setWidgetPanelOpen(false);
+    onWidgetNewSession?.();
+  }, [onWidgetNewSession]);
   const useMathInCompute = useCallback((formula: string) => {
     const math = formula.trim();
     if (!math || parallelMode) {
@@ -5299,6 +5356,7 @@ export function PanelsChatBottomSlice({
           sessionName={sessionName}
           open={widgetPanelOpen}
           onToggle={() => setWidgetPanelOpen((value) => !value)}
+          onNewSession={onWidgetNewSession ? startWidgetNewSessionFromTab : undefined}
         >
           <TranscriptCanvas
             activeSessionId={snapshot.activeSessionId}
