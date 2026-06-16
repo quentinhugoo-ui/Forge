@@ -474,11 +474,16 @@ export function App() {
   }, [latestAssistantText]);
   const activeSessionName = useMemo(() => {
     const items = [...sidebarSnapshot.recentItems, ...sidebarSnapshot.archivedItems];
-    if (!sidebarSnapshot.recentSessionId) {
+    // Key the title off the session actually open in the canvas (the panels-chat
+    // store), not the sidebar's most-recent row — so the widget languette and
+    // its panel show the same session, with the same title as the sidebar /
+    // header / canonical archives. A draft session has no id -> "New session".
+    const sessionId = panelsChatSnapshot.activeSessionId || sidebarSnapshot.recentSessionId;
+    if (!sessionId) {
       return "New session";
     }
-    return items.find((item) => item.sessionId !== "" && item.sessionId === sidebarSnapshot.recentSessionId)?.label || "New session";
-  }, [sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
+    return items.find((item) => item.sessionId !== "" && item.sessionId === sessionId)?.label || "New session";
+  }, [panelsChatSnapshot.activeSessionId, sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
   const widgetRecentSessions = useMemo(
     () => sidebarSnapshot.recentItems.filter((item) => item.rowVisible && item.sessionId.trim().length > 0).slice(0, 3),
     [sidebarSnapshot.recentItems]
