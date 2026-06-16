@@ -610,6 +610,7 @@ struct BangerNativeScenePipeline {
     meshlet_cull_bind_group_layout: wgpu::BindGroupLayout,
     meshlet_cull_pipeline: wgpu::ComputePipeline,
     _material_buffer: Option<wgpu::Buffer>,
+    _material_bin_buffer: wgpu::Buffer,
     _texture_staging_buffers: Vec<wgpu::Buffer>,
     _texture_resources: Vec<BangerNativeTextureResource>,
     _residency_feedback_buffer: wgpu::Buffer,
@@ -652,6 +653,7 @@ struct BangerNativeScenePipeline {
     _meshlet_cluster_count: u32,
     _meshlet_cluster_cull_param_hash: String,
     _meshlet_cluster_cull_feedback_hash: String,
+    _material_bin_hash: String,
     _residency_feedback_hash: String,
     _shared_residency_page_table_hash: String,
     _shared_residency_compacted_feedback_hash: String,
@@ -3082,6 +3084,7 @@ struct BangerNativeSceneGpuResource {
     meshlet_cull_feedback_buffer: wgpu::Buffer,
     meshlet_cull_param_buffer: wgpu::Buffer,
     material_buffer: Option<wgpu::Buffer>,
+    material_bin_buffer: wgpu::Buffer,
     texture_staging_buffers: Vec<wgpu::Buffer>,
     texture_resources: Vec<BangerNativeTextureResource>,
     residency_feedback_buffer: wgpu::Buffer,
@@ -3117,6 +3120,7 @@ struct BangerNativeSceneGpuResource {
     meshlet_cluster_count: u32,
     meshlet_cluster_cull_param_hash: String,
     meshlet_cluster_cull_feedback_hash: String,
+    material_bin_hash: String,
     residency_feedback_hash: String,
     shared_residency_page_table_hash: String,
     shared_residency_compacted_feedback_hash: String,
@@ -5666,6 +5670,7 @@ fn create_banger_first_scene_pipeline(
         meshlet_cull_bind_group_layout,
         meshlet_cull_pipeline,
         _material_buffer: gpu_resource.material_buffer,
+        _material_bin_buffer: gpu_resource.material_bin_buffer,
         _texture_staging_buffers: gpu_resource.texture_staging_buffers,
         _texture_resources: gpu_resource.texture_resources,
         _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
@@ -5708,6 +5713,7 @@ fn create_banger_first_scene_pipeline(
         _meshlet_cluster_count: gpu_resource.meshlet_cluster_count,
         _meshlet_cluster_cull_param_hash: gpu_resource.meshlet_cluster_cull_param_hash,
         _meshlet_cluster_cull_feedback_hash: gpu_resource.meshlet_cluster_cull_feedback_hash,
+        _material_bin_hash: gpu_resource.material_bin_hash,
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         _shared_residency_page_table_hash: gpu_resource.shared_residency_page_table_hash,
         _shared_residency_compacted_feedback_hash: gpu_resource.shared_residency_compacted_feedback_hash,
@@ -6100,6 +6106,13 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let meshlet_cluster_cull_param_hash = sha256_hex(&meshlet_cluster_cull_param_bytes);
     let meshlet_cluster_cull_feedback_bytes = banger_meshlet_cluster_cull_feedback_bytes();
     let meshlet_cluster_cull_feedback_hash = sha256_hex(&meshlet_cluster_cull_feedback_bytes);
+    let texture_resource_manifest_bytes = banger_maps_texture_resource_manifest_bytes(&texture_staging_bytes);
+    let material_bin_bytes = banger_material_bin_bytes(
+        &meshlet_cluster_bytes,
+        material_bytes.as_deref(),
+        &texture_resource_manifest_bytes,
+    );
+    let material_bin_hash = sha256_hex(&material_bin_bytes);
     let residency_feedback_bytes = banger_maps_residency_feedback_bytes(
         selected_tile_id.as_deref(),
         source,
@@ -6243,6 +6256,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             &bytes,
         )
     });
+    let material_bin_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-material-bin-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &material_bin_bytes,
+    );
     let texture_staging_buffers = texture_staging_bytes
         .iter()
         .filter(|bytes| !bytes.is_empty())
@@ -6429,8 +6448,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
-            texture_resource_hash = sha256_hex(&banger_maps_texture_resource_manifest_bytes(&texture_staging_bytes)),
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            texture_resource_hash = sha256_hex(&texture_resource_manifest_bytes),
+            material_bin_hash = material_bin_hash,
         )
         .as_bytes(),
     );
@@ -6452,6 +6472,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         meshlet_cull_feedback_buffer,
         meshlet_cull_param_buffer,
         material_buffer,
+        material_bin_buffer,
         texture_staging_buffers,
         texture_resources,
         residency_feedback_buffer,
@@ -6481,6 +6502,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         meshlet_cluster_count,
         meshlet_cluster_cull_param_hash,
         meshlet_cluster_cull_feedback_hash,
+        material_bin_hash,
         residency_feedback_hash,
         shared_residency_page_table_hash,
         shared_residency_compacted_feedback_hash,
@@ -6520,6 +6542,9 @@ const BANGER_MESHLET_CLUSTER_METADATA_STRIDE: usize = 64;
 
 #[cfg(target_os = "windows")]
 const BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT: usize = 128;
+
+#[cfg(target_os = "windows")]
+const BANGER_MATERIAL_BIN_RECORD_STRIDE: usize = 32;
 
 #[cfg(target_os = "windows")]
 fn banger_meshlet_cluster_cull_params_bytes(
@@ -6801,6 +6826,58 @@ fn banger_meshlet_cluster_metadata_bytes(
 #[cfg(target_os = "windows")]
 fn banger_empty_meshlet_cluster_metadata_bytes(source: &str) -> Vec<u8> {
     banger_meshlet_cluster_metadata_record_bytes(&[], &[], 0, 0, 0, source).to_vec()
+}
+
+#[cfg(target_os = "windows")]
+fn banger_material_bin_bytes(
+    meshlet_cluster_bytes: &[u8],
+    material_bytes: Option<&[u8]>,
+    texture_manifest_bytes: &[u8],
+) -> Vec<u8> {
+    let material_count = material_bytes
+        .map(|bytes| (bytes.len() / 32).max(1))
+        .unwrap_or(1)
+        .min(1024);
+    let mut bins = vec![(u32::MAX, 0u32, u32::MAX, 0u32); material_count];
+    for (cluster_index, cluster) in meshlet_cluster_bytes
+        .chunks_exact(BANGER_MESHLET_CLUSTER_METADATA_STRIDE)
+        .enumerate()
+    {
+        let first_index = u32::from_le_bytes(cluster[32..36].try_into().expect("cluster first index"));
+        let index_count = u32::from_le_bytes(cluster[36..40].try_into().expect("cluster index count"));
+        let material_bin = u32::from_le_bytes(cluster[48..52].try_into().expect("cluster material bin"))
+            as usize
+            % material_count;
+        let bin = &mut bins[material_bin];
+        bin.0 = bin.0.min(cluster_index as u32);
+        bin.1 = bin.1.saturating_add(1);
+        bin.2 = bin.2.min(first_index);
+        bin.3 = bin.3.saturating_add(index_count);
+    }
+    let texture_manifest_hash = sha256_hex(texture_manifest_bytes);
+    let mut bytes = Vec::with_capacity(material_count * BANGER_MATERIAL_BIN_RECORD_STRIDE);
+    for (material_bin, (first_cluster, cluster_count, first_index, index_count)) in bins.into_iter().enumerate() {
+        let material_hash = material_bytes
+            .and_then(|bytes| bytes.get(material_bin * 32..material_bin * 32 + 32))
+            .map(sha256_hex)
+            .unwrap_or_else(|| sha256_hex(b"banger_default_material_bin"));
+        for value in [
+            0x4D_42_49_4Eu32, // MBIN
+            1,
+            material_bin as u32,
+            if first_cluster == u32::MAX { 0 } else { first_cluster },
+            cluster_count,
+            if first_index == u32::MAX { 0 } else { first_index },
+            index_count,
+            banger_hash_prefix_u32(&sha256_hex(format!("{material_hash}:{texture_manifest_hash}").as_bytes())),
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    if bytes.is_empty() {
+        bytes.resize(BANGER_MATERIAL_BIN_RECORD_STRIDE, 0);
+    }
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -9603,6 +9680,32 @@ mod tests {
         assert_eq!(u32::from_le_bytes(clusters[40..44].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(clusters[44..48].try_into().unwrap()), 4);
         assert_eq!(u32::from_le_bytes(clusters[52..56].try_into().unwrap()), 0x4D_53_48_4C);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_material_bins_from_meshlet_clusters() {
+        let mut vertex_bytes = Vec::new();
+        for position in [[0.0_f32, 0.0, 0.0], [1.0_f32, 0.0, 0.0], [0.0_f32, 1.0, 0.0]] {
+            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75] {
+                vertex_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let mut index_bytes = Vec::new();
+        for index in [0u16, 1, 2] {
+            index_bytes.extend_from_slice(&index.to_le_bytes());
+        }
+        let clusters = banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, "material_bin_test");
+        let material_bytes = vec![7u8; 64];
+        let texture_manifest = banger_maps_texture_resource_manifest_bytes(&[vec![1, 2, 3, 4]]);
+        let bins = banger_material_bin_bytes(&clusters, Some(&material_bytes), &texture_manifest);
+        assert_eq!(bins.len(), 2 * BANGER_MATERIAL_BIN_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(bins[0..4].try_into().unwrap()), 0x4D_42_49_4E);
+        assert_eq!(u32::from_le_bytes(bins[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(bins[16..20].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bins[20..24].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(bins[24..28].try_into().unwrap()), 3);
+        assert_ne!(u32::from_le_bytes(bins[28..32].try_into().unwrap()), 0);
     }
 
     #[cfg(target_os = "windows")]
