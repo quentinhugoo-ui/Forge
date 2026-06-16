@@ -203,9 +203,9 @@ describe("Banger native viewport contract", () => {
     expect(launcherSource).toContain("FORGE_ELECTRON_DESKTOP_STABLE");
     expect(launcherSource).toContain("if errorlevel 1 set NEED_ELECTRON_REBUILD=1");
     expect(launcherSource).toContain('if "%NEED_ELECTRON_REBUILD%"=="0" (');
-    expect(launcherSource).toContain("Electron sources are newer");
-    expect(launcherSource).toContain("set RESTART_RUNNING_APP_AFTER_REBUILD=1");
-    expect(launcherSource).toContain("Restarting existing InGen Electron process so the fresh renderer bundle is visible");
-    expect(launcherSource).toContain("Stop-Process -Id $_.ProcessId -Force");
+    expect(launcherSource).toContain("Preparing freshness checks without interrupting the active window");
+    expect(launcherSource).toContain("set RESTART_RUNNING_APP_AFTER_REBUILD=0");
+    expect(launcherSource).toContain("Active InGen window preserved");
+    expect(launcherSource).not.toContain("Stop-Process -Id $_.ProcessId -Force");
   });
 });
