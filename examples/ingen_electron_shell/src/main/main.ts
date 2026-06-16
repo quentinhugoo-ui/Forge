@@ -5387,7 +5387,7 @@ function brainBootManifest(): string {
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
     `scrapers_mcp_policy=${BRAIN_SCRAPERS_COMMAND} runs Scrapling MCP + Crawl4AI MCP in parallel for known URLs. Use after ${BRAIN_WEBSEARCH_COMMAND} or explicit URLs to enrich answers with clean Markdown, structured fields, links, image/video/audio URLs, screenshots/artifact refs and provenance. Return one compact SCRAPERS_RESULT/media_manifest; respect robots/terms/rate limits/privacy, stealth only when authorized.`,
-    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
+    `rule=Au premier message assistant de cette session: commence exactement la reponse par la balise interne /rename_session_<titre court>_ avant toute prose visible. <titre court> est un nom de session pertinent de 2 a 5 mots. Ne mentionne jamais cette action, ne l'explique jamais, ne l'affiche jamais comme du contenu. L'application retire la balise avant affichage et utilise le titre partout a la place de "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=General Brain is immutable and read-only. The agent must never write, patch or synthesize new CodeActs inside General Brain. When /newbrain_ is emitted, the host derives the specialized activator CodeAct such as /musicianbrain_ from explicit fields and stores it outside General Brain.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
@@ -14328,9 +14328,8 @@ function todayIsoDate(): string {
 }
 
 const PENDING_LLM_SESSION_TITLE = "New session";
-const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_";
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/["'`“‘]\s*([^"'`“”‘’\r\n]{1,120}?)\s*(?:["'`”’]\s*)?_?renamechat_?/i;
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/["'`“‘]\s*([^"'`“”‘’\r\n]{1,120}?)\s*(?:["'`”’]\s*)?_?renamechat_?/giu;
+const RENAME_SESSION_TAG_PATTERN = /^\/rename_session_(\*?[^_\r\n]{1,120}\*?)_/i;
+const RENAME_SESSION_TAG_FRAGMENT_PATTERN = /\/rename_session_(?:\*?[^_\r\n]{1,120}\*?)_/giu;
 
 function normalizeSessionTitle(value: string): string {
   const compact = value
@@ -14356,7 +14355,7 @@ function stripSessionTitleNoise(value: string): string {
     }
   }
   compact = compact
-    .replace(/\b(?:je\s+renomme|j['’]utilise|renommage|session|rename_session|renamechat)[\s\S]*$/iu, "")
+    .replace(/\b(?:je\s+renomme|j['’]utilise|renommage|session|rename_session)[\s\S]*$/iu, "")
     .replace(/\b(?:voici|quelques\s+reperes|quelques\s+repères|pour\s+repondre|pour\s+répondre)\b[\s\S]*$/iu, "")
     .trim();
   return normalizeSessionTitle(compact);
@@ -14392,99 +14391,6 @@ function polishedSessionTitle(title: string, reason: string): string {
   return compact;
 }
 
-function sessionTitleSubjectFromUserText(userText: string): string {
-  const compact = userText
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .trim();
-  const patterns = [
-    /^(?:parle|parles|parlez)[-\s]+moi\s+de\s+(.+)$/i,
-    /^raconte[-\s]+moi\s+(.+)$/i,
-    /^explique[-\s]+moi\s+(.+)$/i,
-    /^je\s+veux\s+(?:connaitre|connaître|savoir)\s+(?:l['’]histoire\s+de\s+)?(.+)$/i,
-    /^c['’]est\s+quoi\s+(.+)\??$/i,
-    /^qui\s+est\s+(.+)\??$/i,
-    /^vie\s+de\s+(.+)$/i,
-    /^biographie\s+de\s+(.+)$/i
-  ];
-  for (const pattern of patterns) {
-    const match = compact.match(pattern);
-    if (match?.[1]) {
-      return normalizeSessionTitle(match[1].replace(/[.!?]+$/g, ""));
-    }
-  }
-  return normalizeSessionTitle(compact.replace(/[.!?]+$/g, ""));
-}
-
-function firstTurnRuntimeSessionTitle(userText: string, assistantText: string): string {
-  const subject = sessionTitleSubjectFromUserText(userText);
-  if (!subject) {
-    return "";
-  }
-  const context = `${userText}\n${assistantText}`;
-  if (/\b(?:vie|biograph|qui\s+est|portrait|ne\s+en|né\s+en|nee\s+en|née\s+en|mort\s+en|inventeur|president|président|ecrivain|écrivain|philosophe|scientifique|homme\s+d['’]etat)\b/i.test(context)) {
-    return normalizeSessionTitle(`Biographie de ${subject}`);
-  }
-  if (/\b(?:histoire|origine|naissance|fondation|chronologie)\b/i.test(context)) {
-    return normalizeSessionTitle(`Histoire de ${subject}`);
-  }
-  if (/\b(?:climat|meteo|météo|temperature|température|saison)\b/i.test(context)) {
-    return normalizeSessionTitle(`Climat de ${subject}`);
-  }
-  if (/\b(?:airbnb|hotel|hôtel|logement|sejour|séjour|voyage|vacances)\b/i.test(context)) {
-    return normalizeSessionTitle(`Voyage a ${subject}`);
-  }
-  return normalizeSessionTitle(`Guide de ${subject}`);
-}
-
-function applyFirstTurnRuntimeSessionTitle(
-  message: TranscriptMessage,
-  session: SidebarSessionItem,
-  userText: string,
-  assistantTitleSource: string,
-  userMessageId: string,
-  transcript: TranscriptMessage[]
-): TranscriptMessage {
-  if (message.role !== "assistant" || !isFirstVisibleUserTurn(userMessageId, transcript)) {
-    return message;
-  }
-  const title = firstTurnRuntimeSessionTitle(userText, assistantTitleSource);
-  if (!title) {
-    return message;
-  }
-  const request: RenameSessionCodeActRequest = {
-    schema: "forge.brain.rename_session.request.v1",
-    command: BRAIN_RENAME_SESSION_COMMAND,
-    title,
-    reason: "runtime_first_turn_title",
-    proofHash: ""
-  };
-  request.proofHash = hashJson({ ...request, proofHash: "" });
-  renameChatSession(session, request);
-  return {
-    ...message,
-    proofHash: hashJson({
-      previousProofHash: message.proofHash,
-      runtimeSessionTitle: title,
-      sessionId: session.sessionId
-    })
-  };
-}
-
-function parseCodeActTemplateFields(body: string): Map<string, string> {
-  const fields = new Map<string, string>();
-  const normalizedBody = body.replace(/(["'`])\s*([a-zA-Z_][\w-]*)\s*=/g, "$1 $2=");
-  const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"\r\n]{0,120})"|'([^'\r\n]{0,120})'|([^\r\n]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
-  let match: RegExpExecArray | null;
-  while ((match = fieldRegex.exec(normalizedBody)) !== null) {
-    const key = match[1]?.trim();
-    if (!key) continue;
-    const rawValue = (match[2] ?? match[3] ?? match[4] ?? "").trim();
-    fields.set(key, rawValue.split(/["'`]/)[0]?.trim() ?? "");
-  }
-  return fields;
-}
-
 interface RenameSessionCodeActRequest {
   schema: "forge.brain.rename_session.request.v1";
   command: typeof BRAIN_RENAME_SESSION_COMMAND;
@@ -14495,30 +14401,15 @@ interface RenameSessionCodeActRequest {
 
 function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActRequest | undefined {
   const trimmed = line.trim();
-  const compactMatch = trimmed.match(COMPACT_RENAME_CHAT_CODEACT_PATTERN);
-  if (compactMatch?.[2]) {
-    const title = polishedSessionTitle(compactMatch[2], "brain_compact_renamechat");
-    if (!title) {
-      return undefined;
-    }
-    const request: RenameSessionCodeActRequest = {
-      schema: "forge.brain.rename_session.request.v1",
-      command: BRAIN_RENAME_SESSION_COMMAND,
-      title,
-      reason: "brain_compact_renamechat",
-      proofHash: ""
-    };
-    request.proofHash = hashJson({ ...request, proofHash: "" });
-    return request;
-  }
-  if (!trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
+  const tagMatch = trimmed.match(RENAME_SESSION_TAG_PATTERN);
+  if (!tagMatch?.[1]) {
     return undefined;
   }
-  const body = trimmed.slice(BRAIN_RENAME_SESSION_COMMAND.length).trim();
-  const fields = parseCodeActTemplateFields(body);
-  const freeform = fields.size === 0 ? body : "";
-  const reason = normalizeSessionTitle(fields.get("reason") ?? "");
-  const title = polishedSessionTitle(fields.get("title") ?? fields.get("name") ?? fields.get("label") ?? freeform, reason);
+  const rawTitle = tagMatch[1].replace(/^["'`*]+|["'`*]+$/g, "").replace(/_/g, " ");
+  if (!rawTitle || /[<>]/.test(rawTitle)) {
+    return undefined;
+  }
+  const title = polishedSessionTitle(rawTitle, "brain_rename_session_tag");
   if (!title) {
     return undefined;
   }
@@ -14526,7 +14417,7 @@ function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActReques
     schema: "forge.brain.rename_session.request.v1",
     command: BRAIN_RENAME_SESSION_COMMAND,
     title,
-    reason,
+    reason: "brain_rename_session_tag",
     proofHash: ""
   };
   request.proofHash = hashJson({ ...request, proofHash: "" });
@@ -14535,11 +14426,11 @@ function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActReques
 
 function stripRenameSessionCodeActFragments(line: string): string {
   const trimmed = line.trim();
-  if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
+  if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND) && !RENAME_SESSION_TAG_PATTERN.test(trimmed)) {
     return "";
   }
   return line
-    .replace(COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL, "")
+    .replace(RENAME_SESSION_TAG_FRAGMENT_PATTERN, "")
     .replace(/^[ \t]+/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .trimEnd();
@@ -15815,8 +15706,8 @@ function removeRenameSessionChatter(text: string): string {
 function removeLooseRenameSessionChatter(text: string): string {
   return text
     .replace(/^\s*sujet\s+(?:identifi[eé])?\s*:?\s*[^.!?\r\n]+[.!?]?\s*/iu, "")
-    .replace(/(?:^|[\r\n]\s*|(?<=[.!?]\s))je\s+(?:renomme|vais\s+renommer|utilise)[^.!?\r\n]*(?:session|titre|renomm|rename_session|renamechat)[^.!?\r\n]*[.!?]?\s*/giu, "")
-    .replace(/(?:^|[\r\n]\s*)[^.!?\r\n]*(?:action|codeact)[^.!?\r\n]*(?:renommer|rename_session|renamechat|session)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/(?:^|[\r\n]\s*|(?<=[.!?]\s))je\s+(?:renomme|vais\s+renommer|utilise)[^.!?\r\n]*(?:session|titre|renomm|rename_session)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/(?:^|[\r\n]\s*)[^.!?\r\n]*(?:action|codeact)[^.!?\r\n]*(?:renommer|rename_session|session)[^.!?\r\n]*[.!?]?\s*/giu, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
