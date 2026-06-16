@@ -5443,16 +5443,26 @@ function brainBootManifest(): string {
     "LOCAL_ACTION_ATLAS_BOOT v1",
     "rule=This full local action atlas is injected at session boot and after conversation compaction only. Do not require the app to semantically guess local tool needs on each turn.",
     `capabilities_codeact=Emit AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40} whenever a task may involve local files, coding, Windows, browser, documents, cloud CLIs, virtualization or automation and the exact action is not obvious.`,
-    brainCodeActLoopRulesManifest(),
+    ingenLoopActionRhythmManifest(),
     agentActionRoutingHint(),
     actionManifest
   ].filter(Boolean).join("\n");
 }
 
-function brainCodeActLoopRulesManifest(): string {
+function ingenLoopActionRhythmManifest(): string {
   return [
-    "codeact_loop_rule=Use Brain CodeActs as action events for every non-trivial task: one short natural paragraph, one meaningful CodeAct or AGENT_ACTION_JSON action when work is happening, then continue only after the host shows the event/result.",
-    "codeact_loop_rule=Do not turn CodeActs into raw visible prompt text. A CodeAct is a runtime event boundary; if the objective is not complete, continue with the next concrete event or verified action instead of a long chatbot answer."
+    "INGEN_LOOP_ACTION_RHYTHM v1",
+    "default_mode=loop_stream_chunked",
+    "reasoning_owner=LLM",
+    "app_role=execute_explicit_codeact_or_agent_action_validate_collect_observations_return_proof",
+    "start_state=General Brain only; activate a specialized Brain with its CodeAct when the LLM decides the task needs that catalog.",
+    "direct_answer_exception=Only trivial answer-only turns that need no Brain switch, no external/local action, no evidence branch and no proof may skip an action boundary.",
+    "chunking=Stream useful visible progress in compact chunks; each chunk that implies work must end with one explicit CodeAct or AGENT_ACTION_JSON boundary.",
+    "action_boundary=Every Brain CodeAct from every active/injected Brain and every AGENT_ACTION_JSON line is a loop-stream action boundary, not decorative prompt text.",
+    "rhythm=short visible paragraph -> one CodeAct or AGENT_ACTION_JSON -> host result/proof -> LLM chooses the next step.",
+    "branching=The LLM may open temporary side branches for evidence, research, verification or setup; each branch must return a compact result to the parent objective.",
+    "no_promise_without_event=When work requires app execution, do not only announce it in prose; emit the matching CodeAct or AGENT_ACTION_JSON immediately.",
+    "stop_policy=When the objective is satisfied or blocked by user permission, stop with a compact natural summary and no fake action event."
   ].join("\n");
 }
 
@@ -5462,8 +5472,8 @@ function brainRuntimeReminderManifest(): string {
     "boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction",
     "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
     brainPersonalityContextManifest(),
+    ingenLoopActionRhythmManifest(),
     `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
-    "codeact_loop_rule=For non-trivial work, Brain CodeActs are action events. Emit a short progress paragraph and the relevant CodeAct/action, then wait for host continuation instead of dumping a full final answer.",
     "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
   ].join("\n");
 }
@@ -5755,6 +5765,31 @@ function selfDirectedModeManifest(): string {
   ].join("\n");
 }
 
+function ingenProviderRuntimeContract(params: {
+  provider: "codex" | "claude" | "openrouter";
+  moduleId?: string;
+  userText?: string;
+  transcript?: TranscriptMessage[];
+}): string {
+  const transcript = params.transcript ?? panelsChatBottomState.transcript;
+  const userText = params.userText ?? "";
+  const moduleId = params.moduleId ?? "";
+  return [
+    "INGEN_PROVIDER_RUNTIME_CONTRACT v1",
+    `provider=${params.provider}`,
+    "language=match_user_prefer_french_when_unspecified",
+    "surface=local_InGen_assistant",
+    "rule=Do not invent runtime behavior, hidden app reasoning, execution status or tool results.",
+    brainRuntimeReminderManifest(),
+    brainIdentityMemoryManifest(),
+    workspaceContextManifest(),
+    agentActionContextManifest(userText, transcript),
+    brainSegmentManifest(),
+    selfDirectedModeManifest(),
+    webExplorerCodeActInstructions(moduleId)
+  ].filter(Boolean).join("\n");
+}
+
 function codexDirectInstructions(
   reasoning: string,
   moduleId = "",
@@ -5764,14 +5799,12 @@ function codexDirectInstructions(
   return [
     `@forge:direct:v1 p=Codex lang=fr tools=codeact effort=${reasoning}`,
     "style=francais naturel, concis; reponds directement.",
-    "Tu es la surface assistant locale d'InGen. N'invente pas de runtime ni de statut technique.",
-    brainRuntimeReminderManifest(),
-    brainIdentityMemoryManifest(),
-    workspaceContextManifest(),
-    agentActionContextManifest(userText, transcript),
-    brainSegmentManifest(),
-    selfDirectedModeManifest(),
-    webExplorerCodeActInstructions(moduleId)
+    ingenProviderRuntimeContract({
+      provider: "codex",
+      moduleId,
+      userText,
+      transcript
+    })
   ].filter(Boolean).join("\n");
 }
 
@@ -6470,13 +6503,12 @@ async function runClaudeCodePrint(
     .map((message) => `${message.role === "system" ? "System" : message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
     .join("\n\n");
   const promptedUserText = [
-    brainRuntimeReminderManifest(),
-    brainIdentityMemoryManifest(),
-    workspaceContextManifest(),
-    agentActionContextManifest(userText, transcript),
-    brainSegmentManifest(),
-    selfDirectedModeManifest(),
-    webExplorerCodeActInstructions(moduleId),
+    ingenProviderRuntimeContract({
+      provider: "claude",
+      moduleId,
+      userText,
+      transcript
+    }),
     history ? `Recent conversation:\n${history}` : "",
     `User:\n${userText}`
   ].filter(Boolean).join("\n\n");
@@ -6648,17 +6680,15 @@ async function runOpenRouterChatCompletion(
   const messages: OpenRouterMessage[] = [
     {
       role: "system",
-      content:
-        [
-          "You are InGen's local assistant surface. Answer clearly in the user's language without inventing runtime behavior.",
-          brainRuntimeReminderManifest(),
-          brainIdentityMemoryManifest(),
-          workspaceContextManifest(),
-          agentActionContextManifest(userText, transcript),
-          brainSegmentManifest(),
-          selfDirectedModeManifest(),
-          webExplorerCodeActInstructions(moduleId)
-        ].filter(Boolean).join("\n")
+      content: [
+        "You are InGen's local assistant surface. Answer clearly in the user's language.",
+        ingenProviderRuntimeContract({
+          provider: "openrouter",
+          moduleId,
+          userText,
+          transcript
+        })
+      ].join("\n")
     },
     ...recentConversationInput(userMessageId, transcript),
     {
