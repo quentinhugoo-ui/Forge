@@ -634,6 +634,10 @@ struct BangerNativeFrameTarget {
 struct BangerNativeHzbResources {
     _texture: wgpu::Texture,
     _views: Vec<wgpu::TextureView>,
+    _consumer_view: wgpu::TextureView,
+    _consumer_uniform_buffer: wgpu::Buffer,
+    _consumer_bind_group_layout: wgpu::BindGroupLayout,
+    _consumer_bind_group: wgpu::BindGroup,
     seed_pipeline: wgpu::ComputePipeline,
     reduce_pipeline: wgpu::ComputePipeline,
     seed_bind_group: wgpu::BindGroup,
@@ -642,6 +646,7 @@ struct BangerNativeHzbResources {
     width: u32,
     height: u32,
     _hzb_hash: String,
+    _consumer_hash: String,
 }
 
 fn main() {
@@ -3788,6 +3793,17 @@ fn create_banger_hzb_resources(
             })
         })
         .collect::<Vec<_>>();
+    let hzb_consumer_view = hzb_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("banger-native-child-host-hzb-consumer-pyramid-view"),
+        format: Some(wgpu::TextureFormat::R32Float),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(mip_count),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
     let depth_source_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("banger-native-child-host-depth-sampled-view"),
         format: Some(wgpu::TextureFormat::Depth32Float),
@@ -3895,6 +3911,51 @@ fn create_banger_hzb_resources(
             },
         ],
     });
+    let consumer_uniform = banger_create_mapped_buffer(
+        device,
+        "banger-native-child-host-hzb-consumer-uniform",
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        &banger_hzb_consumer_uniform_bytes(width, height, mip_count, allocation_index),
+    );
+    let consumer_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("banger-native-child-host-hzb-consumer-bind-group-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let consumer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-child-host-hzb-consumer-bind-group"),
+        layout: &consumer_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&hzb_consumer_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: consumer_uniform.as_entire_binding(),
+            },
+        ],
+    });
     let seed_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("banger-native-child-host-hzb-seed-pipeline-layout"),
         bind_group_layouts: &[Some(&seed_bind_group_layout)],
@@ -3964,6 +4025,10 @@ fn create_banger_hzb_resources(
     BangerNativeHzbResources {
         _texture: hzb_texture,
         _views: hzb_views,
+        _consumer_view: hzb_consumer_view,
+        _consumer_uniform_buffer: consumer_uniform,
+        _consumer_bind_group_layout: consumer_bind_group_layout,
+        _consumer_bind_group: consumer_bind_group,
         seed_pipeline,
         reduce_pipeline,
         seed_bind_group,
@@ -3972,6 +4037,7 @@ fn create_banger_hzb_resources(
         width,
         height,
         _hzb_hash: banger_hzb_resource_hash(width, height, mip_count, allocation_index),
+        _consumer_hash: banger_hzb_consumer_resource_hash(width, height, mip_count, allocation_index),
     }
 }
 
@@ -4017,6 +4083,52 @@ fn banger_hzb_resource_hash(width: u32, height: u32, mip_count: u32, allocation_
         format!("banger-hzb-resource-v1:{width}:{height}:{mip_count}:r32float:{allocation_index}")
             .as_bytes(),
     )
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_consumer_uniform_bytes(
+    width: u32,
+    height: u32,
+    mip_count: u32,
+    allocation_index: u32,
+) -> [u8; 16] {
+    banger_u32x4_bytes([width, height, mip_count, allocation_index])
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_consumer_resource_hash(
+    width: u32,
+    height: u32,
+    mip_count: u32,
+    allocation_index: u32,
+) -> String {
+    let consumer_shader_hash = sha256_hex(banger_hzb_consumer_compute_wgsl().as_bytes());
+    sha256_hex(
+        format!(
+            "banger-hzb-consumer-resource-v1:{width}:{height}:{mip_count}:r32float:textureload:{allocation_index}:{consumer_shader_hash}"
+        )
+        .as_bytes(),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hzb_consumer_compute_wgsl() -> &'static str {
+    r#"
+struct HzbConsumerUniform {
+    // x/y: mip 0 size, z: mip count, w: allocation index.
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var hzb_pyramid: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> hzb: HzbConsumerUniform;
+
+fn banger_hzb_load_furthest(pixel: vec2<u32>, mip: u32) -> f32 {
+    let safe_mip = min(mip, hzb.dims.z - 1u);
+    let mip_size = max(hzb.dims.xy >> vec2<u32>(safe_mip, safe_mip), vec2<u32>(1u, 1u));
+    let safe_pixel = min(pixel, mip_size - vec2<u32>(1u, 1u));
+    return textureLoad(hzb_pyramid, vec2<i32>(safe_pixel), i32(safe_mip)).x;
+}
+"#
 }
 
 #[cfg(target_os = "windows")]
@@ -4694,18 +4806,23 @@ fn banger_maps_first_visible_tile_gpu_resource(
 ) -> Result<BangerNativeSceneGpuResource, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
     let maps_render_space_transform = banger_maps_render_space_transform();
-    let selected_tile_id = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
+    let selected_records = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
         .into_iter()
         .take(banger_maps_visible_tile_batch_limit())
+        .collect::<Vec<_>>();
+    let selected_tile_id = selected_records
+        .iter()
         .map(|record| record.tile_id.as_str())
         .collect::<Vec<_>>()
         .join(",");
+    let (material_bytes, texture_staging_bytes) =
+        banger_maps_material_texture_resources_for_records(&selected_records)?;
     let mesh = banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(&ingest)?;
     Ok(banger_native_scene_gpu_resource_from_mesh_bytes(
         device,
         mesh,
-        None,
-        Vec::new(),
+        material_bytes,
+        texture_staging_bytes,
         (!selected_tile_id.is_empty()).then_some(selected_tile_id),
     ))
 }
@@ -4807,6 +4924,43 @@ fn banger_maps_render_mesh_for_record(
         }),
         _ => Err(format!("render mesh unsupported container {}", record.container)),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_material_texture_resources_for_records(
+    records: &[&BangerMapsContentDecodeRecord],
+) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), String> {
+    let mut material_resource_bytes = Vec::new();
+    let mut texture_staging_bytes = Vec::new();
+    for record in records {
+        let bytes = fs::read(&record.cache_path)
+            .map_err(|error| format!("{} resource read failed: {error}", record.tile_id))?;
+        let (gltf_value, bin_chunk) = match record.container {
+            "b3dm" => {
+                let (_, glb_bytes) = decode_banger_b3dm(&bytes)?;
+                let decoded = decode_banger_glb_full(glb_bytes)?;
+                (decoded.gltf_value, decoded.bin_chunk)
+            }
+            "glb" => {
+                let decoded = decode_banger_glb_full(&bytes)?;
+                (decoded.gltf_value, decoded.bin_chunk)
+            }
+            _ => continue,
+        };
+        let (_, materials, textures) = stage_banger_gltf_payload(&gltf_value, bin_chunk)?;
+        if let Some(bytes) = banger_maps_material_resource_bytes(&materials) {
+            material_resource_bytes.extend_from_slice(&bytes);
+        }
+        texture_staging_bytes.extend(banger_maps_texture_staging_resource_bytes(
+            &gltf_value,
+            bin_chunk,
+            &textures,
+        )?);
+    }
+    Ok((
+        (!material_resource_bytes.is_empty()).then_some(material_resource_bytes),
+        texture_staging_bytes,
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -6017,6 +6171,15 @@ mod tests {
         assert_eq!(mesh.instance_bytes.len(), 80);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
+        let selected_records = banger_maps_visible_draw_records(
+            &projection,
+            banger_maps_render_space_transform(),
+        );
+        let (material_bytes, texture_staging_bytes) =
+            banger_maps_material_texture_resources_for_records(&selected_records).unwrap();
+        assert_eq!(material_bytes.unwrap().len(), 2 * 32);
+        assert_eq!(texture_staging_bytes.len(), 2);
+        assert_eq!(texture_staging_bytes[0], vec![137, 80, 78, 71]);
     }
 
     #[test]
@@ -6103,8 +6266,16 @@ mod tests {
         assert_eq!(banger_hzb_mip_size(1280, 720, 1), [640, 360]);
         assert_eq!(banger_hzb_mip_size(1280, 720, 11), [1, 1]);
         assert_eq!(banger_hzb_resource_hash(1280, 720, 12, 1).len(), 64);
+        let consumer_uniform = banger_hzb_consumer_uniform_bytes(1280, 720, 12, 1);
+        assert_eq!(u32::from_le_bytes(consumer_uniform[0..4].try_into().unwrap()), 1280);
+        assert_eq!(u32::from_le_bytes(consumer_uniform[4..8].try_into().unwrap()), 720);
+        assert_eq!(u32::from_le_bytes(consumer_uniform[8..12].try_into().unwrap()), 12);
+        assert_eq!(u32::from_le_bytes(consumer_uniform[12..16].try_into().unwrap()), 1);
+        assert_eq!(banger_hzb_consumer_resource_hash(1280, 720, 12, 1).len(), 64);
         assert!(banger_hzb_seed_compute_wgsl().contains("texture_depth_2d"));
         assert!(banger_hzb_reduce_compute_wgsl().contains("texture_storage_2d<r32float, write>"));
+        assert!(banger_hzb_consumer_compute_wgsl().contains("textureLoad(hzb_pyramid"));
+        assert!(banger_hzb_consumer_compute_wgsl().contains("safe_mip"));
     }
 
     #[test]
