@@ -4734,6 +4734,7 @@ fn banger_maps_visible_draw_records<'a>(
     ingest: &'a BangerMapsRootIngestProjection,
     maps_render_space_transform: [f64; 16],
 ) -> Vec<&'a BangerMapsContentDecodeRecord> {
+    let camera = banger_maps_cpu_camera();
     let mut scored = ingest
         .content_decode
         .records
@@ -4741,9 +4742,10 @@ fn banger_maps_visible_draw_records<'a>(
         .filter(|record| record.error.is_none())
         .filter(|record| matches!(record.container, "b3dm" | "glb"))
         .map(|record| {
-            let score = banger_maps_visible_tile_score(record, ingest, maps_render_space_transform);
+            let score = banger_maps_visible_tile_score(record, ingest, maps_render_space_transform, &camera);
             (record, score)
         })
+        .filter(|(_, score)| *score > 0.0)
         .collect::<Vec<_>>();
     scored.sort_by(|(_, left), (_, right)| {
         right
@@ -4758,6 +4760,7 @@ fn banger_maps_visible_tile_score(
     record: &BangerMapsContentDecodeRecord,
     ingest: &BangerMapsRootIngestProjection,
     maps_render_space_transform: [f64; 16],
+    camera: &BangerMapsCpuCamera,
 ) -> f64 {
     let tile = ingest
         .traversal_seed
@@ -4767,35 +4770,91 @@ fn banger_maps_visible_tile_score(
     let world_transform =
         banger_mat4_mul_f64(maps_render_space_transform, record.tile_global_transform);
     let center = banger_transform_point64_f64(world_transform, [0.0, 0.0, 0.0]);
-    let camera = banger_maps_cpu_camera_position();
-    let target = [0.0_f64, -0.35, 2.5];
-    let forward = banger_vec3_normalize_f64([
-        target[0] - camera[0],
-        target[1] - camera[1],
-        target[2] - camera[2],
-    ]);
     let to_center = [
-        center[0] - camera[0],
-        center[1] - camera[1],
-        center[2] - camera[2],
+        center[0] - camera.eye[0],
+        center[1] - camera.eye[1],
+        center[2] - camera.eye[2],
     ];
-    let distance = banger_vec3_length_f64(to_center).max(0.001);
-    let facing = banger_vec3_dot_f64(forward, banger_vec3_normalize_f64(to_center));
     let geometric_error = tile.and_then(|tile| tile.geometric_error).unwrap_or(1.0).max(0.001);
-    let viewport_height = env::var("FORGE_BANGER_VIEWPORT_HEIGHT")
-        .ok()
-        .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or(1080.0);
-    let fovy = 58.0_f64.to_radians();
-    let screen_space_error = geometric_error * viewport_height / (2.0 * distance * (fovy * 0.5).tan());
-    let frustum_gate = if facing > -0.25 { 1.0 } else { 0.0 };
+    let radius = banger_maps_estimated_tile_radius(tile, geometric_error);
+    if !banger_maps_sphere_intersects_cpu_frustum(to_center, radius, camera) {
+        return 0.0;
+    }
+    let distance = banger_vec3_dot_f64(to_center, camera.forward).max(camera.near);
+    let screen_space_error =
+        geometric_error * camera.viewport_height / (2.0 * distance * (camera.fovy_radians * 0.5).tan());
     let depth_bias = tile.map(|tile| tile.depth as f64 * 0.001).unwrap_or(0.0);
-    frustum_gate * (screen_space_error + depth_bias)
+    screen_space_error + depth_bias
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_cpu_camera_position() -> [f64; 3] {
-    [19.5, 9.6, 26.0]
+struct BangerMapsCpuCamera {
+    eye: [f64; 3],
+    forward: [f64; 3],
+    right: [f64; 3],
+    up: [f64; 3],
+    fovy_radians: f64,
+    aspect: f64,
+    near: f64,
+    far: f64,
+    viewport_height: f64,
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_cpu_camera() -> BangerMapsCpuCamera {
+    let viewport_width = env::var("FORGE_BANGER_VIEWPORT_WIDTH")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1920.0);
+    let viewport_height = env::var("FORGE_BANGER_VIEWPORT_HEIGHT")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1080.0);
+    let eye = [19.5, 9.6, 26.0];
+    let target = [0.0_f64, -0.35, 2.5];
+    let forward = banger_vec3_normalize_f64([
+        target[0] - eye[0],
+        target[1] - eye[1],
+        target[2] - eye[2],
+    ]);
+    let right = banger_vec3_normalize_f64(banger_vec3_cross_f64(forward, [0.0, 1.0, 0.0]));
+    let up = banger_vec3_cross_f64(right, forward);
+    BangerMapsCpuCamera {
+        eye,
+        forward,
+        right,
+        up,
+        fovy_radians: 58.0_f64.to_radians(),
+        aspect: (viewport_width / viewport_height).clamp(0.25, 4.0),
+        near: 0.05,
+        far: 280.0,
+        viewport_height,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_estimated_tile_radius(tile: Option<&BangerMapsTraversalTile>, geometric_error: f64) -> f64 {
+    let depth_scale = tile.map(|tile| 1.0 / ((tile.depth + 1) as f64)).unwrap_or(1.0);
+    (geometric_error.max(1.0) * depth_scale * 2.0).clamp(1.0, 4096.0)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_sphere_intersects_cpu_frustum(
+    to_center: [f64; 3],
+    radius: f64,
+    camera: &BangerMapsCpuCamera,
+) -> bool {
+    let depth = banger_vec3_dot_f64(to_center, camera.forward);
+    if depth + radius < camera.near || depth - radius > camera.far {
+        return false;
+    }
+    let tan_y = (camera.fovy_radians * 0.5).tan();
+    let tan_x = tan_y * camera.aspect;
+    let x = banger_vec3_dot_f64(to_center, camera.right).abs();
+    let y = banger_vec3_dot_f64(to_center, camera.up).abs();
+    x <= depth.max(camera.near) * tan_x + radius && y <= depth.max(camera.near) * tan_y + radius
 }
 
 #[cfg(target_os = "windows")]
@@ -4806,6 +4865,15 @@ fn banger_vec3_length_f64(value: [f64; 3]) -> f64 {
 #[cfg(target_os = "windows")]
 fn banger_vec3_dot_f64(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_vec3_cross_f64(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 #[cfg(target_os = "windows")]
@@ -6450,6 +6518,80 @@ mod tests {
         let ordered = banger_maps_visible_draw_records(&projection, banger_identity_mat4_f64());
         assert_eq!(ordered[0].tile_id, "high");
         assert_eq!(ordered[1].tile_id, "low");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn rejects_maps_draw_records_outside_camera_frustum() {
+        let camera = banger_maps_cpu_camera();
+        let behind_center = [
+            camera.eye[0] - camera.forward[0] * 20.0,
+            camera.eye[1] - camera.forward[1] * 20.0,
+            camera.eye[2] - camera.forward[2] * 20.0,
+        ];
+        let hidden_tile = BangerMapsTraversalTile {
+            tile_id: "hidden".to_string(),
+            parent_tile_id: None,
+            depth: 0,
+            child_count: 0,
+            geometric_error: Some(1.0),
+            refine: "REPLACE".to_string(),
+            bounding_volume_kind: "sphere".to_string(),
+            bounding_volume_hash: sha256_hex(b"hidden"),
+            transform_hash: sha256_hex(b"hidden_transform"),
+            global_transform: banger_translation_mat4_f64(behind_center),
+            content_uris: vec!["hidden.glb".to_string()],
+            priority_key: 1.0,
+        };
+        let mut hidden_record = test_maps_decode_record("hidden");
+        hidden_record.tile_global_transform = banger_translation_mat4_f64(behind_center);
+        let projection = BangerMapsRootIngestProjection {
+            ok: true,
+            schema: "test",
+            source: "test",
+            root_tileset_url: "file:///test/tileset.json".to_string(),
+            cache_dir: "cache".to_string(),
+            cache_path: "cache/root.json".to_string(),
+            cache_hit: false,
+            network_fetch_attempted: false,
+            root_hash: sha256_hex(b"root"),
+            root_byte_count: 0,
+            tile_count: 1,
+            content_uri_count: 1,
+            geometric_error: Some(1.0),
+            asset_version: "1.1".to_string(),
+            traversal_seed_hash: sha256_hex(b"traversal"),
+            traversal_seed: BangerMapsTraversalSeed {
+                schema: "test",
+                priority_model: "test",
+                max_queued_tiles: 1,
+                queued_tile_count: 1,
+                total_tile_count: 1,
+                total_content_uri_count: 1,
+                deepest_level: 0,
+                plan_hash: sha256_hex(b"plan"),
+                tiles: vec![hidden_tile],
+            },
+            content_cache: empty_banger_maps_content_cache(std::path::Path::new("cache")),
+            content_decode: BangerMapsContentDecodeProjection {
+                schema: "test",
+                enabled: true,
+                decoded_content_count: 1,
+                failed_content_count: 0,
+                b3dm_count: 0,
+                glb_count: 1,
+                gltf_count: 0,
+                total_glb_byte_count: 0,
+                total_bin_chunk_byte_count: 0,
+                decode_manifest_hash: sha256_hex(b"decode"),
+                records: vec![hidden_record],
+            },
+            gpu_staging: empty_banger_maps_gpu_staging(),
+            verifier: banger_maps_root_ingest_verifier(),
+            error: None,
+        };
+        let ordered = banger_maps_visible_draw_records(&projection, banger_identity_mat4_f64());
+        assert!(ordered.is_empty());
     }
 
     #[test]
