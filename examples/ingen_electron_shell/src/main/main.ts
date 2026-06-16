@@ -418,11 +418,43 @@ if (process.platform === "win32") {
 }
 
 const bypassSingleInstanceLock = process.env.INGEN_ELECTRON_BYPASS_SINGLE_INSTANCE_LOCK === "1";
+const LIVE_RENDERER_URL_ARG_PREFIX = "--ingen-live-renderer-url=";
+
+function liveRendererUrlFromCommandLine(commandLine: readonly string[]): string | null {
+  const argument = commandLine.find((entry) => entry.startsWith(LIVE_RENDERER_URL_ARG_PREFIX));
+  if (!argument) {
+    return null;
+  }
+  const url = argument.slice(LIVE_RENDERER_URL_ARG_PREFIX.length).trim();
+  if (!/^http:\/\/127\.0\.0\.1:\d{2,5}(?:\/.*)?$/.test(url)) {
+    console.warn("Ignoring non-local live renderer URL from launcher.", { url });
+    return null;
+  }
+  return url;
+}
+
+function loadLiveRendererUrlIntoPrimaryWindow(url: string): boolean {
+  if (!primaryWindow || primaryWindow.isDestroyed()) {
+    return false;
+  }
+  void primaryWindow.loadURL(url).then(() => {
+    restorePrimaryWindow();
+  }).catch((error: unknown) => {
+    console.error("Failed to switch existing InGen window to live renderer URL.", { url, error });
+    restorePrimaryWindow();
+  });
+  return true;
+}
+
 const hasSingleInstanceLock = eventTextLabMode || bypassSingleInstanceLock || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else if (!eventTextLabMode && !bypassSingleInstanceLock) {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
+    const liveRendererUrl = liveRendererUrlFromCommandLine(commandLine);
+    if (liveRendererUrl && loadLiveRendererUrlIntoPrimaryWindow(liveRendererUrl)) {
+      return;
+    }
     restorePrimaryWindow();
   });
 }

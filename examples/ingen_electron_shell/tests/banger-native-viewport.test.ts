@@ -204,8 +204,8 @@ describe("Banger native viewport contract", () => {
     expect(launcherSource).toContain("if errorlevel 1 set NEED_ELECTRON_REBUILD=1");
     expect(launcherSource).toContain('if "%NEED_ELECTRON_REBUILD%"=="0" (');
     expect(launcherSource).toContain("Preparing freshness checks without interrupting the active window");
-    expect(launcherSource).toContain("set RESTART_RUNNING_APP_AFTER_REBUILD=0");
-    expect(launcherSource).toContain("Active InGen window preserved");
-    expect(launcherSource).not.toContain("Stop-Process -Id $_.ProcessId -Force");
+    expect(launcherSource).toContain("Build work will prepare the latest master output before the active app is touched.");
+    expect(launcherSource).toContain("Active InGen window detected. Sending live master renderer URL");
+    expect(launcherSource).toContain("Active InGen window is running old main/native code. Restarting it after the fresh master output is ready.");
   });
 });

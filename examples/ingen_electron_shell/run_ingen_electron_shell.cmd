@@ -12,6 +12,12 @@ set FORGE_FRONT_SLICE_PANELS_CHAT_BOTTOM=electron
 set FORGE_CARGO_SESSION=ingen-electron-shortcut
 set REPO_ROOT=%~dp0..\..
 for %%I in ("%REPO_ROOT%") do set REPO_ROOT=%%~fI
+set CANONICAL_REPO_ROOT=C:\Users\quent\Documents\GitHub\Forge
+if /I not "%REPO_ROOT%"=="%CANONICAL_REPO_ROOT%" (
+  echo This desktop launcher is pinned to %CANONICAL_REPO_ROOT%. Delegating to the canonical master launcher. >> "%LOG%"
+  start "" /D "%CANONICAL_REPO_ROOT%\examples\ingen_electron_shell" "%CANONICAL_REPO_ROOT%\examples\ingen_electron_shell\run_ingen_electron_shell.cmd" >> "%LOG%" 2>>&1
+  exit /b 0
+)
 set FORGE_ELECTRON_BACKEND_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-shortcut\debug\ingen_electron_backend_bridge.exe
 set FORGE_WINDOWS_TASKBAR_HELPER_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-shortcut\debug\ingen_windows_taskbar_helper.exe
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
@@ -67,7 +73,7 @@ if "%APP_ALREADY_RUNNING%"=="1" (
   if "%NEED_ELECTRON_REBUILD%"=="0" (
     echo InGen is already running. Preparing freshness checks without interrupting the active window. >> "%LOG%"
   )
-  echo InGen is already running. Any build work will prepare the next launch; the active app will not be restarted. >> "%LOG%"
+  echo InGen is already running. Build work will prepare the latest master output before the active app is touched. >> "%LOG%"
   set RESTART_RUNNING_APP_AFTER_REBUILD=0
 )
 
@@ -116,6 +122,8 @@ if "%NEED_BACKEND_REBUILD%"=="1" (
     ) else (
       goto fail
     )
+  ) else (
+    if "%APP_ALREADY_RUNNING%"=="1" set RESTART_RUNNING_APP_AFTER_REBUILD=1
   )
 )
 
@@ -128,6 +136,8 @@ if "%NEED_TASKBAR_HELPER_REBUILD%"=="1" (
     ) else (
       goto fail
     )
+  ) else (
+    if "%APP_ALREADY_RUNNING%"=="1" set RESTART_RUNNING_APP_AFTER_REBUILD=1
   )
 )
 
@@ -152,6 +162,7 @@ if "%NEED_ELECTRON_REBUILD%"=="1" (
   echo Building Electron main process... >> "%LOG%"
   call npx.cmd tsc -p tsconfig.electron.json >> "%LOG%" 2>>&1
   if errorlevel 1 goto electron_build_failed
+  if "%APP_ALREADY_RUNNING%"=="1" set RESTART_RUNNING_APP_AFTER_REBUILD=1
 
   if not exist "%~dp0src\shared\generated\forge-ipc.generated.ts" (
     echo Generating Electron IPC contract... >> "%LOG%"
@@ -179,6 +190,7 @@ if "%NEED_RENDERER_REBUILD%"=="1" (
   echo Building Electron renderer... >> "%LOG%"
   call npx.cmd vite build >> "%LOG%" 2>>&1
   if errorlevel 1 goto electron_build_failed
+  if "%APP_ALREADY_RUNNING%"=="1" set RESTART_RUNNING_APP_AFTER_REBUILD=1
 ) else if not "!VITE_DEV_SERVER_URL!"=="" (
   echo Using Vite renderer dev server. Set FORGE_ELECTRON_DESKTOP_DEV_SERVER=0 to use built renderer assets. >> "%LOG%"
 ) else (
@@ -197,9 +209,19 @@ if exist "%~dp0dist-electron\main\main.js" (
 goto fail
 
 :start_electron
+if "%APP_ALREADY_RUNNING%"=="1" if "%RESTART_RUNNING_APP_AFTER_REBUILD%"=="1" (
+  echo Active InGen window is running old main/native code. Restarting it after the fresh master output is ready. >> "%LOG%"
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $targets = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') }; foreach ($target in $targets) { Stop-Process -Id $target.ProcessId -Force -ErrorAction SilentlyContinue }" >> "%LOG%" 2>>&1
+  set APP_ALREADY_RUNNING=0
+)
 if "%APP_ALREADY_RUNNING%"=="1" (
-  echo Active InGen window preserved. Focusing the existing app instead of restarting it. >> "%LOG%"
-  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
+  if not "!VITE_DEV_SERVER_URL!"=="" (
+    echo Active InGen window detected. Sending live master renderer URL to the running app: !VITE_DEV_SERVER_URL! >> "%LOG%"
+    start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" "--ingen-live-renderer-url=!VITE_DEV_SERVER_URL!" >> "%LOG%" 2>>&1
+  ) else (
+    echo Active InGen window preserved. Focusing the existing app instead of restarting it. >> "%LOG%"
+    C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
+  )
   if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%\owner.txt" del /Q "%BUILD_LOCK%\owner.txt" 2>nul
   if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%" rmdir "%BUILD_LOCK%" 2>nul
   exit /b 0
