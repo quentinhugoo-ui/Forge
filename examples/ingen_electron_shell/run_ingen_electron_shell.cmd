@@ -77,12 +77,17 @@ if "%APP_ALREADY_RUNNING%"=="1" (
 
 2>nul mkdir "%BUILD_LOCK%"
 if errorlevel 1 (
-  echo Another InGen launcher is already preparing this workspace build. Waiting briefly, then starting the fresh build output. >> "%LOG%"
+  echo Another InGen launcher is already preparing this workspace build. Waiting briefly, then continuing freshness checks. >> "%LOG%"
   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $deadline = (Get-Date).AddSeconds(180); while ((Test-Path -LiteralPath $lock) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }; if (Test-Path -LiteralPath $lock) { exit 1 }"
-  goto start_electron
+  if errorlevel 1 goto fail
+  2>nul mkdir "%BUILD_LOCK%"
+  if not errorlevel 1 set OWN_BUILD_LOCK=1
+  if "%OWN_BUILD_LOCK%"=="0" echo Build lock was released but could not be reacquired; continuing without interrupting the active app. >> "%LOG%"
+  goto build_lock_ready
 )
 set OWN_BUILD_LOCK=1
 
+:build_lock_ready
 if not exist "%FORGE_ELECTRON_BACKEND_EXE%" set NEED_BACKEND_REBUILD=1
 if not exist "%FORGE_WINDOWS_TASKBAR_HELPER_EXE%" set NEED_TASKBAR_HELPER_REBUILD=1
 if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_BACKEND_REBUILD=1

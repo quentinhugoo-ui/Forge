@@ -48,6 +48,13 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).not.toContain("Stop-Process -Id $_.ProcessId -Force");
   });
 
+  it("continues through Vite freshness checks after waiting for another launcher lock", () => {
+    expect(launcherSource).toContain("Waiting briefly, then continuing freshness checks");
+    expect(launcherSource).toContain(":build_lock_ready");
+    expect(launcherSource).toContain("if errorlevel 1 goto fail");
+    expect(launcherSource).not.toContain("Waiting briefly, then starting the fresh build output");
+  });
+
   it("keeps the Vite helper local, deterministic, and reusable by workspace", () => {
     expect(viteServerSource).toContain("node_modules\\vite\\bin\\vite.js");
     expect(viteServerSource).toContain("Invoke-WebRequest -UseBasicParsing -Uri \"http://127.0.0.1:$Port/\"");
