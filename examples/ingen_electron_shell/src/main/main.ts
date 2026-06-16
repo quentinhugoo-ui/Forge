@@ -15601,6 +15601,74 @@ function restoreChatSessionToCanvas(sessionId: string): boolean {
   return true;
 }
 
+function archiveMessageToTranscriptMessage(message: ChatArchiveMessage): TranscriptMessage {
+  return {
+    id: message.turnId,
+    role: message.role,
+    text: message.text,
+    attachments: (message.attachments ?? []).map(publicArchiveAttachmentPreview),
+    proofHash: message.proofHash
+  };
+}
+
+function archiveTranscriptAroundTurn(session: ChatArchiveSession, turnId: string): TranscriptMessage[] {
+  const messages = session.messages
+    .filter((message) => !isInternalTranscriptMessage(message))
+    .map(archiveMessageToTranscriptMessage);
+  if (!turnId || messages.length <= 48) {
+    return messages;
+  }
+  const focusIndex = messages.findIndex((message) => message.id === turnId);
+  if (focusIndex < 0) {
+    return messages.slice(-48);
+  }
+  const start = Math.max(0, Math.min(focusIndex - 18, messages.length - 48));
+  return messages.slice(start, start + 48);
+}
+
+function openArchiveSessionInParallel(sessionId: string, turnId: string, parallelSessionIndex: number): boolean {
+  const boundedIndex = Math.max(1, Math.min(3, parallelSessionIndex));
+  if (sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID || sessionId === SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID) {
+    ensureSearchArchiveLoopDemoSession();
+  }
+  const archiveSession = chatArchiveSessions.get(sessionId);
+  if (!archiveSession) {
+    return false;
+  }
+  for (const message of archiveSession.messages) {
+    for (const attachment of message.attachments ?? []) {
+      rememberArchiveAttachmentPreview(attachment);
+    }
+  }
+
+  const primarySession = ensureActiveChatSession("Parallel 1: New session", { markWorking: false });
+  const groupId = primarySession.parallelGroupId || `parallel-${primarySession.sessionId}`;
+  primarySession.parallelGroupId = groupId;
+  primarySession.parallelLaneIndex = 0;
+  primarySession.label = `Parallel 1: ${cleanParallelLaneLabel(primarySession.label)}`;
+  if (!parallelChatLanes.has(0)) {
+    parallelChatLanes.set(0, {
+      sessionId: primarySession.sessionId,
+      transcript: panelsChatBottomState.transcript,
+      groupId
+    });
+  }
+
+  const archiveItem = materializeOpenedChatSession(sessionId, archiveSession.section);
+  archiveItem.parallelGroupId = groupId;
+  archiveItem.parallelLaneIndex = boundedIndex;
+  archiveItem.parallelLaneCount = Math.max(boundedIndex + 1, 2);
+  archiveItem.parallelPeerSessionIds = [primarySession.sessionId];
+  parallelChatLanes.set(boundedIndex, {
+    sessionId,
+    transcript: archiveTranscriptAroundTurn(archiveSession, turnId),
+    groupId
+  });
+  updateParallelGroupMetadata(groupId);
+  sidebarState.recentSessionId = groupId;
+  return true;
+}
+
 async function searchChatArchive(request: SearchArchiveRequest): Promise<SearchArchiveResult> {
   await loadChatArchive();
   return searchArchiveSessions(Array.from(chatArchiveSessions.values()), request);
@@ -18097,6 +18165,19 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       }
       panelsChatBottomState.chatText = "";
       panelsChatBottomState.uploadEditTargetId = "";
+      break;
+    }
+    case "open_archive_parallel": {
+      await loadChatArchive();
+      const sessionId = typeof command.sessionId === "string" ? command.sessionId.trim() : "";
+      const turnId = typeof command.turnId === "string" ? command.turnId.trim() : "";
+      const parallelSessionIndex =
+        typeof command.parallelSessionIndex === "number" && Number.isInteger(command.parallelSessionIndex)
+          ? command.parallelSessionIndex
+          : 1;
+      if (sessionId) {
+        openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex);
+      }
       break;
     }
     case "stop_assistant":
