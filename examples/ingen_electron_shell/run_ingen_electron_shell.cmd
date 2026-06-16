@@ -17,15 +17,11 @@ set FORGE_WINDOWS_TASKBAR_HELPER_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-s
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
 set INGEN_ELECTRON_LEGACY_USER_DATA_DIR=%APPDATA%\InGen
 set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\InGenRuntime
-set FORGE_ELECTRON_BUILD_WIDGET_SCRIPT=%~dp0scripts\launcher-build-progress-widget.ps1
 set FORGE_ELECTRON_VITE_SERVER_SCRIPT=%~dp0scripts\ensure-vite-dev-server.ps1
 for /f %%H in ('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\').ToLowerInvariant(); $bytes = [Text.Encoding]::UTF8.GetBytes($root); $sha = [Security.Cryptography.SHA256]::Create(); $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').Substring(0, 12).ToLowerInvariant(); $sha.Dispose(); Write-Output $hash"') do set WORKSPACE_BUILD_ID=%%H
 if "%WORKSPACE_BUILD_ID%"=="" set WORKSPACE_BUILD_ID=default
 set BUILD_LOCK=C:\tmp\ingen-electron-launch-build-%WORKSPACE_BUILD_ID%.lock
 set VITE_DEV_SERVER_URL_FILE=C:\tmp\ingen-vite-%WORKSPACE_BUILD_ID%.url
-if not "%FORGE_ELECTRON_BUILD_WIDGET%"=="0" if exist "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" (
-  start "" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Sta -File "%FORGE_ELECTRON_BUILD_WIDGET_SCRIPT%" -LogPath "%LOG%" -ElectronPath "%FORGE_ELECTRON_EXE%" -ShellRoot "%~dp0" -BuildLockPath "%BUILD_LOCK%"
-)
 set NEED_BACKEND_REBUILD=0
 set NEED_TASKBAR_HELPER_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
@@ -76,16 +72,24 @@ if "%APP_ALREADY_RUNNING%"=="1" (
 )
 
 2>nul mkdir "%BUILD_LOCK%"
-if errorlevel 1 (
-  echo Another InGen launcher is already preparing this workspace build. Waiting briefly, then continuing freshness checks. >> "%LOG%"
-  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $deadline = (Get-Date).AddSeconds(180); while ((Test-Path -LiteralPath $lock) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }; if (Test-Path -LiteralPath $lock) { exit 1 }"
-  if errorlevel 1 goto fail
+if not errorlevel 1 goto own_build_lock
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $marker = Join-Path $lock 'owner.txt'; if (Test-Path -LiteralPath $lock) { $stale = -not (Test-Path -LiteralPath $marker); if (-not $stale) { $item = Get-Item -LiteralPath $marker -ErrorAction SilentlyContinue; $stale = $item -and $item.LastWriteTimeUtc -lt (Get-Date).ToUniversalTime().AddMinutes(-20) }; if ($stale) { Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue; exit 0 } }; exit 1" >> "%LOG%" 2>>&1
+if not errorlevel 1 (
+  echo Removed stale InGen launcher build lock. >> "%LOG%"
   2>nul mkdir "%BUILD_LOCK%"
-  if not errorlevel 1 set OWN_BUILD_LOCK=1
-  if "%OWN_BUILD_LOCK%"=="0" echo Build lock was released but could not be reacquired; continuing without interrupting the active app. >> "%LOG%"
-  goto build_lock_ready
+  if not errorlevel 1 goto own_build_lock
 )
+echo Another InGen launcher is already preparing this workspace build. Waiting briefly, then continuing freshness checks. >> "%LOG%"
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$lock = '%BUILD_LOCK%'; $deadline = (Get-Date).AddSeconds(180); while ((Test-Path -LiteralPath $lock) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }; if (Test-Path -LiteralPath $lock) { exit 1 }"
+if errorlevel 1 goto fail
+2>nul mkdir "%BUILD_LOCK%"
+if not errorlevel 1 goto own_build_lock
+echo Build lock was released but could not be reacquired; continuing without interrupting the active app. >> "%LOG%"
+goto build_lock_ready
+
+:own_build_lock
 set OWN_BUILD_LOCK=1
+echo %DATE% %TIME%>"%BUILD_LOCK%\owner.txt"
 
 :build_lock_ready
 if not exist "%FORGE_ELECTRON_BACKEND_EXE%" set NEED_BACKEND_REBUILD=1

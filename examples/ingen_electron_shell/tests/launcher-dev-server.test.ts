@@ -52,6 +52,9 @@ describe("desktop launcher Vite dev server fast path", () => {
   it("continues through Vite freshness checks after waiting for another launcher lock", () => {
     expect(launcherSource).toContain("Waiting briefly, then continuing freshness checks");
     expect(launcherSource).toContain(":build_lock_ready");
+    expect(launcherSource).toContain(":own_build_lock");
+    expect(launcherSource).toContain("owner.txt");
+    expect(launcherSource).toContain("Removed stale InGen launcher build lock.");
     expect(launcherSource).toContain("if errorlevel 1 goto fail");
     expect(launcherSource).not.toContain("Waiting briefly, then starting the fresh build output");
   });
