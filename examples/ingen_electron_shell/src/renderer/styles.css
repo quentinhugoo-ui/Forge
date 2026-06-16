@@ -6956,7 +6956,7 @@ ol.assistantText__list li::before {
   gap: 6px;
   width: min(560px, 100%);
   min-width: 0;
-  margin: -22px 0 2px 8px;
+  margin: -16px 0 2px 8px;
   padding: 0 0 2px;
   color: color-mix(in oklab, var(--forge-text), transparent 6%);
   overflow-x: hidden;
