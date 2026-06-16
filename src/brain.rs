@@ -80,7 +80,7 @@ pub const BRAIN_RUST_PORT_ADAPTER_COMMAND: &str = "/rust_port_adapter_";
 pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
 pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. This is a strict two-phase CodeAct: first emit bare /searcharchive_ to receive SEARCHARCHIVE_TEMPLATE_RESULT, then fill that template exactly and include template_proof_hash before execution. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one internal prefix tag /rename_session_<short title>_ at the start of the first assistant response. The app strips the tag before display and uses the title everywhere the session name appears. The event is internal: never mention, explain, echo, format or discuss the rename in visible prose. Use a relevant, grammatically correct 2-5 word title.";
-pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ for fresh sourced answers, URL discovery, verification, comparisons, recent facts or visual enrichment. Returns compact WEBSEARCH_RESULT: answer, citations, ranked URLs, provider trace and optional media candidates; no raw pages or downloads. Set media_intent when images/video/audio source pages would improve a known answer, then use /scrapers_ for Markdown, media URLs/artifacts or structured extraction. Prefer over /googleweb_ for cited answers; respect attribution, privacy, paywalls and budget.";
+pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ for fresh sourced answers, URL discovery, verification, comparisons, recent facts or visual enrichment. This is a strict two-phase CodeAct: first emit bare /websearch_ to receive WEBSEARCH_TEMPLATE_RESULT, then fill that template exactly and include template_proof_hash before execution. WEBSEARCH_RESULT returns answer, citations, ranked URLs, provider trace and optional media candidates; no raw pages or downloads. Set media_intent when images/video/audio source pages would improve a known answer, then use /scrapers_ for Markdown, media URLs/artifacts or structured extraction. Prefer over /googleweb_ for cited answers; respect attribution, privacy, paywalls and budget.";
 pub const BRAIN_CODEDOCS_COMMAND_DESCRIPTION: &str = "Use /codedocs_ to query Context7 MCP for current, version-aware library/API documentation, setup instructions and code examples before coding against external dependencies. Prefer it after /codingbrain_ and before guessing imports, configuration, API signatures, migration steps or framework behavior. It is read-only documentation retrieval, not general web search and not page scraping; use /websearch_ first when the library, package or official docs URL is unknown.";
 pub const BRAIN_GITHUB_MCP_COMMAND_DESCRIPTION: &str = "Use /github_ for GitHub MCP workflows on remote repositories: repo context, code search, issues, pull requests, Actions/CI, releases and PR discussion triage. Prefer read-only operations by default; issue/PR comments, labels, branch changes or other writes require explicit user confirmation and a scoped GitHub token. Use local workspace actions for files already on disk.";
 pub const BRAIN_WEBACT_COMMAND_DESCRIPTION: &str = "Use /webact_ for Playwright MCP browser automation when the task needs page interaction rather than a source-backed search answer: navigate, snapshot, click, type, screenshot, evaluate or verify a user flow. Prefer it for live web app testing, forms and visual checks. Never submit purchases, account changes, messages or sensitive forms without explicit user confirmation.";
@@ -815,10 +815,17 @@ pub fn brain_websearch_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_WEBSEARCH_COMMAND.to_string(),
         section: "websearch".to_string(),
-        purpose: "Run hosted OpenAI/Claude web-search discovery for current source-backed research. Use this when the answer needs fresh sources, ranked URLs, citations, verification, recent docs/releases/prices/laws/news/papers, web-grounded image discovery, media source pages, or URL candidates for /scrapers_. The host should return WEBSEARCH_RESULT as a compact answer/URL/citation/media manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing action cycle with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
+        purpose: "Strict two-phase hosted OpenAI/Claude web-search discovery for current source-backed research. First emit bare /websearch_ to receive WEBSEARCH_TEMPLATE_RESULT. Then fill the returned template with query, goal, provider/domain/freshness/media controls and template_proof_hash. The host then returns WEBSEARCH_RESULT as a compact answer/ranked URLs/citation/media manifest with provider trace and suggested scrape URLs, not raw HTML or full page text. After WEBSEARCH_RESULT, the agent should continue the existing action cycle with /scrapers_ when target URLs are known and the user needs Markdown, media, artifacts or structured extraction.".to_string(),
         result_schema: BRAIN_WEBSEARCH_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "template_proof_hash".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Copy the sha256 value returned by WEBSEARCH_TEMPLATE_RESULT. The host refuses execution without it, so /websearch_ cannot be used as a shortcut.".to_string(),
+            },
             BrainCodeActTemplateSlot {
                 name: "query".to_string(),
                 required: true,
@@ -3559,10 +3566,16 @@ mod tests {
         assert_eq!(template.result_schema, BRAIN_WEBSEARCH_RESULT_SCHEMA);
         assert_eq!(template.proof_hash.len(), 40);
         assert!(template.purpose.contains("OpenAI/Claude"));
+        assert!(template.purpose.contains("WEBSEARCH_TEMPLATE_RESULT"));
         assert!(template.purpose.contains("ranked URLs"));
         assert!(template.purpose.contains("/scrapers_"));
         assert!(template.purpose.contains("not raw HTML"));
         assert!(template.purpose.contains("existing action cycle"));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "template_proof_hash"
+                && slot.required
+                && slot.description.contains("WEBSEARCH_TEMPLATE_RESULT")
+        }));
         assert!(template.slots.iter().any(|slot| slot.name == "query" && slot.required));
         assert!(template.slots.iter().any(|slot| {
             slot.name == "providers"

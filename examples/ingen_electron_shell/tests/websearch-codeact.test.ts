@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   extractWebSearchCodeAct,
   parseWebSearchCodeAct,
+  readWebSearchCodeAct,
   renderWebSearchCodeActResult,
+  renderWebSearchTemplateResult,
   WEBSEARCH_COMMAND,
   WEBSEARCH_RESULT_SCHEMA,
   type WebSearchBridgeResult
@@ -30,6 +32,37 @@ afterEach(() => {
 });
 
 describe("WebSearch CodeAct", () => {
+  it("requires the two-phase template handoff before execution", () => {
+    const templateStep = readWebSearchCodeAct("/websearch_");
+
+    expect(templateStep?.kind).toBe("template");
+    expect(templateStep?.kind === "template" ? renderWebSearchTemplateResult(templateStep.result) : "").toContain("WEBSEARCH_TEMPLATE_RESULT");
+
+    const directFilled = readWebSearchCodeAct('/websearch_ query="latest OpenAI web search API docs"');
+    expect(directFilled?.kind).toBe("template");
+    expect(directFilled?.kind === "template" ? directFilled.result.reason : "").toBe("template_required");
+
+    const rendered = templateStep?.kind === "template" ? renderWebSearchTemplateResult(templateStep.result) : "";
+    const proofHash = rendered.match(/template_proof_hash=sha256:([a-f0-9]{64})/)?.[1];
+    expect(proofHash).toMatch(/^[a-f0-9]{64}$/);
+
+    const request = readWebSearchCodeAct([
+      `/websearch_ template_proof_hash="sha256:${proofHash}"`,
+      'query="latest OpenAI web search API docs"',
+      'goal="url_discovery_for_scrapers"',
+      'providers="both_parallel"'
+    ].join(" "));
+
+    expect(request?.kind).toBe("request");
+    expect(request?.kind === "request" ? request.request : undefined).toMatchObject({
+      command: WEBSEARCH_COMMAND,
+      templateProofHash: proofHash,
+      query: "latest OpenAI web search API docs",
+      goal: "url_discovery_for_scrapers",
+      providers: "both_parallel"
+    });
+  });
+
   it("parses a production /websearch_ request with provider and domain controls", () => {
     const request = parseWebSearchCodeAct([
       '/websearch_ query="latest OpenAI web search API docs"',
@@ -165,6 +198,7 @@ describe("WebSearch CodeAct", () => {
     expect(mainSource).toContain("executeAssistantWebSearchCodeAct");
     expect(mainSource).toContain("runWebSearchBridge");
     expect(mainSource).toContain("renderWebSearchCodeActResult");
+    expect(mainSource).toContain("renderWebSearchTemplateResult");
     expect(mainSource).toContain("command === BRAIN_WEBSEARCH_COMMAND");
     expect(mainSource).toContain("next = await executeAssistantWebSearchCodeAct(next)");
   });
