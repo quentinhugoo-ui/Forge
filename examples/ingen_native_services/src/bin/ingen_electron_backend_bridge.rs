@@ -551,16 +551,17 @@ impl BangerMapsTilesetContract {
                 root_ingestion_stage: "3d_tiles_root_json_manifest_ingestion",
                 traversal_stage: "screen_space_error_priority_queue_with_tile_budget",
                 content_decode_stage: "b3dm_glb_gltf_mesh_material_texture_decode",
-                georeference_stage: "wgs84_ecef_to_enu_floating_origin",
+                georeference_stage: "wgs84_ecef_to_enu_floating_origin_live",
                 gpu_submission_stage: "first_visible_tile_indexed_mesh_wgpu_draw_ready",
                 visual_fallback: "none_direct_tiles_required",
-                blocker: "tileset_transform_material_texture_streaming_required_for_full_cesium_parity",
+                blocker: "screen_space_error_traversal_material_texture_streaming_required_for_full_cesium_parity",
             },
             georeference: BangerMapsGeoreference {
                 ellipsoid: "WGS84",
-                origin_latitude: 37.42207,
-                origin_longitude: -122.08409,
-                origin_height_meters: 0.0,
+                origin_latitude: banger_env_f64("FORGE_BANGER_MAPS_ORIGIN_LATITUDE").unwrap_or(37.42207),
+                origin_longitude: banger_env_f64("FORGE_BANGER_MAPS_ORIGIN_LONGITUDE").unwrap_or(-122.08409),
+                origin_height_meters: banger_env_f64("FORGE_BANGER_MAPS_ORIGIN_HEIGHT_METERS")
+                    .unwrap_or(0.0) as f32,
                 world_origin_policy: "CesiumGeoreference_style_floating_origin",
             },
             traversal: BangerMapsTraversalPolicy {
@@ -4061,6 +4062,7 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
         return Err(format!("Banger Maps native render blocked at GPU staging: {first_error}"));
     }
     let mut primitive_errors = Vec::new();
+    let maps_render_space_transform = banger_maps_render_space_transform();
     for record in ingest.content_decode.records.iter().filter(|record| record.error.is_none()) {
         let bytes = match fs::read(&record.cache_path) {
             Ok(bytes) => bytes,
@@ -4076,6 +4078,7 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
                     banger_maps_render_mesh_from_gltf(
                         &decoded.gltf_value,
                         decoded.bin_chunk,
+                        maps_render_space_transform,
                         record.tile_global_transform,
                     )
                 }),
@@ -4084,6 +4087,7 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
                     banger_maps_render_mesh_from_gltf(
                         &decoded.gltf_value,
                         decoded.bin_chunk,
+                        maps_render_space_transform,
                         record.tile_global_transform,
                     )
                 }),
@@ -4106,6 +4110,7 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
 fn banger_maps_render_mesh_from_gltf(
     gltf: &Value,
     bin_chunk: &[u8],
+    maps_render_space_transform: [f64; 16],
     tile_global_transform: [f64; 16],
 ) -> Result<BangerRenderMeshBytes, String> {
     let meshes = gltf
@@ -4120,7 +4125,10 @@ fn banger_maps_render_mesh_from_gltf(
             .copied()
             .unwrap_or_else(banger_identity_mat4_f64);
         let render_transform = banger_mat4_mul_f64(
-            banger_mat4_mul_f64(tile_global_transform, banger_gltf_y_up_to_z_up_matrix_f64()),
+            banger_mat4_mul_f64(
+                banger_mat4_mul_f64(maps_render_space_transform, tile_global_transform),
+                banger_gltf_y_up_to_z_up_matrix_f64(),
+            ),
             gltf_node_transform,
         );
         for (primitive_index, primitive) in primitives.iter().enumerate() {
@@ -4225,36 +4233,19 @@ fn banger_maps_position_accessor_to_render_vertices(
         .into_iter()
         .map(|position| banger_transform_point_f64(render_transform, position))
         .collect::<Vec<_>>();
-    let mut min = [f64::INFINITY; 3];
-    let mut max = [f64::NEG_INFINITY; 3];
-    for position in &positions {
-        for axis in 0..3 {
-            min[axis] = min[axis].min(position[axis]);
-            max[axis] = max[axis].max(position[axis]);
-        }
-    }
-    let center = [
-        (min[0] + max[0]) * 0.5,
-        (min[1] + max[1]) * 0.5,
-        (min[2] + max[2]) * 0.5,
-    ];
-    let extent = [
-        (max[0] - min[0]).abs(),
-        (max[1] - min[1]).abs(),
-        (max[2] - min[2]).abs(),
-    ];
-    let scale = extent.into_iter().fold(0.0_f64, f64::max).max(1.0);
     let mut bytes = Vec::with_capacity(positions.len() * 24);
     for position in positions {
-        let normalized = [
-            ((position[0] - center[0]) / scale * 2.8) as f32,
-            ((position[1] - center[1]) / scale * 2.8) as f32,
-            ((position[2] - center[2]) / scale * 2.8) as f32,
-        ];
+        if !position.iter().all(|value| value.is_finite()) {
+            return Err("render position became non-finite after ECEF/ENU transform".to_string());
+        }
+        let mapped = [position[0] as f32, position[1] as f32, position[2] as f32];
+        if !mapped.iter().all(|value| value.is_finite()) {
+            return Err("render position exceeded f32 range after ECEF/ENU transform".to_string());
+        }
         for value in [
-            normalized[0],
-            normalized[1],
-            normalized[2],
+            mapped[0],
+            mapped[1],
+            mapped[2],
             material_color[0],
             material_color[1],
             material_color[2],
@@ -4393,6 +4384,93 @@ fn banger_transform_hash(transform: &[f64; 16]) -> String {
     )
 }
 
+fn banger_env_f64(name: &str) -> Option<f64> {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite())
+}
+
+fn banger_maps_render_space_transform() -> [f64; 16] {
+    let contract = BangerMapsTilesetContract::google_photorealistic_default();
+    let meters_to_world =
+        banger_env_f64("FORGE_BANGER_MAPS_METERS_TO_WORLD_SCALE").unwrap_or(0.04);
+    banger_mat4_mul_f64(
+        banger_scale_mat4_f64([meters_to_world, meters_to_world, meters_to_world]),
+        banger_ecef_to_enu_matrix(&contract.georeference),
+    )
+}
+
+fn banger_wgs84_geodetic_to_ecef(
+    latitude_degrees: f64,
+    longitude_degrees: f64,
+    height_meters: f64,
+) -> [f64; 3] {
+    let semi_major_axis = 6_378_137.0_f64;
+    let flattening = 1.0 / 298.257_223_563_f64;
+    let eccentricity_squared = flattening * (2.0 - flattening);
+    let latitude = latitude_degrees.to_radians();
+    let longitude = longitude_degrees.to_radians();
+    let sin_latitude = latitude.sin();
+    let cos_latitude = latitude.cos();
+    let sin_longitude = longitude.sin();
+    let cos_longitude = longitude.cos();
+    let prime_vertical_radius =
+        semi_major_axis / (1.0 - eccentricity_squared * sin_latitude * sin_latitude).sqrt();
+    [
+        (prime_vertical_radius + height_meters) * cos_latitude * cos_longitude,
+        (prime_vertical_radius + height_meters) * cos_latitude * sin_longitude,
+        (prime_vertical_radius * (1.0 - eccentricity_squared) + height_meters) * sin_latitude,
+    ]
+}
+
+fn banger_ecef_to_enu_matrix(georeference: &BangerMapsGeoreference) -> [f64; 16] {
+    let origin = banger_wgs84_geodetic_to_ecef(
+        georeference.origin_latitude,
+        georeference.origin_longitude,
+        georeference.origin_height_meters as f64,
+    );
+    let latitude = georeference.origin_latitude.to_radians();
+    let longitude = georeference.origin_longitude.to_radians();
+    let sin_latitude = latitude.sin();
+    let cos_latitude = latitude.cos();
+    let sin_longitude = longitude.sin();
+    let cos_longitude = longitude.cos();
+    let east = [-sin_longitude, cos_longitude, 0.0];
+    let north = [
+        -sin_latitude * cos_longitude,
+        -sin_latitude * sin_longitude,
+        cos_latitude,
+    ];
+    let up = [
+        cos_latitude * cos_longitude,
+        cos_latitude * sin_longitude,
+        sin_latitude,
+    ];
+    [
+        east[0],
+        north[0],
+        up[0],
+        0.0,
+        east[1],
+        north[1],
+        up[1],
+        0.0,
+        east[2],
+        north[2],
+        up[2],
+        0.0,
+        -dot3(east, origin),
+        -dot3(north, origin),
+        -dot3(up, origin),
+        1.0,
+    ]
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
 fn banger_gltf_y_up_to_z_up_matrix_f64() -> [f64; 16] {
     [
         1.0, 0.0, 0.0, 0.0,
@@ -4417,9 +4495,13 @@ fn banger_mat4_mul_f64(a: [f64; 16], b: [f64; 16]) -> [f64; 16] {
 }
 
 fn banger_transform_point_f64(matrix: [f64; 16], point: [f32; 3]) -> [f64; 3] {
-    let x = point[0] as f64;
-    let y = point[1] as f64;
-    let z = point[2] as f64;
+    banger_transform_point64_f64(matrix, [point[0] as f64, point[1] as f64, point[2] as f64])
+}
+
+fn banger_transform_point64_f64(matrix: [f64; 16], point: [f64; 3]) -> [f64; 3] {
+    let x = point[0];
+    let y = point[1];
+    let z = point[2];
     let w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
     let inv_w = if w.abs() > f64::EPSILON { 1.0 / w } else { 1.0 };
     [
@@ -4891,6 +4973,7 @@ mod tests {
             &decoded.gltf_value,
             decoded.bin_chunk,
             banger_identity_mat4_f64(),
+            banger_identity_mat4_f64(),
         )
         .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
@@ -4991,7 +5074,11 @@ mod tests {
         );
         assert_eq!(
             contract.native_streamer.blocker,
-            "tileset_transform_material_texture_streaming_required_for_full_cesium_parity"
+            "screen_space_error_traversal_material_texture_streaming_required_for_full_cesium_parity"
+        );
+        assert_eq!(
+            contract.native_streamer.georeference_stage,
+            "wgs84_ecef_to_enu_floating_origin_live"
         );
         assert_eq!(contract.native_streamer.visual_fallback, "none_direct_tiles_required");
     }
@@ -5015,6 +5102,7 @@ mod tests {
         let error = match banger_maps_render_mesh_from_gltf(
             &decoded.gltf_value,
             decoded.bin_chunk,
+            banger_identity_mat4_f64(),
             banger_identity_mat4_f64(),
         ) {
             Ok(_) => panic!("line primitive unexpectedly entered triangle draw path"),
@@ -5171,13 +5259,67 @@ mod tests {
         let tile_transform = banger_translation_mat4_f64([10.0, 0.0, 0.0]);
         let gltf_node_transform = banger_translation_mat4_f64([0.0, 2.0, 0.0]);
         let render_transform = banger_mat4_mul_f64(
-            banger_mat4_mul_f64(tile_transform, banger_gltf_y_up_to_z_up_matrix_f64()),
+            banger_mat4_mul_f64(
+                banger_mat4_mul_f64(banger_identity_mat4_f64(), tile_transform),
+                banger_gltf_y_up_to_z_up_matrix_f64(),
+            ),
             gltf_node_transform,
         );
         let transformed = banger_transform_point_f64(render_transform, [0.0, 1.0, 0.0]);
         assert!((transformed[0] - 10.0).abs() < 0.0001);
         assert!((transformed[1] - 0.0).abs() < 0.0001);
         assert!((transformed[2] - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn maps_wgs84_origin_maps_to_zero_in_enu_frame() {
+        let georeference = BangerMapsGeoreference {
+            ellipsoid: "WGS84",
+            origin_latitude: 0.0,
+            origin_longitude: 0.0,
+            origin_height_meters: 0.0,
+            world_origin_policy: "test",
+        };
+        let origin_ecef = banger_wgs84_geodetic_to_ecef(0.0, 0.0, 0.0);
+        let local =
+            banger_transform_point64_f64(banger_ecef_to_enu_matrix(&georeference), origin_ecef);
+        assert!(local[0].abs() < 0.000001);
+        assert!(local[1].abs() < 0.000001);
+        assert!(local[2].abs() < 0.000001);
+    }
+
+    #[test]
+    fn maps_ecef_to_enu_preserves_local_axes() {
+        let georeference = BangerMapsGeoreference {
+            ellipsoid: "WGS84",
+            origin_latitude: 0.0,
+            origin_longitude: 0.0,
+            origin_height_meters: 0.0,
+            world_origin_policy: "test",
+        };
+        let origin_ecef = banger_wgs84_geodetic_to_ecef(0.0, 0.0, 0.0);
+        let ecef_to_enu = banger_ecef_to_enu_matrix(&georeference);
+        let east = banger_transform_point64_f64(
+            ecef_to_enu,
+            [origin_ecef[0], origin_ecef[1] + 10.0, origin_ecef[2]],
+        );
+        let north = banger_transform_point64_f64(
+            ecef_to_enu,
+            [origin_ecef[0], origin_ecef[1], origin_ecef[2] + 10.0],
+        );
+        let up = banger_transform_point64_f64(
+            ecef_to_enu,
+            [origin_ecef[0] + 10.0, origin_ecef[1], origin_ecef[2]],
+        );
+        assert!((east[0] - 10.0).abs() < 0.000001);
+        assert!(east[1].abs() < 0.000001);
+        assert!(east[2].abs() < 0.000001);
+        assert!((north[1] - 10.0).abs() < 0.000001);
+        assert!(north[0].abs() < 0.000001);
+        assert!(north[2].abs() < 0.000001);
+        assert!((up[2] - 10.0).abs() < 0.000001);
+        assert!(up[0].abs() < 0.000001);
+        assert!(up[1].abs() < 0.000001);
     }
 
     #[test]
@@ -5316,6 +5458,7 @@ mod tests {
                 &decoded.gltf_value,
                 decoded.bin_chunk,
                 banger_identity_mat4_f64(),
+                banger_identity_mat4_f64(),
             )
             .unwrap();
             assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
@@ -5351,6 +5494,7 @@ mod tests {
             let mesh = banger_maps_render_mesh_from_gltf(
                 &decoded.gltf_value,
                 decoded.bin_chunk,
+                banger_identity_mat4_f64(),
                 banger_identity_mat4_f64(),
             )
             .unwrap();
