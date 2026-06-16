@@ -97,10 +97,12 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("--banger-maps-content-cache");
     expect(nativeBridgeSource).toContain("--banger-maps-content-decode");
     expect(nativeBridgeSource).toContain("--banger-maps-gpu-stage");
+    expect(nativeBridgeSource).toContain("--banger-maps-native-render-gate");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_root_ingest.v1");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_content_cache.v1");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_content_decode.v1");
     expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_gpu_staging.v1");
+    expect(nativeBridgeSource).toContain("forge.banger.native_3d_tiles_render_gate.v1");
     expect(nativeBridgeSource).toContain("VERTEX|COPY_DST");
     expect(nativeBridgeSource).toContain("INDEX|COPY_DST");
     expect(nativeBridgeSource).toContain("TEXTURE_BINDING|COPY_DST");
@@ -132,7 +134,8 @@ describe("Banger native viewport contract", () => {
     expect(nativeBridgeSource).toContain("3d_tiles_root_json_manifest_ingestion");
     expect(nativeBridgeSource).toContain("b3dm_glb_gltf_mesh_material_texture_decode");
     expect(nativeBridgeSource).toContain("wgs84_ecef_to_enu_floating_origin");
-    expect(nativeBridgeSource).toContain("native_gltf_material_texture_submission_not_promoted");
+    expect(nativeBridgeSource).toContain("tile_content_or_gltf_upload_required_before_visible_maps_draw");
+    expect(nativeBridgeSource).toContain("none_direct_tiles_required");
     expect(nativeBridgeSource).toContain("CesiumGeoreference_style_floating_origin");
     expect(nativeBridgeSource).toContain("screen_space_error");
     expect(nativeBridgeSource).toContain("visible_on_screen");

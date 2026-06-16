@@ -371,6 +371,29 @@ struct BangerMapsGpuStagingProjection {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct BangerMapsNativeRenderGateProjection {
+    ok: bool,
+    schema: &'static str,
+    root_ok: bool,
+    root_error_code: Option<String>,
+    root_error_message: Option<String>,
+    requested_content_count: usize,
+    fetched_content_count: usize,
+    decoded_content_count: usize,
+    staged_content_count: usize,
+    drawable_mesh_ready: bool,
+    draw_source: Option<&'static str>,
+    vertex_buffer_byte_count: usize,
+    index_buffer_byte_count: usize,
+    instance_buffer_byte_count: usize,
+    draw_index_count: u32,
+    draw_instance_count: u32,
+    render_gate_hash: String,
+    blocker: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct BangerMapsGpuStageRecord {
     tile_id: String,
     source_uri: String,
@@ -516,14 +539,14 @@ impl BangerMapsTilesetContract {
             native_streamer: BangerMapsNative3DTilesStreamer {
                 schema: "forge.banger.native_3d_tiles_streamer.v1",
                 authority: "banger_native_engine",
-                status: "contract_ready_visual_fallback_active",
+                status: "contract_ready_direct_tiles_required",
                 root_ingestion_stage: "3d_tiles_root_json_manifest_ingestion",
                 traversal_stage: "screen_space_error_priority_queue_with_tile_budget",
                 content_decode_stage: "b3dm_glb_gltf_mesh_material_texture_decode",
                 georeference_stage: "wgs84_ecef_to_enu_floating_origin",
                 gpu_submission_stage: "meshlet_or_indexed_mesh_upload_pending",
-                visual_fallback: "cesiumjs_photorealistic_tiles_until_native_submission_promoted",
-                blocker: "native_gltf_material_texture_submission_not_promoted",
+                visual_fallback: "none_direct_tiles_required",
+                blocker: "tile_content_or_gltf_upload_required_before_visible_maps_draw",
             },
             georeference: BangerMapsGeoreference {
                 ellipsoid: "WGS84",
@@ -617,6 +640,11 @@ fn main() {
     if env::args().any(|argument| argument == "--banger-maps-gpu-stage") {
         let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
         println!("{}", serde_json::to_string(&ingest).expect("serialize banger maps gpu staging"));
+        return;
+    }
+    if env::args().any(|argument| argument == "--banger-maps-native-render-gate") {
+        let gate = banger_maps_native_render_gate();
+        println!("{}", serde_json::to_string(&gate).expect("serialize banger maps native render gate"));
         return;
     }
     if env::args().any(|argument| argument == "--banger-maps-content-decode") {
@@ -871,11 +899,21 @@ fn banger_maps_root_ingest(
     force_content_decode: Option<bool>,
     force_gpu_staging: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
-    let url = env::var("FORGE_BANGER_MAPS_ROOT_URL")
+    let Some(url) = env::var("FORGE_BANGER_MAPS_ROOT_URL")
         .ok()
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "https://forge-6cai.onrender.com/api/banger/google-tiles/root.json".to_string());
+        .filter(|value| !value.is_empty()) else {
+            let cache_dir = banger_maps_cache_dir();
+            let message = "Set FORGE_BANGER_MAPS_ROOT_URL to a direct Google 3D Tiles root URL or a local tileset.json; no Render/proxy fallback is used.".to_string();
+            return failed_banger_maps_root_ingest(
+                "",
+                &cache_dir,
+                &cache_dir.join("missing-root-url.root.json"),
+                "missing_direct_maps_root_url",
+                message,
+                false,
+            );
+        };
     let cache_dir = banger_maps_cache_dir();
     let url_hash = sha256_hex(url.as_bytes());
     let cache_path = cache_dir.join(format!("{url_hash}.root.json"));
@@ -889,34 +927,14 @@ fn banger_maps_root_ingest(
         Err(message) => match fs::read(&cache_path) {
             Ok(bytes) => (bytes, "cache_after_network_error", true, None),
             Err(_) => {
-                let proof_hash = sha256_hex(format!("{url}:{message}").as_bytes());
-                return BangerMapsRootIngestProjection {
-                    ok: false,
-                    schema: "forge.banger.native_3d_tiles_root_ingest.v1",
-                    source: "network_error_no_cache",
-                    root_tileset_url: redact_url_secret(&url),
-                    cache_dir: cache_dir.display().to_string(),
-                    cache_path: cache_path.display().to_string(),
-                    cache_hit: false,
-                    network_fetch_attempted: true,
-                    root_hash: String::new(),
-                    root_byte_count: 0,
-                    tile_count: 0,
-                    content_uri_count: 0,
-                    geometric_error: None,
-                    asset_version: String::new(),
-                    traversal_seed_hash: proof_hash.clone(),
-                    traversal_seed: empty_banger_maps_traversal_seed(),
-                    content_cache: empty_banger_maps_content_cache(&cache_dir),
-                    content_decode: empty_banger_maps_content_decode(),
-                    gpu_staging: empty_banger_maps_gpu_staging(),
-                    verifier: banger_maps_root_ingest_verifier(),
-                    error: Some(BangerNativeError {
-                        code: banger_maps_root_error_code(&message),
-                        message,
-                        proof_hash,
-                    }),
-                };
+                return failed_banger_maps_root_ingest(
+                    &url,
+                    &cache_dir,
+                    &cache_path,
+                    banger_maps_root_error_code(&message),
+                    message,
+                    true,
+                );
             }
         },
     };
@@ -932,6 +950,44 @@ fn banger_maps_root_ingest(
         force_content_decode,
         force_gpu_staging,
     )
+}
+
+fn failed_banger_maps_root_ingest(
+    url: &str,
+    cache_dir: &std::path::Path,
+    cache_path: &std::path::Path,
+    code: &'static str,
+    message: String,
+    network_fetch_attempted: bool,
+) -> BangerMapsRootIngestProjection {
+    let proof_hash = sha256_hex(format!("{url}:{code}:{message}").as_bytes());
+    BangerMapsRootIngestProjection {
+        ok: false,
+        schema: "forge.banger.native_3d_tiles_root_ingest.v1",
+        source: if network_fetch_attempted { "network_error_no_cache" } else { "missing_direct_root_url" },
+        root_tileset_url: redact_url_secret(url),
+        cache_dir: cache_dir.display().to_string(),
+        cache_path: cache_path.display().to_string(),
+        cache_hit: false,
+        network_fetch_attempted,
+        root_hash: String::new(),
+        root_byte_count: 0,
+        tile_count: 0,
+        content_uri_count: 0,
+        geometric_error: None,
+        asset_version: String::new(),
+        traversal_seed_hash: proof_hash.clone(),
+        traversal_seed: empty_banger_maps_traversal_seed(),
+        content_cache: empty_banger_maps_content_cache(cache_dir),
+        content_decode: empty_banger_maps_content_decode(),
+        gpu_staging: empty_banger_maps_gpu_staging(),
+        verifier: banger_maps_root_ingest_verifier(),
+        error: Some(BangerNativeError {
+            code,
+            message,
+            proof_hash,
+        }),
+    }
 }
 
 fn banger_maps_cache_dir() -> PathBuf {
@@ -2622,7 +2678,7 @@ fn run_banger_native_host(
     surface.configure(&device, &config);
 
     let clear_color = [0.015, 0.018, 0.024, 1.0];
-    let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode, &scene_kind);
+    let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode, &scene_kind)?;
     let mut frame_target_allocation_count = 1u32;
     let mut surface_resize_count = 0u32;
     let mut frame_target = create_banger_frame_target(
@@ -2955,7 +3011,7 @@ fn create_banger_first_scene_pipeline(
     present_mode: wgpu::PresentMode,
     alpha_mode: wgpu::CompositeAlphaMode,
     scene_kind: &str,
-) -> BangerNativeScenePipeline {
+) -> Result<BangerNativeScenePipeline, String> {
     let shader_source = banger_native_first_scene_wgsl();
     let shader_source_hash = sha256_hex(shader_source.as_bytes());
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2969,7 +3025,7 @@ fn create_banger_first_scene_pipeline(
         mapped_at_creation: false,
     });
     let mesh = if scene_kind == "maps_sphere" {
-        banger_maps_first_tile_render_mesh_bytes().unwrap_or_else(banger_maps_sphere_render_mesh_bytes)
+        banger_maps_first_tile_render_mesh_bytes()?
     } else {
         BangerRenderMeshBytes {
             vertex_bytes: banger_cube_vertex_bytes(),
@@ -3142,7 +3198,7 @@ fn create_banger_first_scene_pipeline(
         )
         .as_bytes(),
     );
-    BangerNativeScenePipeline {
+    Ok(BangerNativeScenePipeline {
         render_pipeline,
         uniform_buffer,
         bind_group,
@@ -3159,7 +3215,7 @@ fn create_banger_first_scene_pipeline(
         depth_format: wgpu::TextureFormat::Depth24Plus,
         shader_source_hash,
         render_pipeline_hash,
-    }
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -3268,23 +3324,146 @@ struct BangerRenderMeshBytes {
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_sphere_render_mesh_bytes() -> BangerRenderMeshBytes {
-    BangerRenderMeshBytes {
-        vertex_bytes: banger_sphere_vertex_bytes(24, 48),
-        index_bytes: banger_sphere_index_bytes(24, 48),
-        instance_bytes: banger_maps_sphere_instance_bytes(),
-        source: "banger_maps_sphere_fallback",
+fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
+    let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
+    let root_error_code = ingest.error.as_ref().map(|error| error.code.to_string());
+    let root_error_message = ingest.error.as_ref().map(|error| error.message.clone());
+    let mesh_result = banger_maps_first_tile_render_mesh_bytes_from_ingest(&ingest);
+    let (drawable_mesh_ready, draw_source, vertex_buffer_byte_count, index_buffer_byte_count, instance_buffer_byte_count, draw_index_count, draw_instance_count, blocker) =
+        match mesh_result {
+            Ok(mesh) => {
+                let draw_index_count = (mesh.index_bytes.len() / 2) as u32;
+                let draw_instance_count = (mesh.instance_bytes.len() / 80) as u32;
+                (
+                    true,
+                    Some(mesh.source),
+                    mesh.vertex_bytes.len(),
+                    mesh.index_bytes.len(),
+                    mesh.instance_bytes.len(),
+                    draw_index_count,
+                    draw_instance_count,
+                    None,
+                )
+            }
+            Err(error) => (false, None, 0, 0, 0, 0, 0, Some(error)),
+        };
+    let render_gate_hash = sha256_hex(
+        format!(
+            "{}:{}:{}:{}:{}:{}:{}:{}",
+            ingest.root_hash,
+            ingest.content_cache.cache_manifest_hash,
+            ingest.content_decode.decode_manifest_hash,
+            ingest.gpu_staging.upload_plan_hash,
+            drawable_mesh_ready,
+            draw_source.unwrap_or("none"),
+            draw_index_count,
+            blocker.as_deref().unwrap_or("")
+        )
+        .as_bytes(),
+    );
+    BangerMapsNativeRenderGateProjection {
+        ok: ingest.ok && drawable_mesh_ready,
+        schema: "forge.banger.native_3d_tiles_render_gate.v1",
+        root_ok: ingest.ok,
+        root_error_code,
+        root_error_message,
+        requested_content_count: ingest.content_cache.requested_content_count,
+        fetched_content_count: ingest.content_cache.fetched_content_count,
+        decoded_content_count: ingest.content_decode.decoded_content_count,
+        staged_content_count: ingest.gpu_staging.staged_content_count,
+        drawable_mesh_ready,
+        draw_source,
+        vertex_buffer_byte_count,
+        index_buffer_byte_count,
+        instance_buffer_byte_count,
+        draw_index_count,
+        draw_instance_count,
+        render_gate_hash,
+        blocker,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
+    BangerMapsNativeRenderGateProjection {
+        ok: false,
+        schema: "forge.banger.native_3d_tiles_render_gate.v1",
+        root_ok: false,
+        root_error_code: Some("unsupported_platform".to_string()),
+        root_error_message: Some("Banger native render gate currently requires the Windows wgpu path.".to_string()),
+        requested_content_count: 0,
+        fetched_content_count: 0,
+        decoded_content_count: 0,
+        staged_content_count: 0,
+        drawable_mesh_ready: false,
+        draw_source: None,
+        vertex_buffer_byte_count: 0,
+        index_buffer_byte_count: 0,
+        instance_buffer_byte_count: 0,
+        draw_index_count: 0,
+        draw_instance_count: 0,
+        render_gate_hash: sha256_hex(b"unsupported_banger_maps_native_render_gate_platform"),
+        blocker: Some("Banger native render gate currently requires the Windows wgpu path.".to_string()),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_first_tile_render_mesh_bytes() -> Option<BangerRenderMeshBytes> {
+fn banger_maps_first_tile_render_mesh_bytes() -> Result<BangerRenderMeshBytes, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
-    if !ingest.ok || ingest.gpu_staging.staged_content_count == 0 {
-        return None;
+    banger_maps_first_tile_render_mesh_bytes_from_ingest(&ingest)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
+    ingest: &BangerMapsRootIngestProjection,
+) -> Result<BangerRenderMeshBytes, String> {
+    if !ingest.ok {
+        let error = ingest
+            .error
+            .as_ref()
+            .map(|error| format!("{}: {}", error.code, error.message))
+            .unwrap_or_else(|| "root ingest failed without error detail".to_string());
+        return Err(format!("Banger Maps native render blocked at root ingest: {error}"));
     }
+    if ingest.content_cache.requested_content_count == 0 {
+        return Err("Banger Maps native render blocked: root tileset exposes no tile content URI".to_string());
+    }
+    if ingest.content_cache.fetched_content_count == 0 && ingest.content_cache.cache_hit_count == 0 {
+        let first_error = ingest
+            .content_cache
+            .records
+            .iter()
+            .find_map(|record| record.error.as_deref())
+            .unwrap_or("no tile content fetched or cached");
+        return Err(format!("Banger Maps native render blocked at tile content fetch/cache: {first_error}"));
+    }
+    if ingest.content_decode.decoded_content_count == 0 {
+        let first_error = ingest
+            .content_decode
+            .records
+            .iter()
+            .find_map(|record| record.error.as_deref())
+            .unwrap_or("no tile content decoded into b3dm/glb/gltf");
+        return Err(format!("Banger Maps native render blocked at b3dm/glTF decode: {first_error}"));
+    }
+    if ingest.gpu_staging.staged_content_count == 0 {
+        let first_error = ingest
+            .gpu_staging
+            .records
+            .iter()
+            .find_map(|record| record.error.as_deref())
+            .unwrap_or("no decoded tile staged into vertex/index/material/texture buffers");
+        return Err(format!("Banger Maps native render blocked at GPU staging: {first_error}"));
+    }
+    let mut primitive_errors = Vec::new();
     for record in ingest.content_decode.records.iter().filter(|record| record.error.is_none()) {
-        let bytes = fs::read(&record.cache_path).ok()?;
+        let bytes = match fs::read(&record.cache_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                primitive_errors.push(format!("{} read failed: {error}", record.tile_id));
+                continue;
+            }
+        };
         let candidate = match record.container {
             "b3dm" => decode_banger_b3dm(&bytes)
                 .and_then(|(_, glb_bytes)| {
@@ -3296,10 +3475,16 @@ fn banger_maps_first_tile_render_mesh_bytes() -> Option<BangerRenderMeshBytes> {
             _ => Err(format!("render mesh unsupported container {}", record.container)),
         };
         if let Ok(mesh) = candidate {
-            return Some(mesh);
+            return Ok(mesh);
+        }
+        if let Err(error) = candidate {
+            primitive_errors.push(format!("{}: {error}", record.tile_id));
         }
     }
-    None
+    Err(format!(
+        "Banger Maps native render blocked: no drawable glTF primitive after staging ({})",
+        primitive_errors.join("; ")
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -3528,69 +3713,6 @@ fn banger_cube_index_bytes() -> Vec<u8> {
     let mut bytes = Vec::with_capacity(indices.len() * 2);
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
-    }
-    bytes
-}
-
-#[cfg(target_os = "windows")]
-fn banger_sphere_vertex_bytes(lat_segments: u16, lon_segments: u16) -> Vec<u8> {
-    let lat_segments = lat_segments.max(3);
-    let lon_segments = lon_segments.max(6);
-    let mut bytes = Vec::with_capacity(((lat_segments as usize + 1) * (lon_segments as usize + 1)) * 24);
-    for lat in 0..=lat_segments {
-        let v = lat as f32 / lat_segments as f32;
-        let theta = v * std::f32::consts::PI;
-        let y = theta.cos();
-        let radius = theta.sin();
-        for lon in 0..=lon_segments {
-            let u = lon as f32 / lon_segments as f32;
-            let phi = u * std::f32::consts::TAU;
-            let x = radius * phi.cos();
-            let z = radius * phi.sin();
-            let land = ((phi * 2.7).sin() + (theta * 4.1).cos() + (phi * 0.7 + theta * 1.3).sin()) > 0.55;
-            let polar = y.abs() > 0.82;
-            let color = if polar {
-                [0.86, 0.92, 0.94]
-            } else if land {
-                [0.20 + 0.18 * v, 0.52 + 0.12 * (u * 6.0).sin().abs(), 0.24]
-            } else {
-                [0.06, 0.32 + 0.10 * (v * 3.0).sin().abs(), 0.58 + 0.10 * u]
-            };
-            for value in [x, y, z, color[0], color[1], color[2]] {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-    }
-    bytes
-}
-
-#[cfg(target_os = "windows")]
-fn banger_sphere_index_bytes(lat_segments: u16, lon_segments: u16) -> Vec<u8> {
-    let lat_segments = lat_segments.max(3);
-    let lon_segments = lon_segments.max(6);
-    let row = lon_segments + 1;
-    let mut bytes = Vec::with_capacity(lat_segments as usize * lon_segments as usize * 12);
-    for lat in 0..lat_segments {
-        for lon in 0..lon_segments {
-            let a = lat * row + lon;
-            let b = a + row;
-            let indices = [a, b, a + 1, a + 1, b, b + 1];
-            for index in indices {
-                bytes.extend_from_slice(&index.to_le_bytes());
-            }
-        }
-    }
-    bytes
-}
-
-#[cfg(target_os = "windows")]
-fn banger_maps_sphere_instance_bytes() -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(80);
-    for value in banger_model_matrix([0.0, -0.15, 0.0], [2.25, 2.25, 2.25]) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    for value in [1.0_f32, 1.0, 1.0, 3.0] {
-        bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
 }
@@ -3883,21 +4005,6 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn packs_banger_maps_sphere_mesh_for_native_draws() {
-        let vertex_bytes = banger_sphere_vertex_bytes(24, 48);
-        let index_bytes = banger_sphere_index_bytes(24, 48);
-        let instance_bytes = banger_maps_sphere_instance_bytes();
-        assert_eq!(vertex_bytes.len(), 25 * 49 * 24);
-        assert_eq!(index_bytes.len(), 24 * 48 * 6 * 2);
-        assert_eq!(instance_bytes.len(), 80);
-        assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 2.25);
-        assert_eq!(f32::from_le_bytes(instance_bytes[76..80].try_into().unwrap()), 3.0);
-        assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
-        assert_eq!(sha256_hex(&index_bytes).len(), 64);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
     fn converts_staged_gltf_into_banger_render_mesh_bytes() {
         let glb = test_glb_bytes();
         let decoded = decode_banger_glb_full(&glb).unwrap();
@@ -3912,6 +4019,79 @@ mod tests {
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gates_maps_native_render_on_real_tile_content_not_sphere_fallback() {
+        let root = serde_json::json!({
+            "asset": { "version": "1.1" },
+            "root": {
+                "geometricError": 1.0,
+                "content": { "uri": "tile.glb" }
+            }
+        });
+        let bytes = serde_json::to_vec(&root).unwrap();
+        let cache_dir = env::temp_dir().join(format!(
+            "forge-banger-render-gate-empty-test-{}",
+            sha256_hex(format!("{:?}", SystemTime::now()).as_bytes())
+        ));
+        fs::create_dir_all(&cache_dir).unwrap();
+        let projection = summarize_banger_maps_root(
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=secret",
+            &cache_dir,
+            &cache_dir.join("root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+            Some(false),
+            Some(false),
+            Some(false),
+        );
+        let error = match banger_maps_first_tile_render_mesh_bytes_from_ingest(&projection) {
+            Ok(_) => panic!("Maps native render gate unexpectedly accepted missing tile content"),
+            Err(error) => error,
+        };
+        assert!(error.contains("tile content fetch/cache"));
+        assert!(!error.contains("sphere"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn promotes_cached_b3dm_to_drawable_maps_render_gate_mesh() {
+        let cache_dir = env::temp_dir().join(format!(
+            "forge-banger-render-gate-b3dm-test-{}",
+            sha256_hex(format!("{:?}", SystemTime::now()).as_bytes())
+        ));
+        let source_dir = cache_dir.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let root_path = source_dir.join("tileset.json");
+        let content_path = source_dir.join("tile.b3dm");
+        fs::write(&content_path, test_b3dm_bytes()).unwrap();
+        fs::write(
+            &root_path,
+            br#"{"asset":{"version":"1.1"},"root":{"geometricError":1,"content":{"uri":"tile.b3dm"}}}"#,
+        )
+        .unwrap();
+        let bytes = fs::read(&root_path).unwrap();
+        let projection = summarize_banger_maps_root(
+            root_path.to_str().unwrap(),
+            &cache_dir,
+            &cache_dir.join("root.json"),
+            &bytes,
+            "test",
+            false,
+            None,
+            Some(true),
+            Some(true),
+            Some(true),
+        );
+        let mesh = banger_maps_first_tile_render_mesh_bytes_from_ingest(&projection).unwrap();
+        assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
+        assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+        assert_eq!(mesh.index_bytes.len(), 3 * 2);
+        assert_eq!(mesh.instance_bytes.len(), 80);
     }
 
     #[cfg(target_os = "windows")]
