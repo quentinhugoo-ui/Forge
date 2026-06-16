@@ -1685,9 +1685,6 @@ fn stage_banger_gltf_primitive(
         if extensions.contains_key("KHR_draco_mesh_compression") {
             return Err("KHR_draco_mesh_compression primitive decode pending before native upload".to_string());
         }
-        if extensions.contains_key("EXT_meshopt_compression") {
-            return Err("EXT_meshopt_compression primitive decode pending before native upload".to_string());
-        }
     }
     let attributes = primitive
         .get("attributes")
@@ -1931,7 +1928,7 @@ fn banger_maps_unknown_gltf_format_support() -> BangerMapsGltfFormatSupport {
 fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport {
     let extensions_used = banger_gltf_string_array(gltf, "extensionsUsed");
     let extensions_required = banger_gltf_string_array(gltf, "extensionsRequired");
-    let supported_extensions = ["KHR_materials_unlit", "KHR_mesh_quantization"];
+    let supported_extensions = ["KHR_materials_unlit", "KHR_mesh_quantization", "EXT_meshopt_compression"];
     let unsupported_used_extensions = extensions_used
         .iter()
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
@@ -1942,7 +1939,7 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         .filter(|extension| !supported_extensions.contains(&extension.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let compression_blocker = ["KHR_draco_mesh_compression", "EXT_meshopt_compression"]
+    let compression_blocker = ["KHR_draco_mesh_compression"]
         .iter()
         .find(|extension| {
             extensions_used.iter().any(|item| item == **extension)
@@ -1950,9 +1947,9 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         })
         .map(|extension| match *extension {
             "KHR_draco_mesh_compression" => "KHR_draco_mesh_compression decode is required before native vertex/index upload".to_string(),
-            "EXT_meshopt_compression" => "EXT_meshopt_compression decode is required before native vertex/index upload".to_string(),
             _ => format!("{extension} support pending before native upload"),
-        });
+        })
+        .or_else(|| banger_maps_meshopt_format_blocker(gltf));
     BangerMapsGltfFormatSupport {
         extensions_used,
         extensions_required,
@@ -2062,8 +2059,8 @@ fn stage_banger_gltf_textures(gltf: &Value, bin_chunk: &[u8]) -> Result<Vec<Bang
                 image_index: Some(image_index),
                 mime_type,
                 source_kind: "embedded_buffer_view",
-                byte_count: image_bytes.len(),
-                content_hash: sha256_hex(&image_bytes),
+                byte_count: image_bytes.bytes.len(),
+                content_hash: sha256_hex(&image_bytes.bytes),
                 wgpu_usage: "TEXTURE_BINDING|COPY_DST",
             });
         } else {
@@ -2084,6 +2081,46 @@ fn stage_banger_gltf_textures(gltf: &Value, bin_chunk: &[u8]) -> Result<Vec<Bang
         }
     }
     Ok(texture_stages)
+}
+
+fn banger_maps_meshopt_format_blocker(gltf: &Value) -> Option<String> {
+    let buffer_views = gltf.get("bufferViews").and_then(Value::as_array)?;
+    for (buffer_view_index, buffer_view) in buffer_views.iter().enumerate() {
+        let Some(meshopt) = buffer_view
+            .get("extensions")
+            .and_then(|extensions| extensions.get("EXT_meshopt_compression"))
+        else {
+            continue;
+        };
+        let mode = meshopt.get("mode").and_then(Value::as_str).unwrap_or("");
+        let filter = meshopt.get("filter").and_then(Value::as_str).unwrap_or("NONE");
+        let byte_stride = meshopt.get("byteStride").and_then(Value::as_u64).unwrap_or(0);
+        let count = meshopt.get("count").and_then(Value::as_u64).unwrap_or(0);
+        if !matches!(mode, "ATTRIBUTES" | "TRIANGLES" | "INDICES") {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} unsupported mode {mode}"));
+        }
+        if !matches!(filter, "NONE" | "OCTAHEDRAL" | "QUATERNION" | "EXPONENTIAL") {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} unsupported filter {filter}"));
+        }
+        if count == 0 || byte_stride == 0 {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} missing count or byteStride"));
+        }
+        if matches!(mode, "TRIANGLES" | "INDICES") && !matches!(byte_stride, 2 | 4) {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} index byteStride must be 2 or 4"));
+        }
+        if mode == "ATTRIBUTES" && (byte_stride % 4 != 0 || byte_stride > 256) {
+            return Some(format!(
+                "EXT_meshopt_compression bufferView {buffer_view_index} ATTRIBUTES byteStride must be divisible by 4 and <= 256"
+            ));
+        }
+        if mode == "TRIANGLES" && count % 3 != 0 {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} TRIANGLES count must be divisible by 3"));
+        }
+        if matches!(mode, "TRIANGLES" | "INDICES") && filter != "NONE" {
+            return Some(format!("EXT_meshopt_compression bufferView {buffer_view_index} index modes require filter NONE"));
+        }
+    }
+    None
 }
 
 struct BangerGltfAccessorStage {
@@ -2126,10 +2163,10 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
     let component_size = banger_gltf_component_size(component_type)?;
     let component_count = banger_gltf_type_component_count(&accessor_type)?;
     let element_size = component_size * component_count;
-    let (view_offset, view_length, byte_stride) = banger_gltf_buffer_view_layout(gltf, buffer_view_index)?;
+    let buffer_view = banger_gltf_buffer_view_bytes(gltf, bin_chunk, buffer_view_index)?;
     let accessor_offset = accessor.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let start = view_offset + accessor_offset;
-    let stride = byte_stride.unwrap_or(element_size);
+    let start = accessor_offset;
+    let stride = buffer_view.byte_stride.unwrap_or(element_size);
     if stride < element_size {
         return Err(format!("accessor {accessor_index} byteStride {stride} is smaller than element size {element_size}"));
     }
@@ -2138,13 +2175,13 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
     } else {
         start + stride * (count - 1) + element_size
     };
-    if final_byte > view_offset + view_length || final_byte > bin_chunk.len() {
-        return Err(format!("accessor {accessor_index} exceeds GLB BIN chunk"));
+    if final_byte > buffer_view.bytes.len() {
+        return Err(format!("accessor {accessor_index} exceeds bufferView {buffer_view_index} bytes"));
     }
     let mut bytes = Vec::with_capacity(count * element_size);
     for item in 0..count {
         let offset = start + item * stride;
-        bytes.extend_from_slice(&bin_chunk[offset..offset + element_size]);
+        bytes.extend_from_slice(&buffer_view.bytes[offset..offset + element_size]);
     }
     Ok(BangerGltfAccessorStage {
         bytes,
@@ -2155,13 +2192,157 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
     })
 }
 
-fn banger_gltf_buffer_view_bytes(gltf: &Value, bin_chunk: &[u8], buffer_view_index: usize) -> Result<Vec<u8>, String> {
+struct BangerGltfBufferViewBytes {
+    bytes: Vec<u8>,
+    byte_stride: Option<usize>,
+}
+
+fn banger_gltf_buffer_view_bytes(gltf: &Value, bin_chunk: &[u8], buffer_view_index: usize) -> Result<BangerGltfBufferViewBytes, String> {
+    let buffer_views = gltf
+        .get("bufferViews")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gltf bufferViews array missing".to_string())?;
+    let buffer_view = buffer_views
+        .get(buffer_view_index)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} missing"))?;
+    let byte_stride = buffer_view.get("byteStride").and_then(Value::as_u64).map(|value| value as usize);
+    if let Some(meshopt) = buffer_view
+        .get("extensions")
+        .and_then(|extensions| extensions.get("EXT_meshopt_compression"))
+    {
+        return banger_gltf_meshopt_buffer_view_bytes(gltf, bin_chunk, buffer_view_index, buffer_view, meshopt, byte_stride);
+    }
     let (view_offset, view_length, _) = banger_gltf_buffer_view_layout(gltf, buffer_view_index)?;
     let end = view_offset + view_length;
     if end > bin_chunk.len() {
         return Err(format!("bufferView {buffer_view_index} exceeds GLB BIN chunk"));
     }
-    Ok(bin_chunk[view_offset..end].to_vec())
+    Ok(BangerGltfBufferViewBytes {
+        bytes: bin_chunk[view_offset..end].to_vec(),
+        byte_stride,
+    })
+}
+
+fn banger_gltf_meshopt_buffer_view_bytes(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    buffer_view_index: usize,
+    buffer_view: &Value,
+    meshopt: &Value,
+    parent_byte_stride: Option<usize>,
+) -> Result<BangerGltfBufferViewBytes, String> {
+    let byte_length = buffer_view
+        .get("byteLength")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} missing byteLength"))? as usize;
+    let count = meshopt
+        .get("count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} EXT_meshopt_compression missing count"))? as usize;
+    let byte_stride = meshopt
+        .get("byteStride")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} EXT_meshopt_compression missing byteStride"))? as usize;
+    if let Some(parent_stride) = parent_byte_stride {
+        if parent_stride != byte_stride {
+            return Err(format!(
+                "bufferView {buffer_view_index} EXT_meshopt_compression byteStride {byte_stride} does not match parent byteStride {parent_stride}"
+            ));
+        }
+    }
+    if byte_length != count * byte_stride {
+        return Err(format!(
+            "bufferView {buffer_view_index} byteLength {byte_length} does not match EXT_meshopt_compression count {count} * byteStride {byte_stride}"
+        ));
+    }
+    let compressed = banger_gltf_meshopt_compressed_bytes(gltf, bin_chunk, buffer_view_index, meshopt)?;
+    let mode = meshopt
+        .get("mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} EXT_meshopt_compression missing mode"))?;
+    let filter = meshopt.get("filter").and_then(Value::as_str).unwrap_or("NONE");
+    let mut bytes = vec![0u8; byte_length];
+    let result = unsafe {
+        match mode {
+            "ATTRIBUTES" => meshopt::ffi::meshopt_decodeVertexBuffer(
+                bytes.as_mut_ptr().cast(),
+                count,
+                byte_stride,
+                compressed.as_ptr(),
+                compressed.len(),
+            ),
+            "TRIANGLES" => meshopt::ffi::meshopt_decodeIndexBuffer(
+                bytes.as_mut_ptr().cast(),
+                count,
+                byte_stride,
+                compressed.as_ptr(),
+                compressed.len(),
+            ),
+            "INDICES" => meshopt::ffi::meshopt_decodeIndexSequence(
+                bytes.as_mut_ptr().cast(),
+                count,
+                byte_stride,
+                compressed.as_ptr(),
+                compressed.len(),
+            ),
+            other => return Err(format!("bufferView {buffer_view_index} unsupported EXT_meshopt_compression mode {other}")),
+        }
+    };
+    if result != 0 {
+        return Err(format!(
+            "bufferView {buffer_view_index} EXT_meshopt_compression decode failed with code {result}"
+        ));
+    }
+    unsafe {
+        match filter {
+            "NONE" => {}
+            "OCTAHEDRAL" => meshopt::ffi::meshopt_decodeFilterOct(bytes.as_mut_ptr().cast(), count, byte_stride),
+            "QUATERNION" => meshopt::ffi::meshopt_decodeFilterQuat(bytes.as_mut_ptr().cast(), count, byte_stride),
+            "EXPONENTIAL" => meshopt::ffi::meshopt_decodeFilterExp(bytes.as_mut_ptr().cast(), count, byte_stride),
+            other => return Err(format!("bufferView {buffer_view_index} unsupported EXT_meshopt_compression filter {other}")),
+        }
+    }
+    Ok(BangerGltfBufferViewBytes {
+        bytes,
+        byte_stride: Some(byte_stride),
+    })
+}
+
+fn banger_gltf_meshopt_compressed_bytes(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    buffer_view_index: usize,
+    meshopt: &Value,
+) -> Result<Vec<u8>, String> {
+    let buffer_index = meshopt
+        .get("buffer")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} EXT_meshopt_compression missing buffer"))?;
+    if buffer_index != 0 {
+        return Err(format!(
+            "bufferView {buffer_view_index} EXT_meshopt_compression external buffer {buffer_index} pending"
+        ));
+    }
+    let byte_offset = meshopt.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let byte_length = meshopt
+        .get("byteLength")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("bufferView {buffer_view_index} EXT_meshopt_compression missing byteLength"))? as usize;
+    let end = byte_offset + byte_length;
+    if end > bin_chunk.len() {
+        return Err(format!("bufferView {buffer_view_index} EXT_meshopt_compression source exceeds GLB BIN chunk"));
+    }
+    let buffers = gltf.get("buffers").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    if buffers
+        .get(buffer_index as usize)
+        .and_then(|buffer| buffer.get("uri"))
+        .is_some()
+    {
+        return Err(format!(
+            "bufferView {buffer_view_index} EXT_meshopt_compression external uri buffer {buffer_index} pending"
+        ));
+    }
+    Ok(bin_chunk[byte_offset..end].to_vec())
 }
 
 fn banger_gltf_buffer_view_layout(gltf: &Value, buffer_view_index: usize) -> Result<(usize, usize, Option<usize>), String> {
@@ -2318,7 +2499,7 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
             device,
             "banger maps gltf texture staging buffer",
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            &image_bytes,
+            &image_bytes.bytes,
         ));
     }
     Ok(BangerMapsUploadedTileBuffers {
@@ -4479,6 +4660,37 @@ mod tests {
     }
 
     #[test]
+    fn decodes_ext_meshopt_buffer_views_before_native_staging() {
+        let glb = test_meshopt_glb_bytes();
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let support = banger_maps_gltf_format_support(&decoded.gltf_value);
+        assert_eq!(support.extensions_used, vec!["EXT_meshopt_compression".to_string(), "KHR_mesh_quantization".to_string()]);
+        assert!(support.unsupported_required_extensions.is_empty());
+        assert!(support.compression_blocker.is_none());
+
+        let (primitives, materials, textures) = stage_banger_gltf_payload(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+        assert_eq!(primitives.len(), 1);
+        assert_eq!(primitives[0].source_position_buffer_byte_count, 18);
+        assert_eq!(primitives[0].vertex_buffer_byte_count, 3 * 48);
+        assert_eq!(primitives[0].index_buffer_byte_count, 6);
+        assert_eq!(primitives[0].index_format, "uint16");
+        assert_eq!(materials[0].base_color_factor, [0.1, 0.45, 0.9, 1.0]);
+        assert!(textures.is_empty());
+
+        let position = banger_gltf_accessor_stage(&decoded.gltf_value, decoded.bin_chunk, 0).unwrap();
+        let positions = banger_maps_float_vec3_accessor_values(&position, "POSITION").unwrap();
+        assert!((positions[1][0] - 1.0).abs() < 0.0001);
+        assert!((positions[2][1] - 1.0).abs() < 0.0001);
+
+        #[cfg(target_os = "windows")]
+        {
+            let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+            assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+            assert_eq!(mesh.index_bytes.len(), 6);
+        }
+    }
+
+    #[test]
     fn classifies_google_tiles_entitlement_region_errors() {
         let message = "root status 403: satellite tiles and 3D tiles are not available for your account and region";
         assert_eq!(
@@ -4666,6 +4878,49 @@ mod tests {
             bin_chunk.push(0);
         }
         assert_eq!(bin_chunk.len(), 48);
+        let length = 12 + 8 + json_chunk.len() + 8 + bin_chunk.len();
+        let mut glb = Vec::with_capacity(length);
+        glb.extend_from_slice(b"glTF");
+        push_u32_le(&mut glb, 2);
+        push_u32_le(&mut glb, length as u32);
+        push_u32_le(&mut glb, json_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x4E4F534A);
+        glb.extend_from_slice(&json_chunk);
+        push_u32_le(&mut glb, bin_chunk.len() as u32);
+        push_u32_le(&mut glb, 0x004E4942);
+        glb.extend_from_slice(&bin_chunk);
+        glb
+    }
+
+    fn test_meshopt_glb_bytes() -> Vec<u8> {
+        let position_vertices: [[u8; 8]; 3] = [
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [255, 255, 0, 0, 0, 0, 0, 0],
+            [0, 0, 255, 255, 0, 0, 0, 0],
+        ];
+        let position_compressed = meshopt::encoding::encode_vertex_buffer(&position_vertices).unwrap();
+        let index_compressed = meshopt::encoding::encode_index_buffer(&[0, 1, 2], 3).unwrap();
+        let mut bin_chunk = Vec::new();
+        let position_offset = bin_chunk.len();
+        bin_chunk.extend_from_slice(&position_compressed);
+        while bin_chunk.len() % 4 != 0 {
+            bin_chunk.push(0);
+        }
+        let index_offset = bin_chunk.len();
+        bin_chunk.extend_from_slice(&index_compressed);
+        while bin_chunk.len() % 4 != 0 {
+            bin_chunk.push(0);
+        }
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},"extensionsUsed":["EXT_meshopt_compression","KHR_mesh_quantization"],"extensionsRequired":["EXT_meshopt_compression","KHR_mesh_quantization"],"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":1,"material":0,"mode":4}}]}}],"materials":[{{"pbrMetallicRoughness":{{"baseColorFactor":[0.1,0.45,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.6}}}}],"accessors":[{{"bufferView":0,"componentType":5123,"count":3,"type":"VEC3","normalized":true}},{{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}}],"bufferViews":[{{"buffer":1,"byteOffset":0,"byteLength":24,"byteStride":8,"target":34962,"extensions":{{"EXT_meshopt_compression":{{"buffer":0,"byteOffset":{position_offset},"byteLength":{},"byteStride":8,"count":3,"mode":"ATTRIBUTES","filter":"NONE"}}}}}},{{"buffer":1,"byteOffset":24,"byteLength":6,"target":34963,"extensions":{{"EXT_meshopt_compression":{{"buffer":0,"byteOffset":{index_offset},"byteLength":{},"byteStride":2,"count":3,"mode":"TRIANGLES","filter":"NONE"}}}}}}],"buffers":[{{"byteLength":{}}},{{"byteLength":30}}]}}"#,
+            position_compressed.len(),
+            index_compressed.len(),
+            bin_chunk.len()
+        );
+        let mut json_chunk = json.into_bytes();
+        while json_chunk.len() % 4 != 0 {
+            json_chunk.push(0x20);
+        }
         let length = 12 + 8 + json_chunk.len() + 8 + bin_chunk.len();
         let mut glb = Vec::with_capacity(length);
         glb.extend_from_slice(b"glTF");
