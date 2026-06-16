@@ -13208,10 +13208,10 @@ ol.assistantText__list li::before {
 }
 
 .rightPanelEmpty__icon {
-  --toolbar-icon-size: 104px;
+  --toolbar-icon-size: 82.16px;
 
-  width: 104px;
-  height: 104px;
+  width: 82.16px;
+  height: 82.16px;
   color: currentColor;
   background: currentColor;
   opacity: 1;
@@ -13219,7 +13219,7 @@ ol.assistantText__list li::before {
 
 .rightPanelEmpty__content strong {
   color: currentColor;
-  font-size: 18px;
+  font-size: 14.22px;
   font-weight: 680;
   line-height: 1.35;
 }
