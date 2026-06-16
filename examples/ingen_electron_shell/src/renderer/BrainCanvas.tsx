@@ -319,13 +319,13 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   {
     id: "lesson",
     label: "Lessons",
-    title: "The agent reviews mistakes and useful outcomes, then turns them into durable rules and skills it can reuse in future sessions.",
+    title: "Lessons help the agent learn from its mistakes and from successful outcomes, then reuse that experience in future sessions.",
     placeholder: "Ex: Observed error: campaign too abstract. Rule: start from a concrete scene, then state the promise."
   },
   {
     id: "skill",
     label: "Skills",
-    title: "Reusable agent skills extracted from repeated useful actions, patterns, and workflows.",
+    title: "Skills turn saved lessons into repeatable workflows and processes the agent can apply when similar work comes back.",
     placeholder: "Ex: Review a marketing hook with the audience / pain / mechanism / proof frame."
   }
 ];
