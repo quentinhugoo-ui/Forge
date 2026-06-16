@@ -34,4 +34,11 @@ describe("Self-Directed palette", () => {
     expect(rendererSource).toContain('key={`permission-menu-${selfDirectedColorCycle}`}');
     expect(rendererSource).toContain("onClick={togglePermissionMenu}");
   });
+
+  it("uses the sidebar surface color for the permission mode menu", () => {
+    const permissionModeMenuBlock = stylesSource.match(/^\.permissionModeMenu\s*\{[\s\S]*?\n\}/m)?.[0] ?? "";
+
+    expect(permissionModeMenuBlock).toContain("background: var(--forge-sidebar-bg);");
+    expect(permissionModeMenuBlock).not.toContain("var(--forge-chat-bg)");
+  });
 });
