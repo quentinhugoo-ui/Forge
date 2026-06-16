@@ -5432,7 +5432,7 @@ function brainBootManifest(): string {
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
     `scrapers_mcp_policy=${BRAIN_SCRAPERS_COMMAND} runs Scrapling MCP + Crawl4AI MCP in parallel for known URLs. Use after ${BRAIN_WEBSEARCH_COMMAND} or explicit URLs to enrich answers with clean Markdown, structured fields, links, image/video/audio URLs, screenshots/artifact refs and provenance. Return one compact SCRAPERS_RESULT/media_manifest; respect robots/terms/rate limits/privacy, stealth only when authorized.`,
-    `rule=On the first assistant response in this session: start the response exactly with the internal tag /rename_session_<short title>_ before any visible prose. <short title> is a relevant 2-5 word session name. Never mention this action, never explain it, and never display it as content. The app strips the tag before display and uses the title everywhere instead of "New session".`,
+    `rule=On the first assistant response in this session: start the response exactly with the internal tag /rename_session_<short title>_ before any visible prose. <short title> is your own high-quality 2-5 word session name for the topic; the app does not reason about or repair this title. Do not be lazy: preserve exact canonical proper names and work titles from the user request, prefer the real topic name over keyword bags, and avoid damaged titles like "Heart Stone Witcher" when the topic is "The Witcher 3: Hearts of Stone". Never mention this action, never explain it, and never display it as content. The app strips the tag before display and uses the title everywhere instead of "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=General Brain is immutable and read-only. The agent must never write, patch or synthesize new CodeActs inside General Brain. When /newbrain_ is emitted, the host derives the specialized activator CodeAct such as /musicianbrain_ from explicit fields and stores it outside General Brain.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
@@ -14851,10 +14851,20 @@ function createAssistantLiveTextSink(params: {
   commitTranscript: (transcript: TranscriptMessage[]) => void;
   prefixText?: string;
   assistantRun?: AssistantRunControl;
+  renameSession?: SidebarSessionItem;
 }): ProviderLiveTextSink {
   let lastText = "";
+  let liveRenameApplied = false;
   return {
     onText: (text) => {
+      if (params.renameSession && !liveRenameApplied) {
+        const request = extractRenameSessionCodeAct(text);
+        if (request) {
+          renameChatSession(params.renameSession, request);
+          liveRenameApplied = true;
+          emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.agentEvents.sessionId);
+        }
+      }
       const visibleText = removeRenameSessionChatter(removeLooseRenameSessionChatter(removeRenameSessionCodeActLines(agentActionLiveVisibleText(text)))).trimEnd();
       const trimmed = [params.prefixText?.trimEnd() ?? "", visibleText]
         .filter((part) => part.length > 0)
@@ -17346,7 +17356,8 @@ async function executeUniversalLoopContinuation(params: {
       assistantMessageId: continuationAssistantMessageId,
       agentEvents: params.agentEvents,
       commitTranscript: params.commitTranscript,
-      assistantRun: params.assistantRun
+      assistantRun: params.assistantRun,
+      renameSession: params.session
     });
     const rawContinuationMessage = await buildAssistantTranscriptMessage(
       continuation.text,
@@ -17471,7 +17482,8 @@ async function submitChatDraftForSessionInner(
       assistantMessageId: liveAssistantMessageId,
       agentEvents,
       commitTranscript,
-      assistantRun
+      assistantRun,
+      renameSession: session
     });
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
     assistantMessage = await buildAssistantTranscriptMessage(

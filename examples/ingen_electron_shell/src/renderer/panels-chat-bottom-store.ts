@@ -533,6 +533,9 @@ export function createPanelsChatBottomStore(api = browserApi()) {
   api?.onPanelsChatBottomSnapshotEvent?.((event) => {
     if (event.kind === "snapshot_updated") {
       void refresh();
+      if (event.reason === "assistant_progressive_seed") {
+        void sidebarShadowStore.boot();
+      }
     }
   });
 

@@ -177,8 +177,13 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("params.profile");
     expect(mainSource).toContain("params.providerUserText");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
+    expect(mainSource).toContain("renameSession?: SidebarSessionItem");
+    expect(mainSource).toContain("renameChatSession(params.renameSession, request)");
     expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
+    expect(mainSource).toContain("renameSession: session");
+    expect(storeSource).toContain('event.reason === "assistant_progressive_seed"');
+    expect(storeSource).toContain("void sidebarShadowStore.boot()");
     expect(mainSource).toContain("shouldStop: (text) => Boolean(params.assistantRun?.cancelled || extractAgentActionJsonRequest(text))");
     expect(mainSource).toContain("liveTextSink");
     expect(mainSource).toContain("continuationLiveSink");
@@ -348,8 +353,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("ACTION_NARRATION_CONTRACT v1");
     expect(mainSource).toContain("pedagogy=Name pivots and tradeoffs plainly");
     expect(mainSource).toContain("evidence=After a tool result, mention the runtime proof that matters");
-    expect(mainSource).toContain("Je commence le tri par les elements les plus evidents.");
-    expect(mainSource).toContain("Je deplace ${sourceName} vers ${targetFolder}");
+    expect(mainSource).toContain("I am starting the sorting pass with the most obvious items.");
+    expect(mainSource).toContain("I am moving ${sourceName} to ${targetFolder}");
     expect(mainSource).not.toContain("Etape ${index + 1}/${total}");
     expect(mainSource).not.toContain("sans toucher aux raccourcis d'application");
     expect(mainSource).toContain("agentActionOrganizeCategory(item)");
