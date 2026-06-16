@@ -99,7 +99,8 @@ button {
   border-radius: 6px !important;
 }
 
-.shell .widgetSessionTab {
+.shell .widgetSessionTab,
+.shell .widgetNewSessionTab {
   border-radius: 6px 6px 0 0 !important;
 }
 
@@ -3951,18 +3952,34 @@ button {
   font-size: 11.5px;
 }
 
-/* Compact session languette: same grey as the chat-bar upload square, narrow
+/* Compact session languettes: same grey as the chat-bar upload square, narrow
    and short, rounded top corners (the .shell override restores the radius). */
-.widgetSessionTab {
+.widgetSessionTabsRail {
   position: absolute;
   top: calc(-1 * var(--widget-languette-h) + 1px);
   left: 0;
   z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  max-width: calc(var(--questionnaire-width) - 10px);
+  height: var(--widget-languette-h);
+  pointer-events: none;
+  transform-origin: bottom left;
+  /* The drawer only mounts once the mini-mode entry choreography has fully
+     settled (widgetSessionTabVisible gates on !widgetModeTransitioning), so this
+     plays exactly at the end of the transition: the languette eases in softly —
+     a slow fade with a barely-there rise, no overshoot, so it never snaps. */
+  animation: widgetSessionTabPop 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.widgetSessionTab,
+.widgetNewSessionTab {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  max-width: min(186px, calc(var(--questionnaire-width) - 16px));
+  flex: 0 0 auto;
   height: var(--widget-languette-h);
-  padding: 0 9px;
   color: color-mix(in oklab, var(--forge-chat-text), #ffffff 6%);
   font-size: 9px;
   font-weight: 600;
@@ -3976,17 +3993,21 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   cursor: pointer;
   pointer-events: auto;
-  transform-origin: bottom left;
-  /* The drawer only mounts once the mini-mode entry choreography has fully
-     settled (widgetSessionTabVisible gates on !widgetModeTransitioning), so this
-     plays exactly at the end of the transition: the languette eases in softly —
-     a slow fade with a barely-there rise, no overshoot, so it never snaps. */
-  animation: widgetSessionTabPop 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: color 150ms ease, background 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    opacity 180ms ease;
+}
+
+.widgetSessionTab {
+  max-width: min(174px, calc(var(--questionnaire-width) - 42px));
+  padding: 0 9px;
 }
 
 .widgetSessionTab:hover,
-.widgetSessionTab:focus-visible {
+.widgetSessionTab:focus-visible,
+.widgetNewSessionTab:hover,
+.widgetNewSessionTab:focus-visible {
   color: #ffffff;
   background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
   outline: none;
@@ -3997,6 +4018,56 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.widgetNewSessionTab {
+  justify-content: center;
+  width: 20px;
+  max-width: 20px;
+  min-width: 20px;
+  padding: 0;
+  overflow: hidden;
+  touch-action: manipulation;
+  transition:
+    width 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.widgetNewSessionTab--expanding {
+  justify-content: flex-start;
+  width: 112px;
+  max-width: 112px;
+  padding: 0 8px 0 5px;
+}
+
+.widgetNewSessionTab__icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.widgetNewSessionTab__label {
+  min-width: 0;
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    max-width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin-left 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+
+.widgetNewSessionTab--expanding .widgetNewSessionTab__label {
+  max-width: 82px;
+  margin-left: 5px;
+  opacity: 1;
+  transition-delay: 120ms, 120ms, 160ms;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire {
@@ -13658,6 +13729,8 @@ ol.assistantText__list li::before {
   .sidebarModule,
   .sidebarModule__logo,
   .widgetSessionTab,
+  .widgetNewSessionTab,
+  .widgetSessionTabsRail,
   .widgetSessionDrawer,
   .widgetSessionDrawer__panel {
     animation: none;
