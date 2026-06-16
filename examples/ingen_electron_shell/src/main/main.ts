@@ -150,9 +150,11 @@ import {
   type ExtractedAgentAction
 } from "./agent-action-loop.js";
 import {
-  parseSearchArchiveCodeAct,
+  readSearchArchiveCodeAct,
   renderSearchArchiveResult,
+  renderSearchArchiveTemplateResult,
   searchArchiveSessions,
+  searchArchiveTemplateResult,
   stableSearchArchiveHash,
   archiveSessionProofHash,
   type ChatArchiveAttachment,
@@ -15602,22 +15604,79 @@ function isSearchArchiveRequest(value: unknown): value is SearchArchiveRequest {
   const candidate = value as Partial<SearchArchiveRequest>;
   return (
     typeof candidate.query === "string" &&
-    (candidate.scope === undefined || candidate.scope === "recent" || candidate.scope === "archived" || candidate.scope === "all") &&
+    (candidate.keywords === undefined || (Array.isArray(candidate.keywords) && candidate.keywords.every((item) => typeof item === "string"))) &&
+    (candidate.dateFrom === undefined || typeof candidate.dateFrom === "string") &&
+    (candidate.dateTo === undefined || typeof candidate.dateTo === "string") &&
+    (candidate.scope === undefined || candidate.scope === "current" || candidate.scope === "recent" || candidate.scope === "archived" || candidate.scope === "all") &&
+    (candidate.sessionScope === undefined || candidate.sessionScope === "current" || candidate.sessionScope === "recent" || candidate.sessionScope === "archived" || candidate.sessionScope === "all") &&
+    (candidate.currentSessionId === undefined || typeof candidate.currentSessionId === "string") &&
+    (candidate.contentScope === undefined || candidate.contentScope === "messages" || candidate.contentScope === "files" || candidate.contentScope === "artifacts" || candidate.contentScope === "all") &&
+    (candidate.fileOrigin === undefined || candidate.fileOrigin === "uploaded" || candidate.fileOrigin === "created_in_app" || candidate.fileOrigin === "all") &&
+    (candidate.createdInAppSources === undefined || (Array.isArray(candidate.createdInAppSources) && candidate.createdInAppSources.every((item) => typeof item === "string"))) &&
+    (candidate.fileTypes === undefined || (Array.isArray(candidate.fileTypes) && candidate.fileTypes.every((item) => typeof item === "string"))) &&
     (candidate.topK === undefined || typeof candidate.topK === "number") &&
     (candidate.contextTurns === undefined || typeof candidate.contextTurns === "number") &&
-    (candidate.targets === undefined || (Array.isArray(candidate.targets) && candidate.targets.every((target) => typeof target === "string")))
+    (candidate.targets === undefined || (Array.isArray(candidate.targets) && candidate.targets.every((target) => typeof target === "string"))) &&
+    (candidate.includeFilePreviews === undefined || typeof candidate.includeFilePreviews === "boolean") &&
+    (candidate.includeArtifactRefs === undefined || typeof candidate.includeArtifactRefs === "boolean") &&
+    (candidate.templateProofHash === undefined || typeof candidate.templateProofHash === "string")
   );
 }
 
-async function localSearchArchiveStatus(request: SearchArchiveRequest): Promise<TranscriptMessage> {
+async function localSearchArchiveStatus(request: SearchArchiveRequest, session?: SidebarSessionItem): Promise<TranscriptMessage> {
   await loadChatArchive();
-  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), request);
+  const executableRequest = { ...request, currentSessionId: request.currentSessionId ?? session?.sessionId };
+  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), executableRequest);
   const text = renderSearchArchiveResult(result);
   return {
     id: `assistant-searcharchive-${Date.now()}`,
     role: "assistant",
     text,
-    proofHash: hashJson({ codeact: BRAIN_SEARCHARCHIVE_COMMAND, request, result })
+    proofHash: hashJson({ codeact: BRAIN_SEARCHARCHIVE_COMMAND, request: executableRequest, result })
+  };
+}
+
+function localSearchArchiveTemplateStatus(reason: "empty_command" | "template_required" = "empty_command"): TranscriptMessage {
+  const result = searchArchiveTemplateResult(reason);
+  return {
+    id: `assistant-searcharchive-template-${Date.now()}`,
+    role: "assistant",
+    text: renderSearchArchiveTemplateResult(result),
+    proofHash: hashJson({ codeact: BRAIN_SEARCHARCHIVE_COMMAND, result })
+  };
+}
+
+async function executeAssistantSearchArchiveCodeAct(message: TranscriptMessage, session?: SidebarSessionItem): Promise<TranscriptMessage> {
+  if (message.role !== "assistant" || message.text.includes("SEARCHARCHIVE_RESULT") || message.text.includes("SEARCHARCHIVE_TEMPLATE_RESULT")) {
+    return message;
+  }
+  const codeAct = readSearchArchiveCodeAct(message.text);
+  if (!codeAct) {
+    return message;
+  }
+  if (codeAct.kind === "template") {
+    return {
+      ...message,
+      text: `${message.text.trimEnd()}\n\n${renderSearchArchiveTemplateResult(codeAct.result)}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeAct: BRAIN_SEARCHARCHIVE_COMMAND,
+        searchArchiveTemplate: codeAct.result
+      })
+    };
+  }
+  await loadChatArchive();
+  const executableRequest = { ...codeAct.request, currentSessionId: codeAct.request.currentSessionId ?? session?.sessionId };
+  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), executableRequest);
+  return {
+    ...message,
+    text: `${message.text.trimEnd()}\n\n${renderSearchArchiveResult(result)}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: BRAIN_SEARCHARCHIVE_COMMAND,
+      searchArchiveRequest: executableRequest,
+      searchArchiveResult: result
+    })
   };
 }
 
@@ -16012,9 +16071,11 @@ async function executeAssistantModuleCodeActs(
   message: TranscriptMessage,
   moduleId: string,
   parallelSessionIndex: number,
-  originalUserText = ""
+  originalUserText = "",
+  session?: SidebarSessionItem
 ): Promise<TranscriptMessage> {
-  let next = await executeAssistantLocalActionsCodeAct(message);
+  let next = await executeAssistantSearchArchiveCodeAct(message, session);
+  next = await executeAssistantLocalActionsCodeAct(next);
   if (moduleId === "gmail") {
     return executeAssistantGmailCodeAct(next, parallelSessionIndex);
   }
@@ -17324,7 +17385,7 @@ async function executeUniversalLoopOrchestratorPass(params: {
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, params.originalUserText, params.moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, params.originalUserText, params.moduleId, params.parallelSessionIndex);
   throwIfAssistantRunCancelled(params.assistantRun);
-  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex, params.originalUserText);
+  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, params.moduleId, params.parallelSessionIndex, params.originalUserText, params.session);
   assistantMessage = executeAssistantDomainBrainCodeActs(assistantMessage);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, params.session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
@@ -17490,7 +17551,8 @@ async function submitChatDraftForSessionInner(
   throwIfAssistantRunCancelled(assistantRun);
   const requestSessionId = session.sessionId;
   const requestTranscriptBeforeSend = transcriptWithoutMessage([...transcript], replaceAssistantMessageId);
-  const searchArchiveRequest = parseSearchArchiveCodeAct(draft);
+  const searchArchiveCodeAct = readSearchArchiveCodeAct(draft);
+  const searchArchiveRequest = searchArchiveCodeAct?.kind === "request" ? searchArchiveCodeAct.request : undefined;
   let providerAttachments: ProviderAttachment[] = [];
   const editTargetIdForTurn = panelsChatBottomState.uploadEditTargetId;
   let attachmentPreviews = pendingUploadItems.map(publicUploadPreview);
@@ -17500,7 +17562,7 @@ async function submitChatDraftForSessionInner(
     kind: attachment.kind,
     proofHash: hashJson(attachment)
   }));
-  if (!searchArchiveRequest) {
+  if (!searchArchiveCodeAct) {
     // Audit anchor: const providerUploadItems = providerUploadItemsForCommand(pendingUploadItems)
     const providerUploadItems = providerUploadItemsForCommand(pendingUploadItems, transcript);
     providerAttachments = await providerAttachmentsFromUploads(providerUploadItems);
@@ -17537,7 +17599,7 @@ async function submitChatDraftForSessionInner(
     panelsChatBottomState.uploadErrorText = "";
     panelsChatBottomState.uploadEditTargetId = "";
   }
-  const contextPlan = searchArchiveRequest ? undefined : conversationContextPlan(message.id, requestTranscriptWithUser);
+  const contextPlan = searchArchiveCodeAct ? undefined : conversationContextPlan(message.id, requestTranscriptWithUser);
   const contextCompactionSeed = `${Date.now()}-${hashJson({ requestSessionId, userMessageId: message.id, estimatedTokens: contextPlan?.estimatedTokens ?? 0 }).slice(0, 8)}`;
   const contextCompactionEvent = contextPlan?.shouldCompact ? contextCompactionEventMessage("compressing", contextCompactionSeed) : undefined;
   const agentEvents = createAgentRuntimeEventQueue({ sessionId: requestSessionId });
@@ -17556,8 +17618,10 @@ async function submitChatDraftForSessionInner(
     emitPanelsChatBottomSnapshotEvent("context_compaction_started", requestSessionId);
   }
   let assistantMessage: TranscriptMessage;
-  if (searchArchiveRequest) {
-    assistantMessage = await localSearchArchiveStatus(searchArchiveRequest);
+  if (searchArchiveCodeAct?.kind === "template") {
+    assistantMessage = localSearchArchiveTemplateStatus(searchArchiveCodeAct.result.reason);
+  } else if (searchArchiveRequest) {
+    assistantMessage = await localSearchArchiveStatus(searchArchiveRequest, session);
   } else {
     const liveAssistantMessageId = replaceAssistantMessageId || `assistant-response-${Date.now()}`;
     const liveTextSink = createAssistantLiveTextSink({
@@ -17624,7 +17688,7 @@ async function submitChatDraftForSessionInner(
     agentEvents,
     assistantRun,
     commitTranscript,
-    searchArchiveActive: Boolean(searchArchiveRequest),
+    searchArchiveActive: Boolean(searchArchiveCodeAct),
     pass: orchestratorPass
   });
 }

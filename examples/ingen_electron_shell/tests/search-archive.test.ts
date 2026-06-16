@@ -3,7 +3,9 @@ import { BRAIN_SEARCHARCHIVE_RESULT_SCHEMA } from "../src/shared/ipc-contract";
 import {
   archiveSessionProofHash,
   parseSearchArchiveCodeAct,
+  readSearchArchiveCodeAct,
   renderSearchArchiveResult,
+  renderSearchArchiveTemplateResult,
   searchArchiveSessions,
   upsertArchiveMessage,
   type ChatArchiveSession,
@@ -34,17 +36,57 @@ function message(id: string, role: TranscriptMessage["role"], text: string): Tra
 }
 
 describe("search archive CodeAct", () => {
-  it("parses the bounded /searcharchive_ template slots", () => {
-    const request = parseSearchArchiveCodeAct('/searcharchive_\nquery="pain d epices"\nscope=archived\ntop_k=3\ncontext_window=turns:2');
-    const singleLineRequest = parseSearchArchiveCodeAct('/searcharchive_ query="pain d epices" scope=recent top_k=2 context_window=turns:1');
+  it("requires the two-phase template before archive execution", () => {
+    const templateStep = readSearchArchiveCodeAct("/searcharchive_");
+    expect(templateStep?.kind).toBe("template");
+    expect(templateStep?.kind === "template" ? renderSearchArchiveTemplateResult(templateStep.result) : "").toContain("SEARCHARCHIVE_TEMPLATE_RESULT");
+    expect(templateStep?.kind === "template" ? templateStep.result.template : "").toContain("file_origin=\"uploaded|created_in_app|all\"");
+    expect(templateStep?.kind === "template" ? templateStep.result.template : "").toContain("created_in_app_sources");
+
+    const directFilled = readSearchArchiveCodeAct('/searcharchive_ query="pain d epices" session_scope=archived');
+    const proseThenTemplate = readSearchArchiveCodeAct("Je cherche dans les archives.\n/searcharchive_");
+    expect(directFilled?.kind).toBe("template");
+    expect(directFilled?.kind === "template" ? directFilled.result.reason : "").toBe("template_required");
+    expect(proseThenTemplate?.kind).toBe("template");
+  });
+
+  it("parses the bounded /searcharchive_ template slots after proof handoff", () => {
+    const templateStep = readSearchArchiveCodeAct("/searcharchive_");
+    const proofHash = templateStep?.kind === "template" ? templateStep.result.template.match(/template_proof_hash="sha256:([^"]+)"/)?.[1] : "";
+    const request = parseSearchArchiveCodeAct(`/searcharchive_
+template_proof_hash="sha256:${proofHash}"
+query="pain d epices"
+keywords=["orange","gingembre"]
+date_from="2026-06-01"
+date_to="2026-06-30"
+session_scope=archived
+content_scope=files
+file_origin=created_in_app
+created_in_app_sources=["scrapers","agent"]
+file_types=["text","markdown"]
+top_k=3
+context_turns=2
+include_file_previews=false
+include_artifact_refs=false`);
+    const executable = readSearchArchiveCodeAct(`/searcharchive_ template_proof_hash="sha256:${proofHash}" query="pain d epices" session_scope=recent top_k=2 context_turns=1`);
 
     expect(request).toMatchObject({
       query: "pain d epices",
+      keywords: ["orange", "gingembre"],
+      dateFrom: "2026-06-01",
+      dateTo: "2026-06-30",
       scope: "archived",
+      sessionScope: "archived",
+      contentScope: "files",
+      fileOrigin: "created_in_app",
+      createdInAppSources: ["scrapers", "agent"],
+      fileTypes: ["text", "markdown"],
       topK: 3,
-      contextTurns: 2
+      contextTurns: 2,
+      includeFilePreviews: false,
+      includeArtifactRefs: false
     });
-    expect(singleLineRequest).toMatchObject({
+    expect(executable?.kind === "request" ? executable.request : undefined).toMatchObject({
       query: "pain d epices",
       scope: "recent",
       topK: 2,

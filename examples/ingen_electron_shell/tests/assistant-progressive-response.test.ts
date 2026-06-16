@@ -297,7 +297,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("assistant-response-${Date.now()}-${continuation.idSuffix}");
     expect(mainSource).toContain("command === BRAIN_QUESTIONNAIRE_COMMAND");
     expect(mainSource).toContain("command === BRAIN_WORKSPACE_COMMAND");
-    expect(mainSource).toContain("searchArchiveActive: Boolean(searchArchiveRequest)");
+    expect(mainSource).toContain("searchArchiveActive: Boolean(searchArchiveCodeAct)");
     expect(mainSource).toContain("const orchestratorPass = await executeUniversalLoopOrchestratorPass({");
     expect(mainSource).toContain("nextTranscript = await executeUniversalLoopContinuation({");
     expect(mainSource).toContain("shouldContinueAfterBrainCodeAct({");

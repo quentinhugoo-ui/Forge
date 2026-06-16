@@ -78,7 +78,7 @@ pub const BRAIN_BRAIN_COMMAND: &str = "/brain_";
 pub const BRAIN_NEWMODULE_COMMAND: &str = "/newmodule_";
 pub const BRAIN_RUST_PORT_ADAPTER_COMMAND: &str = "/rust_port_adapter_";
 pub const BRAIN_RUST_STATE_STORE_COMMAND: &str = "/rust_state_store_";
-pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. Do not use for fresh web search or current file/project work.";
+pub const BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION: &str = "Search Brain memory when the user asks to recall prior sessions, past decisions, archived context, previous files, or something already discussed. This is a strict two-phase CodeAct: first emit bare /searcharchive_ to receive SEARCHARCHIVE_TEMPLATE_RESULT, then fill that template exactly and include template_proof_hash before execution. Do not use for fresh web search or current file/project work.";
 pub const BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION: &str = "Rename the current chat session with exactly one internal prefix tag /rename_session_<short title>_ at the start of the first assistant response. The app strips the tag before display and uses the title everywhere the session name appears. The event is internal: never mention, explain, echo, format or discuss the rename in visible prose. Use a relevant, grammatically correct 2-5 word title.";
 pub const BRAIN_WEBSEARCH_COMMAND_DESCRIPTION: &str = "Use /websearch_ for fresh sourced answers, URL discovery, verification, comparisons, recent facts or visual enrichment. Returns compact WEBSEARCH_RESULT: answer, citations, ranked URLs, provider trace and optional media candidates; no raw pages or downloads. Set media_intent when images/video/audio source pages would improve a known answer, then use /scrapers_ for Markdown, media URLs/artifacts or structured extraction. Prefer over /googleweb_ for cited answers; respect attribution, privacy, paywalls and budget.";
 pub const BRAIN_CODEDOCS_COMMAND_DESCRIPTION: &str = "Use /codedocs_ to query Context7 MCP for current, version-aware library/API documentation, setup instructions and code examples before coding against external dependencies. Prefer it after /codingbrain_ and before guessing imports, configuration, API signatures, migration steps or framework behavior. It is read-only documentation retrieval, not general web search and not page scraping; use /websearch_ first when the library, package or official docs URL is unknown.";
@@ -682,7 +682,7 @@ pub fn brain_searcharchive_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_SEARCHARCHIVE_COMMAND.to_string(),
         section: "general".to_string(),
-        purpose: "Search recent and archived session history by exact context, returning bounded snippets, neighbor turns, attachment refs and proof hashes without app-side reasoning.".to_string(),
+        purpose: "Strict two-phase archive search. First emit bare /searcharchive_ to receive SEARCHARCHIVE_TEMPLATE_RESULT. Then fill the returned template with query, keywords, dates, session scope, content scope, file origin, created-in-app sources, file types and template_proof_hash. The host then searches session messages/files/artifacts and returns bounded snippets, refs and proof hashes without app-side reasoning.".to_string(),
         result_schema: BRAIN_SEARCHARCHIVE_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
@@ -691,53 +691,119 @@ pub fn brain_searcharchive_codeact_template() -> BrainGeneralCodeActTemplate {
                 required: true,
                 default_value: String::new(),
                 allowed_values: Vec::new(),
-                description: "Keyword, phrase, filename or metric text to find in archived session records.".to_string(),
+                description: "Keyword, phrase, filename, metric text or natural search intent to find in archived session records. Fill only after receiving SEARCHARCHIVE_TEMPLATE_RESULT.".to_string(),
             },
             BrainCodeActTemplateSlot {
-                name: "scope".to_string(),
+                name: "keywords".to_string(),
+                required: false,
+                default_value: "[]".to_string(),
+                allowed_values: Vec::new(),
+                description: "Optional exact keywords array or delimited list used alongside query.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "date_from".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional inclusive YYYY-MM-DD lower bound for session/message dates.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "date_to".to_string(),
+                required: false,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Optional inclusive YYYY-MM-DD upper bound for session/message dates.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "session_scope".to_string(),
                 required: false,
                 default_value: "all".to_string(),
-                allowed_values: vec!["recent".to_string(), "archived".to_string(), "all".to_string()],
-                description: "Choose recent sessions, archived sessions or both.".to_string(),
+                allowed_values: vec!["current".to_string(), "recent".to_string(), "archived".to_string(), "all".to_string()],
+                description: "Choose current session, recent sessions, archived sessions or all sessions.".to_string(),
             },
             BrainCodeActTemplateSlot {
-                name: "targets".to_string(),
+                name: "content_scope".to_string(),
                 required: false,
-                default_value: "session_text|attachments|files|computes|proofs|metrics".to_string(),
+                default_value: "all".to_string(),
+                allowed_values: vec!["messages".to_string(), "files".to_string(), "artifacts".to_string(), "all".to_string()],
+                description: "Search messages, files, artifacts or all indexed archive content.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "file_origin".to_string(),
+                required: false,
+                default_value: "all".to_string(),
+                allowed_values: vec!["uploaded".to_string(), "created_in_app".to_string(), "all".to_string()],
+                description: "File origin filter. Uploaded means user-provided files; created_in_app covers agent outputs, scrapers, generated images, computes and Banger/3D artifacts.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "created_in_app_sources".to_string(),
+                required: false,
+                default_value: "[]".to_string(),
                 allowed_values: vec![
-                    "session_text".to_string(),
-                    "attachments".to_string(),
-                    "files".to_string(),
-                    "computes".to_string(),
-                    "proofs".to_string(),
-                    "metrics".to_string(),
+                    "agent".to_string(),
+                    "scrapers".to_string(),
+                    "image_generation".to_string(),
+                    "image_edit".to_string(),
+                    "compute".to_string(),
+                    "banger_3d".to_string(),
+                    "other".to_string(),
                 ],
-                description: "Archive fields to search; implementations may ignore unsupported targets but must stay read-only.".to_string(),
+                description: "Optional source filter used when file_origin is created_in_app or all.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "file_types".to_string(),
+                required: false,
+                default_value: "[]".to_string(),
+                allowed_values: vec![
+                    "image".to_string(),
+                    "pdf".to_string(),
+                    "text".to_string(),
+                    "code".to_string(),
+                    "markdown".to_string(),
+                    "csv".to_string(),
+                    "json".to_string(),
+                    "html".to_string(),
+                    "audio".to_string(),
+                    "video".to_string(),
+                    "model3d".to_string(),
+                    "other".to_string(),
+                ],
+                description: "Optional file type filter for files/artifacts.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "top_k".to_string(),
                 required: false,
-                default_value: "5".to_string(),
+                default_value: "10".to_string(),
                 allowed_values: Vec::new(),
                 description: "Maximum ranked hits to return; bounded by the host.".to_string(),
             },
             BrainCodeActTemplateSlot {
-                name: "context_window".to_string(),
+                name: "context_turns".to_string(),
                 required: false,
-                default_value: "turns:1".to_string(),
+                default_value: "3".to_string(),
                 allowed_values: Vec::new(),
                 description: "Neighbor turns before and after each match; bounded by the host to avoid token explosions.".to_string(),
             },
             BrainCodeActTemplateSlot {
-                name: "output".to_string(),
+                name: "include_file_previews".to_string(),
                 required: false,
-                default_value: "snippets".to_string(),
-                allowed_values: vec![
-                    "snippets".to_string(),
-                    "manifest".to_string(),
-                    "restore_context".to_string(),
-                ],
-                description: "Result mode; default returns snippets and refs, restore_context may fetch more in a second bounded call.".to_string(),
+                default_value: "true".to_string(),
+                allowed_values: vec!["true".to_string(), "false".to_string()],
+                description: "Whether file hits may include bounded text/table previews.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "include_artifact_refs".to_string(),
+                required: false,
+                default_value: "true".to_string(),
+                allowed_values: vec!["true".to_string(), "false".to_string()],
+                description: "Whether file/artifact hits may include archive open refs.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "template_proof_hash".to_string(),
+                required: true,
+                default_value: "from_SEARCHARCHIVE_TEMPLATE_RESULT".to_string(),
+                allowed_values: Vec::new(),
+                description: "Copy the sha256 value returned by SEARCHARCHIVE_TEMPLATE_RESULT. The host refuses execution without it, so /searcharchive_ cannot be used as a shortcut.".to_string(),
             },
         ],
     };
@@ -3448,11 +3514,18 @@ mod tests {
         assert_eq!(template.section, "general");
         assert_eq!(template.result_schema, BRAIN_SEARCHARCHIVE_RESULT_SCHEMA);
         assert_eq!(template.proof_hash.len(), 40);
-        assert!(template.purpose.contains("bounded snippets"));
+        assert!(template.purpose.contains("Strict two-phase archive search"));
         assert!(template.slots.iter().any(|slot| slot.name == "query" && slot.required));
         assert!(template.slots.iter().any(|slot| {
-            slot.name == "context_window" && slot.description.contains("token")
+            slot.name == "context_turns" && slot.description.contains("token")
         }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "session_scope" && slot.allowed_values.contains(&"current".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| {
+            slot.name == "file_origin" && slot.allowed_values.contains(&"created_in_app".to_string())
+        }));
+        assert!(template.slots.iter().any(|slot| slot.name == "template_proof_hash" && slot.required));
         assert!(brain_general_codeact_templates()
             .iter()
             .any(|candidate| candidate.command == BRAIN_SEARCHARCHIVE_COMMAND));

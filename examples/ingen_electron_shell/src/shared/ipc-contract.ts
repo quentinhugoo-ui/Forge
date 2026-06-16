@@ -1561,15 +1561,51 @@ export interface CitySuggestionResult {
   error?: IpcError;
 }
 
-export type SearchArchiveScope = "recent" | "archived" | "all";
+export type SearchArchiveSessionScope = "current" | "recent" | "archived" | "all";
+export type SearchArchiveScope = SearchArchiveSessionScope;
 export type SearchArchiveSourceType = "session_message" | "attachment";
+export type SearchArchiveContentScope = "messages" | "files" | "artifacts" | "all";
+export type SearchArchiveFileOrigin = "uploaded" | "created_in_app" | "all";
+export type SearchArchiveCreatedInAppSource =
+  | "agent"
+  | "scrapers"
+  | "image_generation"
+  | "image_edit"
+  | "compute"
+  | "banger_3d"
+  | "other";
+export type SearchArchiveFileType =
+  | "image"
+  | "pdf"
+  | "text"
+  | "code"
+  | "markdown"
+  | "csv"
+  | "json"
+  | "html"
+  | "audio"
+  | "video"
+  | "model3d"
+  | "other";
 
 export interface SearchArchiveRequest {
   query: string;
+  keywords?: string[];
+  dateFrom?: string;
+  dateTo?: string;
   scope?: SearchArchiveScope;
+  sessionScope?: SearchArchiveSessionScope;
+  currentSessionId?: string;
+  contentScope?: SearchArchiveContentScope;
+  fileOrigin?: SearchArchiveFileOrigin;
+  createdInAppSources?: SearchArchiveCreatedInAppSource[];
+  fileTypes?: SearchArchiveFileType[];
   topK?: number;
   contextTurns?: number;
   targets?: string[];
+  includeFilePreviews?: boolean;
+  includeArtifactRefs?: boolean;
+  templateProofHash?: string;
 }
 
 export interface SearchArchiveContextLine {
@@ -1583,7 +1619,11 @@ export interface SearchArchiveAttachmentRef {
   id: string;
   name: string;
   kind: ComposerUploadPreview["kind"];
+  fileType: SearchArchiveFileType;
+  origin: SearchArchiveFileOrigin;
+  createdInAppSource: SearchArchiveCreatedInAppSource;
   textPreview: string;
+  artifactRefIncluded: boolean;
   proofHash: string;
   openRef: string;
 }
