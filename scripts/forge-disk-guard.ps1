@@ -45,8 +45,8 @@ function Assert-SafeCleanupPath([string]$PathText) {
             if ($resolved -notlike "$Root\.codex-targets*" -and
                 $resolved -notlike "$Root\.codex-tmp*" -and
                 $resolved -notlike "$Root\target-fuzz-local*" -and
-                $resolved -notlike "$Root\examples\ingen_native_front\target-check*" -and
-                $resolved -notlike "$Root\examples\ingen_native_front\target-desktop*") {
+                $resolved -notlike "$Root\examples\ingen_native_services\target-check*" -and
+                $resolved -notlike "$Root\examples\ingen_native_services\target-desktop*") {
                 throw "Refusing protected cleanup path: $resolved"
             }
         }
@@ -172,8 +172,8 @@ $candidates = @(
     # The live desktop app uses .codex-targets/.codex-tmp as its presentation
     # pipeline. Cleaning them while Cargo or the app is alive corrupts hot builds.
     New-Candidate 2 "Forge fuzz target" (Join-Path $Root "target-fuzz-local") "Directory"
-    New-Candidate 2 "Native front check target" (Join-Path $Root "examples\ingen_native_front\target-check") "Directory"
-    New-Candidate 2 "Native front desktop target" (Join-Path $Root "examples\ingen_native_front\target-desktop") "Directory"
+    New-Candidate 2 "Native services check target" (Join-Path $Root "examples\ingen_native_services\target-check") "Directory"
+    New-Candidate 2 "Native services desktop target" (Join-Path $Root "examples\ingen_native_services\target-desktop") "Directory"
     New-Candidate 3 "NVIDIA shader cache" (Join-Path $UserProfile "AppData\Local\NVIDIA\DXCache") "Contents"
     New-Candidate 3 "Unreal derived data cache" (Join-Path $UserProfile "AppData\Local\UnrealEngine\Common\Zen\Data\cache") "Contents"
     New-Candidate 3 "Claude app cache" (Join-Path $UserProfile "AppData\Roaming\Claude\Cache") "Contents"

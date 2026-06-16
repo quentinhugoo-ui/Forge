@@ -5383,7 +5383,7 @@ mod tests {
         let manifest_paths = [
             repo_file("Cargo.toml"),
             repo_file("Cargo.lock"),
-            repo_file("examples/ingen_native_front/Cargo.toml"),
+            repo_file("examples/ingen_electron_shell/contract/Cargo.toml"),
             repo_file("examples/ingen_native_services/Cargo.toml"),
         ];
         let banned_deps = ["wasmtime", "wasmer", "llvm-sys", "inkwell", "mlir"];
@@ -35668,8 +35668,8 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
-            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_native_front/src/product_sections.rs"], "lifecycle": "open-close", "nativePresentCommands": ["bloomberg_live_native_present"] }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_electron_shell/src/renderer/App.tsx"], "lifecycle": "always-active" },
+            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_electron_shell/src/renderer/CanvasSurfacesSlice.tsx"], "lifecycle": "open-close", "nativePresentCommands": ["bloomberg_live_native_present"] }
           ],
           "sensitiveCommands": [
             { "command": "bloomberg_live_native_present", "owner": "trading", "requiresBridge": true },
@@ -35692,8 +35692,8 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
-            { "id": "banger", "owner": "Banger viewport", "files": ["examples/ingen_native_front/src/banger_viewport.rs"], "lifecycle": "open-close" }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_electron_shell/src/renderer/App.tsx"], "lifecycle": "always-active" },
+            { "id": "banger", "owner": "Banger viewport", "files": ["examples/ingen_electron_shell/src/renderer/CanvasSurfacesSlice.tsx"], "lifecycle": "open-close" }
           ],
           "sensitiveCommands": [
             { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
@@ -35721,8 +35721,8 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
-            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_native_front/src/product_sections.rs"], "lifecycle": "open-close" }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_electron_shell/src/renderer/App.tsx"], "lifecycle": "always-active" },
+            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_electron_shell/src/renderer/CanvasSurfacesSlice.tsx"], "lifecycle": "open-close" }
           ],
           "sensitiveCommands": [
             { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
