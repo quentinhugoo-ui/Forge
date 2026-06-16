@@ -16,9 +16,9 @@ describe("session rename CodeAct", () => {
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("/rename_session_<short title>_");
     expect(generatedSource).toContain("The app strips the tag before display");
-    expect(mainSource).toContain("Au premier message assistant de cette session");
-    expect(mainSource).toContain("/rename_session_<titre court>_");
-    expect(mainSource).toContain("L'application retire la balise avant affichage");
+    expect(mainSource).toContain("On the first assistant response in this session");
+    expect(mainSource).toContain("/rename_session_<short title>_");
+    expect(mainSource).toContain("The app strips the tag before display");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_PATTERN");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_FRAGMENT_PATTERN");
     expect(mainSource).toContain("trimmed.match(RENAME_SESSION_TAG_PATTERN)");
