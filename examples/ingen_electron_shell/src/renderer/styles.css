@@ -7677,14 +7677,14 @@ ol.assistantText__list li::before {
 }
 
 .composer__input {
-  grid-column: 3 / 5;
+  grid-column: 3 / 4;
   grid-row: 1;
   width: 100%;
   min-width: 0;
   min-height: 66px;
   max-height: 132px;
   height: 66px;
-  padding: 14px 12px 31px 8px;
+  padding: 8px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -13446,7 +13446,7 @@ ol.assistantText__list li::before {
   .composer__input {
     min-height: 60px;
     height: 60px;
-    padding: 13px 12px 30px 7px;
+    padding: 8px;
   }
 
   .bottomControls {
@@ -13483,7 +13483,7 @@ ol.assistantText__list li::before {
 .shell--widget-mode .composer__input {
   min-height: 66px;
   height: 66px;
-  padding: 14px 12px 31px 8px;
+  padding: 8px;
 }
 
 .shell--widget-minimizing .composer__upload,

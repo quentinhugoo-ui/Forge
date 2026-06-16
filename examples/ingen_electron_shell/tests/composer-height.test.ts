@@ -20,6 +20,8 @@ describe("composer height", () => {
     expect(stylesSource).toContain("scrollbar-color: color-mix(in oklab, var(--forge-line), #000 22%) transparent");
     expect(stylesSource).toContain(".composer__input::-webkit-scrollbar");
     expect(stylesSource).toContain("width: 2px;");
-    expect(stylesSource).toContain("padding: 14px 12px 31px 8px;");
+    expect(stylesSource).toContain("grid-column: 3 / 4;");
+    expect(stylesSource).toContain("padding: 8px;");
+    expect(stylesSource).not.toContain("padding: 14px 12px 31px 8px;");
   });
 });
