@@ -62,6 +62,36 @@ function iconClass(control: Pick<HeaderControl, "icon" | "id">): string {
   }
 }
 
+const TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR = [
+  "button[aria-label]",
+  "a[aria-label]",
+  "[role='button'][aria-label]",
+  "[role='menuitem'][aria-label]",
+  "[role='tab'][aria-label]",
+  "[tabindex][aria-label]"
+].join(",");
+
+function stripTooltipAttributes(root: ParentNode = document): void {
+  const tooltipElements = [
+    ...(root instanceof HTMLElement && root.matches("[title], [data-tooltip], [role='tooltip']") ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>("[title], [data-tooltip], [role='tooltip']"))
+  ];
+  tooltipElements.forEach((element) => {
+    element.removeAttribute("title");
+    element.removeAttribute("data-tooltip");
+    if (element.getAttribute("role") === "tooltip") {
+      element.removeAttribute("role");
+    }
+  });
+  const interactiveElements = [
+    ...(root instanceof HTMLElement && root.matches(TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR) ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>(TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR))
+  ];
+  interactiveElements.forEach((element) => {
+    element.removeAttribute("aria-label");
+  });
+}
+
 function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModuleId | null {
   if (event.command === BRAIN_AIRBNB_COMMAND) return "airbnb";
   if (event.command === BRAIN_GMAIL_COMMAND || event.command === BRAIN_GMAIL_COM_COMMAND) return "gmail";
@@ -354,6 +384,33 @@ export function App() {
   const widgetModeTransitioningRef = useRef(false);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const mapsOwnerSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    stripTooltipAttributes(document);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "attributes") {
+          const target = mutation.target instanceof HTMLElement ? mutation.target : null;
+          if (target) {
+            stripTooltipAttributes(target.parentElement ?? document);
+          }
+          continue;
+        }
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement) {
+            stripTooltipAttributes(node);
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["title", "data-tooltip", "role", "aria-label"]
+    });
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
@@ -1398,7 +1455,6 @@ export function App() {
               <button
                 type="button"
                 className={control.selected ? "iconButton iconButton--selected" : "iconButton"}
-                aria-label={control.label}
                 aria-controls={
                   control.command === "toggle_left_panel"
                     ? "left-panel"
@@ -1422,7 +1478,6 @@ export function App() {
               <button
                 type="button"
                 className={control.id === "window-close" ? "windowButton windowButton--danger" : "windowButton"}
-                aria-label={control.label}
                 key={control.id}
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
@@ -1455,7 +1510,6 @@ export function App() {
         type="button"
         className="widgetWindowsButton"
         aria-hidden={!widgetMode}
-        aria-label="Toggle Windows taskbar"
         tabIndex={widgetMode ? 0 : -1}
         onClick={() => {
           setWidgetTaskbarShown((shown) => !shown);

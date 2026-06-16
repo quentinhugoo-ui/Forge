@@ -5737,7 +5737,6 @@ export function PanelsChatBottomSlice({
         <button
           type="button"
           className={widgetMode ? "bottomControls__widgetButton bottomControls__widgetButton--active" : "bottomControls__widgetButton"}
-          aria-label="Switch to widget mode"
           aria-pressed={widgetMode}
           disabled={widgetModeTransitioning}
           onClick={toggleWidgetMode}
@@ -5748,7 +5747,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__flipButton bottomControls__flipButton--model"
-            aria-label={`Flip model from ${snapshot.composer.modelLabel}`}
             onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
           >
             <ChevronsUpDown aria-hidden="true" size={9} strokeWidth={2.1} />
@@ -5756,7 +5754,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__modelButton"
-            aria-label={`Current model ${snapshot.composer.modelLabel}. Flip model.`}
             onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
           >
             <BottomControlsFlipText value={snapshot.composer.modelLabel} />
@@ -5764,7 +5761,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__reasoningButton"
-            aria-label={`Current reasoning power ${snapshot.composer.reasoningLabel}. Flip reasoning power.`}
             onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
           >
             <BottomControlsFlipText value={snapshot.composer.reasoningLabel} />
@@ -5772,7 +5768,6 @@ export function PanelsChatBottomSlice({
           <button
             type="button"
             className="bottomControls__flipButton bottomControls__flipButton--reasoning"
-            aria-label={`Flip reasoning power from ${snapshot.composer.reasoningLabel}`}
             onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
           >
             <ChevronsUpDown aria-hidden="true" size={9} strokeWidth={2.1} />
