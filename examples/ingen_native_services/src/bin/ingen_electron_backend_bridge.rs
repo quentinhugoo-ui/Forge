@@ -415,15 +415,19 @@ struct BangerMapsGpuPrimitiveStage {
     material_index: Option<usize>,
     mode: u32,
     position_accessor: usize,
+    normal_accessor: Option<usize>,
+    texcoord0_accessor: Option<usize>,
     index_accessor: Option<usize>,
     vertex_count: usize,
     index_count: usize,
+    source_position_buffer_byte_count: usize,
     vertex_buffer_byte_count: usize,
     index_buffer_byte_count: usize,
     vertex_buffer_hash: String,
     index_buffer_hash: String,
     index_format: &'static str,
     vertex_stride_bytes: usize,
+    vertex_layout: &'static str,
     wgpu_vertex_usage: &'static str,
     wgpu_index_usage: &'static str,
 }
@@ -1701,6 +1705,28 @@ fn stage_banger_gltf_primitive(
             position.component_type, position.accessor_type
         ));
     }
+    let normal_accessor = attributes.get("NORMAL").and_then(Value::as_u64).map(|value| value as usize);
+    let texcoord0_accessor = attributes.get("TEXCOORD_0").and_then(Value::as_u64).map(|value| value as usize);
+    let normals = match normal_accessor {
+        Some(accessor_index) => Some(banger_maps_float_vec3_accessor_values(
+            &banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?,
+            "NORMAL",
+        )?),
+        None => None,
+    };
+    let texcoords = match texcoord0_accessor {
+        Some(accessor_index) => Some(banger_maps_float_vec2_accessor_values(
+            &banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?,
+            "TEXCOORD_0",
+        )?),
+        None => None,
+    };
+    if normals.as_ref().is_some_and(|values| values.len() != position.count) {
+        return Err(format!("mesh {mesh_index} primitive {primitive_index} NORMAL count must match POSITION count"));
+    }
+    if texcoords.as_ref().is_some_and(|values| values.len() != position.count) {
+        return Err(format!("mesh {mesh_index} primitive {primitive_index} TEXCOORD_0 count must match POSITION count"));
+    }
     let index_accessor = primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize);
     let (index_bytes, index_count, index_format) = match index_accessor {
         Some(accessor_index) => {
@@ -1726,26 +1752,100 @@ fn stage_banger_gltf_primitive(
         }
         None => (Vec::new(), 0, "none"),
     };
+    let material_color = primitive
+        .get("material")
+        .and_then(Value::as_u64)
+        .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
+        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+    let vertex_bytes = banger_maps_engine_vertex_buffer_bytes(
+        &position,
+        normals.as_deref(),
+        texcoords.as_deref(),
+        material_color,
+    )?;
     Ok(BangerMapsGpuPrimitiveStage {
         mesh_index,
         primitive_index,
         material_index: primitive.get("material").and_then(Value::as_u64).map(|value| value as usize),
         mode: primitive.get("mode").and_then(Value::as_u64).unwrap_or(4) as u32,
         position_accessor,
+        normal_accessor,
+        texcoord0_accessor,
         index_accessor,
         vertex_count: position.count,
         index_count,
-        vertex_buffer_byte_count: position.bytes.len(),
+        source_position_buffer_byte_count: position.bytes.len(),
+        vertex_buffer_byte_count: vertex_bytes.len(),
         index_buffer_byte_count: index_bytes.len(),
-        vertex_buffer_hash: sha256_hex(&position.bytes),
+        vertex_buffer_hash: sha256_hex(&vertex_bytes),
         index_buffer_hash: sha256_hex(&index_bytes),
         index_format,
-        vertex_stride_bytes: 12,
+        vertex_stride_bytes: 48,
+        vertex_layout: "float32x3_position_float32x3_normal_float32x2_uv_float32x4_base_color",
         wgpu_vertex_usage: "VERTEX|COPY_DST",
         wgpu_index_usage: "INDEX|COPY_DST",
     })
 }
 
+fn banger_maps_float_vec3_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 3]>, String> {
+    if stage.component_type != 5126 || stage.accessor_type != "VEC3" {
+        return Err(format!("{semantic} must be FLOAT VEC3, got {} {}", stage.component_type, stage.accessor_type));
+    }
+    Ok(stage
+        .bytes
+        .chunks_exact(12)
+        .map(|chunk| [
+            f32::from_le_bytes(chunk[0..4].try_into().expect("vec3 x bytes")),
+            f32::from_le_bytes(chunk[4..8].try_into().expect("vec3 y bytes")),
+            f32::from_le_bytes(chunk[8..12].try_into().expect("vec3 z bytes")),
+        ])
+        .collect())
+}
+
+fn banger_maps_float_vec2_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 2]>, String> {
+    if stage.component_type != 5126 || stage.accessor_type != "VEC2" {
+        return Err(format!("{semantic} must be FLOAT VEC2, got {} {}", stage.component_type, stage.accessor_type));
+    }
+    Ok(stage
+        .bytes
+        .chunks_exact(8)
+        .map(|chunk| [
+            f32::from_le_bytes(chunk[0..4].try_into().expect("vec2 x bytes")),
+            f32::from_le_bytes(chunk[4..8].try_into().expect("vec2 y bytes")),
+        ])
+        .collect())
+}
+
+fn banger_maps_engine_vertex_buffer_bytes(
+    position: &BangerGltfAccessorStage,
+    normals: Option<&[[f32; 3]]>,
+    texcoords: Option<&[[f32; 2]]>,
+    material_color: [f32; 4],
+) -> Result<Vec<u8>, String> {
+    let positions = banger_maps_float_vec3_accessor_values(position, "POSITION")?;
+    let mut bytes = Vec::with_capacity(positions.len() * 48);
+    for (index, position) in positions.iter().enumerate() {
+        let normal = normals.and_then(|values| values.get(index)).copied().unwrap_or([0.0, 1.0, 0.0]);
+        let uv = texcoords.and_then(|values| values.get(index)).copied().unwrap_or([0.0, 0.0]);
+        for value in [
+            position[0],
+            position[1],
+            position[2],
+            normal[0],
+            normal[1],
+            normal[2],
+            uv[0],
+            uv[1],
+            material_color[0],
+            material_color[1],
+            material_color[2],
+            material_color[3],
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    Ok(bytes)
+}
 fn banger_maps_gltf_format_support_for_record(
     record: &BangerMapsContentDecodeRecord,
     bytes: &[u8],
@@ -1770,7 +1870,7 @@ fn banger_maps_unknown_gltf_format_support() -> BangerMapsGltfFormatSupport {
         unsupported_used_extensions: Vec::new(),
         unsupported_required_extensions: Vec::new(),
         compression_blocker: Some("glTF format could not be inspected before native upload".to_string()),
-        upload_policy: "raw_float32_position_u16_u32_indices_material_color_texture_staging_v1",
+        upload_policy: "banger_interleaved_pbr_vertex_u16_u32_indices_material_texture_staging_v1",
     }
 }
 
@@ -1806,7 +1906,7 @@ fn banger_maps_gltf_format_support(gltf: &Value) -> BangerMapsGltfFormatSupport 
         unsupported_used_extensions,
         unsupported_required_extensions,
         compression_blocker,
-        upload_policy: "raw_float32_position_u16_u32_indices_material_color_texture_staging_v1",
+        upload_policy: "banger_interleaved_pbr_vertex_u16_u32_indices_material_texture_staging_v1",
     }
 }
 
@@ -2087,11 +2187,38 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
                     "mesh {mesh_index} primitive {primitive_index} POSITION must be FLOAT VEC3 before wgpu upload"
                 ));
             }
+            let normal_accessor = attributes.get("NORMAL").and_then(Value::as_u64).map(|value| value as usize);
+            let texcoord0_accessor = attributes.get("TEXCOORD_0").and_then(Value::as_u64).map(|value| value as usize);
+            let normals = match normal_accessor {
+                Some(accessor_index) => Some(banger_maps_float_vec3_accessor_values(
+                    &banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?,
+                    "NORMAL",
+                )?),
+                None => None,
+            };
+            let texcoords = match texcoord0_accessor {
+                Some(accessor_index) => Some(banger_maps_float_vec2_accessor_values(
+                    &banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?,
+                    "TEXCOORD_0",
+                )?),
+                None => None,
+            };
+            let material_color = primitive
+                .get("material")
+                .and_then(Value::as_u64)
+                .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let vertex_bytes = banger_maps_engine_vertex_buffer_bytes(
+                &position,
+                normals.as_deref(),
+                texcoords.as_deref(),
+                material_color,
+            )?;
             vertex_buffers.push(banger_create_mapped_buffer(
                 device,
-                "banger maps gltf position vertex buffer",
+                "banger maps gltf engine vertex buffer",
                 wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                &position.bytes,
+                &vertex_bytes,
             ));
             if let Some(index_accessor) = primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
                 let indices = banger_gltf_accessor_stage(gltf, bin_chunk, index_accessor)?;
@@ -3651,7 +3778,6 @@ fn banger_maps_generated_u16_index_bytes(vertex_count: usize) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
-#[cfg(target_os = "windows")]
 fn banger_gltf_material_base_color(gltf: &Value, material_index: usize) -> Option<[f32; 4]> {
     let material = gltf.get("materials").and_then(Value::as_array)?.get(material_index)?;
     material
@@ -4325,12 +4451,21 @@ mod tests {
         assert_eq!(projection.gpu_staging.staged_content_count, 1);
         assert_eq!(projection.gpu_staging.failed_content_count, 0);
         assert_eq!(projection.gpu_staging.primitive_count, 1);
-        assert_eq!(projection.gpu_staging.vertex_buffer_byte_count, 36);
+        assert_eq!(projection.gpu_staging.vertex_buffer_byte_count, 3 * 48);
         assert_eq!(projection.gpu_staging.index_buffer_byte_count, 6);
         assert_eq!(projection.gpu_staging.texture_byte_count, 4);
         let stage = &projection.gpu_staging.records[0];
         assert_eq!(stage.primitive_stages[0].vertex_count, 3);
         assert_eq!(stage.primitive_stages[0].index_count, 3);
+        assert_eq!(stage.primitive_stages[0].source_position_buffer_byte_count, 36);
+        assert_eq!(stage.primitive_stages[0].vertex_buffer_byte_count, 3 * 48);
+        assert_eq!(stage.primitive_stages[0].vertex_stride_bytes, 48);
+        assert_eq!(
+            stage.primitive_stages[0].vertex_layout,
+            "float32x3_position_float32x3_normal_float32x2_uv_float32x4_base_color"
+        );
+        assert_eq!(stage.primitive_stages[0].normal_accessor, None);
+        assert_eq!(stage.primitive_stages[0].texcoord0_accessor, None);
         assert_eq!(stage.primitive_stages[0].index_format, "uint16");
         assert_eq!(stage.primitive_stages[0].wgpu_vertex_usage, "VERTEX|COPY_DST");
         assert_eq!(stage.primitive_stages[0].wgpu_index_usage, "INDEX|COPY_DST");
@@ -4347,7 +4482,13 @@ mod tests {
         assert_eq!(primitives.len(), 1);
         assert_eq!(primitives[0].position_accessor, 0);
         assert_eq!(primitives[0].index_accessor, Some(1));
-        assert_eq!(primitives[0].vertex_buffer_byte_count, 36);
+        assert_eq!(primitives[0].source_position_buffer_byte_count, 36);
+        assert_eq!(primitives[0].vertex_buffer_byte_count, 3 * 48);
+        assert_eq!(primitives[0].vertex_stride_bytes, 48);
+        assert_eq!(
+            primitives[0].vertex_layout,
+            "float32x3_position_float32x3_normal_float32x2_uv_float32x4_base_color"
+        );
         assert_eq!(primitives[0].index_buffer_byte_count, 6);
         assert_eq!(primitives[0].vertex_buffer_hash.len(), 64);
         assert_eq!(primitives[0].index_buffer_hash.len(), 64);
