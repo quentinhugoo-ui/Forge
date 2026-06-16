@@ -284,6 +284,7 @@ struct BangerMapsTraversalTile {
     bounding_volume_kind: String,
     bounding_volume_hash: String,
     transform_hash: String,
+    global_transform: [f64; 16],
     content_uris: Vec<String>,
     priority_key: f64,
 }
@@ -318,6 +319,7 @@ struct BangerMapsContentCacheRecord {
     fetched: bool,
     byte_count: usize,
     content_hash: String,
+    tile_global_transform: [f64; 16],
     error: Option<String>,
 }
 
@@ -350,6 +352,7 @@ struct BangerMapsContentDecodeRecord {
     b3dm: Option<BangerB3dmHeaderProjection>,
     glb: Option<BangerGlbProjection>,
     gltf: Option<BangerGltfSummaryProjection>,
+    tile_global_transform: [f64; 16],
     error: Option<String>,
 }
 
@@ -1120,7 +1123,14 @@ fn build_banger_maps_traversal_seed(root: Option<&Value>) -> BangerMapsTraversal
         .unwrap_or(64);
     let mut tiles = Vec::new();
     if let Some(root) = root {
-        collect_banger_maps_traversal_tiles(root, None, 0, "0".to_string(), &mut tiles);
+        collect_banger_maps_traversal_tiles(
+            root,
+            None,
+            banger_identity_mat4_f64(),
+            0,
+            "0".to_string(),
+            &mut tiles,
+        );
     }
     let total_tile_count = tiles.len();
     let total_content_uri_count = tiles.iter().map(|tile| tile.content_uris.len()).sum();
@@ -1131,12 +1141,13 @@ fn build_banger_maps_traversal_seed(root: Option<&Value>) -> BangerMapsTraversal
             .iter()
             .map(|tile| {
                 format!(
-                    "{}:{}:{:?}:{}:{}:{};",
+                    "{}:{}:{:?}:{}:{}:{}:{};",
                     tile.tile_id,
                     tile.depth,
                     tile.geometric_error,
                     tile.bounding_volume_hash,
                     tile.transform_hash,
+                    banger_transform_hash(&tile.global_transform),
                     tile.content_uris.join(",")
                 )
             })
@@ -1159,6 +1170,7 @@ fn build_banger_maps_traversal_seed(root: Option<&Value>) -> BangerMapsTraversal
 fn collect_banger_maps_traversal_tiles(
     tile: &Value,
     parent_tile_id: Option<String>,
+    parent_global_transform: [f64; 16],
     depth: usize,
     path: String,
     out: &mut Vec<BangerMapsTraversalTile>,
@@ -1173,7 +1185,9 @@ fn collect_banger_maps_traversal_tiles(
     let bounding_volume = tile.get("boundingVolume");
     let bounding_volume_kind = banger_bounding_volume_kind(bounding_volume).to_string();
     let bounding_volume_hash = banger_value_hash(bounding_volume);
-    let transform_hash = banger_value_hash(tile.get("transform"));
+    let local_transform = banger_tile_transform_matrix(tile);
+    let global_transform = banger_mat4_mul_f64(parent_global_transform, local_transform);
+    let transform_hash = banger_transform_hash(&global_transform);
     let tile_id = format!(
         "tile_{}",
         &sha256_hex(
@@ -1197,6 +1211,7 @@ fn collect_banger_maps_traversal_tiles(
         bounding_volume_kind,
         bounding_volume_hash,
         transform_hash,
+        global_transform,
         content_uris,
         priority_key,
     });
@@ -1213,6 +1228,7 @@ fn collect_banger_maps_traversal_tiles(
             collect_banger_maps_traversal_tiles(
                 child,
                 Some(tile_id.clone()),
+                global_transform,
                 depth + 1,
                 format!("{path}.{index}"),
                 out,
@@ -1323,6 +1339,7 @@ fn build_banger_maps_content_cache(
                     fetched: false,
                     byte_count: 0,
                     content_hash: String::new(),
+                    tile_global_transform: tile.global_transform,
                     error: None,
                 });
                 continue;
@@ -1341,6 +1358,7 @@ fn build_banger_maps_content_cache(
                         fetched: false,
                         byte_count: bytes.len(),
                         content_hash: sha256_hex(&bytes),
+                        tile_global_transform: tile.global_transform,
                         error: None,
                     });
                 }
@@ -1358,6 +1376,7 @@ fn build_banger_maps_content_cache(
                             fetched: true,
                             byte_count: bytes.len(),
                             content_hash: sha256_hex(&bytes),
+                            tile_global_transform: tile.global_transform,
                             error: None,
                         });
                     }
@@ -1373,6 +1392,7 @@ fn build_banger_maps_content_cache(
                             fetched: false,
                             byte_count: 0,
                             content_hash: String::new(),
+                            tile_global_transform: tile.global_transform,
                             error: Some(error),
                         });
                     }
@@ -1393,12 +1413,13 @@ fn build_banger_maps_content_cache(
             .iter()
             .map(|record| {
                 format!(
-                    "{}:{}:{}:{}:{};",
+                    "{}:{}:{}:{}:{}:{};",
                     record.tile_id,
                     record.source_uri,
                     record.cache_path,
                     record.byte_count,
-                    record.content_hash
+                    record.content_hash,
+                    banger_transform_hash(&record.tile_global_transform)
                 )
             })
             .collect::<String>()
@@ -2750,6 +2771,7 @@ fn decode_banger_maps_content_record(record: &BangerMapsContentCacheRecord) -> B
                     b3dm: Some(b3dm),
                     glb: Some(glb),
                     gltf: Some(gltf),
+                    tile_global_transform: record.tile_global_transform,
                     error: None,
                 },
                 Err(error) => failed_banger_decode_record(record, "b3dm", error),
@@ -2768,6 +2790,7 @@ fn decode_banger_maps_content_record(record: &BangerMapsContentCacheRecord) -> B
                 b3dm: None,
                 glb: Some(glb),
                 gltf: Some(gltf),
+                tile_global_transform: record.tile_global_transform,
                 error: None,
             },
             Err(error) => failed_banger_decode_record(record, "glb", error),
@@ -2784,6 +2807,7 @@ fn decode_banger_maps_content_record(record: &BangerMapsContentCacheRecord) -> B
                 b3dm: None,
                 glb: None,
                 gltf: Some(gltf),
+                tile_global_transform: record.tile_global_transform,
                 error: None,
             },
             Err(error) => failed_banger_decode_record(record, "gltf", error),
@@ -2808,6 +2832,7 @@ fn failed_banger_decode_record(
         b3dm: None,
         glb: None,
         gltf: None,
+        tile_global_transform: record.tile_global_transform,
         error: Some(error),
     }
 }
@@ -4048,10 +4073,20 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
             "b3dm" => decode_banger_b3dm(&bytes)
                 .and_then(|(_, glb_bytes)| {
                     let decoded = decode_banger_glb_full(glb_bytes)?;
-                    banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk)
+                    banger_maps_render_mesh_from_gltf(
+                        &decoded.gltf_value,
+                        decoded.bin_chunk,
+                        record.tile_global_transform,
+                    )
                 }),
             "glb" => decode_banger_glb_full(&bytes)
-                .and_then(|decoded| banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk)),
+                .and_then(|decoded| {
+                    banger_maps_render_mesh_from_gltf(
+                        &decoded.gltf_value,
+                        decoded.bin_chunk,
+                        record.tile_global_transform,
+                    )
+                }),
             _ => Err(format!("render mesh unsupported container {}", record.container)),
         };
         if let Ok(mesh) = candidate {
@@ -4068,15 +4103,28 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_render_mesh_from_gltf(gltf: &Value, bin_chunk: &[u8]) -> Result<BangerRenderMeshBytes, String> {
+fn banger_maps_render_mesh_from_gltf(
+    gltf: &Value,
+    bin_chunk: &[u8],
+    tile_global_transform: [f64; 16],
+) -> Result<BangerRenderMeshBytes, String> {
     let meshes = gltf
         .get("meshes")
         .and_then(Value::as_array)
         .ok_or_else(|| "gltf meshes array missing".to_string())?;
+    let mesh_node_transforms = banger_gltf_mesh_node_global_transforms(gltf);
     for (mesh_index, mesh) in meshes.iter().enumerate() {
         let primitives = mesh.get("primitives").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        let gltf_node_transform = mesh_node_transforms
+            .get(&mesh_index)
+            .copied()
+            .unwrap_or_else(banger_identity_mat4_f64);
+        let render_transform = banger_mat4_mul_f64(
+            banger_mat4_mul_f64(tile_global_transform, banger_gltf_y_up_to_z_up_matrix_f64()),
+            gltf_node_transform,
+        );
         for (primitive_index, primitive) in primitives.iter().enumerate() {
-            match banger_maps_render_mesh_from_primitive(gltf, bin_chunk, primitive) {
+            match banger_maps_render_mesh_from_primitive(gltf, bin_chunk, primitive, render_transform) {
                 Ok(mesh) => return Ok(mesh),
                 Err(error) => {
                     let _ = (mesh_index, primitive_index, error);
@@ -4092,6 +4140,7 @@ fn banger_maps_render_mesh_from_primitive(
     gltf: &Value,
     bin_chunk: &[u8],
     primitive: &Value,
+    render_transform: [f64; 16],
 ) -> Result<BangerRenderMeshBytes, String> {
     let mode = primitive.get("mode").and_then(Value::as_u64).unwrap_or(4);
     if mode != 4 {
@@ -4101,7 +4150,7 @@ fn banger_maps_render_mesh_from_primitive(
         .get("extensions")
         .and_then(|extensions| extensions.get("KHR_draco_mesh_compression"))
     {
-        return banger_maps_render_mesh_from_draco_primitive(gltf, bin_chunk, primitive, draco);
+        return banger_maps_render_mesh_from_draco_primitive(gltf, bin_chunk, primitive, draco, render_transform);
     }
     let attributes = primitive
         .get("attributes")
@@ -4121,7 +4170,7 @@ fn banger_maps_render_mesh_from_primitive(
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
-    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(&position, material_color)?;
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(&position, material_color, render_transform)?;
     let index_bytes = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
         Some(index_accessor) => banger_maps_u16_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
         None => banger_maps_generated_u16_index_bytes(position.count)?,
@@ -4140,6 +4189,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
     bin_chunk: &[u8],
     primitive: &Value,
     draco: &Value,
+    render_transform: [f64; 16],
 ) -> Result<BangerRenderMeshBytes, String> {
     let decoded = banger_decode_draco_primitive(gltf, bin_chunk, primitive, draco)?;
     let position = decoded
@@ -4155,7 +4205,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
-    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(position, material_color)?;
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(position, material_color, render_transform)?;
     let index_bytes = banger_maps_u16_index_bytes_from_draco(&decoded)?;
     Ok(BangerRenderMeshBytes {
         vertex_bytes,
@@ -4169,10 +4219,14 @@ fn banger_maps_render_mesh_from_draco_primitive(
 fn banger_maps_position_accessor_to_render_vertices(
     position: &BangerGltfAccessorStage,
     material_color: [f32; 4],
+    render_transform: [f64; 16],
 ) -> Result<Vec<u8>, String> {
-    let positions = banger_maps_float_vec3_accessor_values(position, "POSITION")?;
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
+    let positions = banger_maps_float_vec3_accessor_values(position, "POSITION")?
+        .into_iter()
+        .map(|position| banger_transform_point_f64(render_transform, position))
+        .collect::<Vec<_>>();
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
     for position in &positions {
         for axis in 0..3 {
             min[axis] = min[axis].min(position[axis]);
@@ -4189,13 +4243,13 @@ fn banger_maps_position_accessor_to_render_vertices(
         (max[1] - min[1]).abs(),
         (max[2] - min[2]).abs(),
     ];
-    let scale = extent.into_iter().fold(0.0_f32, f32::max).max(1.0);
+    let scale = extent.into_iter().fold(0.0_f64, f64::max).max(1.0);
     let mut bytes = Vec::with_capacity(positions.len() * 24);
     for position in positions {
         let normalized = [
-            (position[0] - center[0]) / scale * 2.8,
-            (position[1] - center[1]) / scale * 2.8,
-            (position[2] - center[2]) / scale * 2.8,
+            ((position[0] - center[0]) / scale * 2.8) as f32,
+            ((position[1] - center[1]) / scale * 2.8) as f32,
+            ((position[2] - center[2]) / scale * 2.8) as f32,
         ];
         for value in [
             normalized[0],
@@ -4301,6 +4355,207 @@ fn banger_maps_tile_instance_bytes() -> Vec<u8> {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     bytes
+}
+
+fn banger_identity_mat4_f64() -> [f64; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn banger_tile_transform_matrix(tile: &Value) -> [f64; 16] {
+    let Some(values) = tile.get("transform").and_then(Value::as_array) else {
+        return banger_identity_mat4_f64();
+    };
+    if values.len() != 16 {
+        return banger_identity_mat4_f64();
+    }
+    let mut matrix = [0.0; 16];
+    for (index, value) in values.iter().enumerate() {
+        let Some(number) = value.as_f64().filter(|number| number.is_finite()) else {
+            return banger_identity_mat4_f64();
+        };
+        matrix[index] = number;
+    }
+    matrix
+}
+
+fn banger_transform_hash(transform: &[f64; 16]) -> String {
+    sha256_hex(
+        transform
+            .iter()
+            .map(|value| format!("{value:.9};"))
+            .collect::<String>()
+            .as_bytes(),
+    )
+}
+
+fn banger_gltf_y_up_to_z_up_matrix_f64() -> [f64; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, -1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn banger_mat4_mul_f64(a: [f64; 16], b: [f64; 16]) -> [f64; 16] {
+    let mut out = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            out[column * 4 + row] =
+                a[row] * b[column * 4] +
+                a[4 + row] * b[column * 4 + 1] +
+                a[8 + row] * b[column * 4 + 2] +
+                a[12 + row] * b[column * 4 + 3];
+        }
+    }
+    out
+}
+
+fn banger_transform_point_f64(matrix: [f64; 16], point: [f32; 3]) -> [f64; 3] {
+    let x = point[0] as f64;
+    let y = point[1] as f64;
+    let z = point[2] as f64;
+    let w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
+    let inv_w = if w.abs() > f64::EPSILON { 1.0 / w } else { 1.0 };
+    [
+        (matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]) * inv_w,
+        (matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]) * inv_w,
+        (matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]) * inv_w,
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_gltf_mesh_node_global_transforms(gltf: &Value) -> HashMap<usize, [f64; 16]> {
+    let nodes = gltf.get("nodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let mut transforms = HashMap::new();
+    let scene_index = gltf.get("scene").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let scene_roots = gltf
+        .get("scenes")
+        .and_then(Value::as_array)
+        .and_then(|scenes| scenes.get(scene_index))
+        .and_then(|scene| scene.get("nodes"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice);
+    if let Some(scene_roots) = scene_roots {
+        for node_index in scene_roots.iter().filter_map(Value::as_u64).map(|value| value as usize) {
+            banger_collect_gltf_node_transforms(nodes, node_index, banger_identity_mat4_f64(), &mut transforms);
+        }
+    } else {
+        for node_index in 0..nodes.len() {
+            banger_collect_gltf_node_transforms(nodes, node_index, banger_identity_mat4_f64(), &mut transforms);
+        }
+    }
+    transforms
+}
+
+#[cfg(target_os = "windows")]
+fn banger_collect_gltf_node_transforms(
+    nodes: &[Value],
+    node_index: usize,
+    parent_global: [f64; 16],
+    transforms: &mut HashMap<usize, [f64; 16]>,
+) {
+    let Some(node) = nodes.get(node_index) else {
+        return;
+    };
+    let global = banger_mat4_mul_f64(parent_global, banger_gltf_node_local_transform(node));
+    if let Some(mesh_index) = node.get("mesh").and_then(Value::as_u64).map(|value| value as usize) {
+        transforms.entry(mesh_index).or_insert(global);
+    }
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child_index in children.iter().filter_map(Value::as_u64).map(|value| value as usize) {
+            banger_collect_gltf_node_transforms(nodes, child_index, global, transforms);
+        }
+    }
+}
+
+fn banger_gltf_node_local_transform(node: &Value) -> [f64; 16] {
+    if let Some(matrix) = node.get("matrix").and_then(Value::as_array) {
+        if matrix.len() == 16 {
+            let mut out = [0.0; 16];
+            for (index, value) in matrix.iter().enumerate() {
+                let Some(number) = value.as_f64().filter(|number| number.is_finite()) else {
+                    return banger_identity_mat4_f64();
+                };
+                out[index] = number;
+            }
+            return out;
+        }
+    }
+    let translation = banger_json_vec3(node.get("translation"), [0.0, 0.0, 0.0]);
+    let rotation = banger_json_vec4(node.get("rotation"), [0.0, 0.0, 0.0, 1.0]);
+    let scale = banger_json_vec3(node.get("scale"), [1.0, 1.0, 1.0]);
+    banger_mat4_mul_f64(
+        banger_translation_mat4_f64(translation),
+        banger_mat4_mul_f64(banger_quaternion_mat4_f64(rotation), banger_scale_mat4_f64(scale)),
+    )
+}
+
+fn banger_json_vec3(value: Option<&Value>, fallback: [f64; 3]) -> [f64; 3] {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return fallback;
+    };
+    if values.len() != 3 {
+        return fallback;
+    }
+    [
+        values[0].as_f64().unwrap_or(fallback[0]),
+        values[1].as_f64().unwrap_or(fallback[1]),
+        values[2].as_f64().unwrap_or(fallback[2]),
+    ]
+}
+
+fn banger_json_vec4(value: Option<&Value>, fallback: [f64; 4]) -> [f64; 4] {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return fallback;
+    };
+    if values.len() != 4 {
+        return fallback;
+    }
+    [
+        values[0].as_f64().unwrap_or(fallback[0]),
+        values[1].as_f64().unwrap_or(fallback[1]),
+        values[2].as_f64().unwrap_or(fallback[2]),
+        values[3].as_f64().unwrap_or(fallback[3]),
+    ]
+}
+
+fn banger_translation_mat4_f64(translation: [f64; 3]) -> [f64; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        translation[0], translation[1], translation[2], 1.0,
+    ]
+}
+
+fn banger_scale_mat4_f64(scale: [f64; 3]) -> [f64; 16] {
+    [
+        scale[0], 0.0, 0.0, 0.0,
+        0.0, scale[1], 0.0, 0.0,
+        0.0, 0.0, scale[2], 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn banger_quaternion_mat4_f64(rotation: [f64; 4]) -> [f64; 16] {
+    let [x, y, z, w] = rotation;
+    let len = (x * x + y * y + z * z + w * w).sqrt();
+    if len <= f64::EPSILON {
+        return banger_identity_mat4_f64();
+    }
+    let (x, y, z, w) = (x / len, y / len, z / len, w / len);
+    [
+        1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w), 0.0,
+        2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w), 0.0,
+        2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y), 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
 }
 
 #[cfg(target_os = "windows")]
@@ -4632,7 +4887,12 @@ mod tests {
     fn converts_staged_gltf_into_banger_render_mesh_bytes() {
         let glb = test_glb_bytes();
         let decoded = decode_banger_glb_full(&glb).unwrap();
-        let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+        let mesh = banger_maps_render_mesh_from_gltf(
+            &decoded.gltf_value,
+            decoded.bin_chunk,
+            banger_identity_mat4_f64(),
+        )
+        .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
         assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
@@ -4752,7 +5012,11 @@ mod tests {
         }
         let glb = test_glb_with_json_bin(json, &bin);
         let decoded = decode_banger_glb_full(&glb).unwrap();
-        let error = match banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk) {
+        let error = match banger_maps_render_mesh_from_gltf(
+            &decoded.gltf_value,
+            decoded.bin_chunk,
+            banger_identity_mat4_f64(),
+        ) {
             Ok(_) => panic!("line primitive unexpectedly entered triangle draw path"),
             Err(error) => error,
         };
@@ -4834,6 +5098,7 @@ mod tests {
         assert_eq!(projection.traversal_seed.plan_hash.len(), 64);
         assert_eq!(projection.traversal_seed.tiles[0].depth, 0);
         assert_eq!(projection.traversal_seed.tiles[0].bounding_volume_kind, "region");
+        assert_eq!(projection.traversal_seed.tiles[0].global_transform, banger_identity_mat4_f64());
         assert_eq!(
             projection.traversal_seed.tiles[1].content_uris,
             vec!["higher-priority-child.glb".to_string()]
@@ -4849,6 +5114,70 @@ mod tests {
         assert!(!projection.content_cache.enabled);
         assert_eq!(projection.content_cache.requested_content_count, 3);
         assert_eq!(projection.content_cache.skipped_content_count, 3);
+    }
+
+    #[test]
+    fn propagates_3d_tiles_parent_child_transforms_to_content_records() {
+        let root = serde_json::json!({
+            "asset": { "version": "1.1" },
+            "root": {
+                "geometricError": 10.0,
+                "transform": [
+                    1.0, 0.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                    10.0, 0.0, 0.0, 1.0
+                ],
+                "children": [{
+                    "geometricError": 1.0,
+                    "transform": [
+                        1.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0, 0.0,
+                        0.0, 0.0, 1.0, 0.0,
+                        0.0, 5.0, 0.0, 1.0
+                    ],
+                    "content": { "uri": "child.glb" }
+                }]
+            }
+        });
+        let projection = summarize_banger_maps_root(
+            "https://example.test/root.json",
+            std::path::Path::new("cache"),
+            std::path::Path::new("cache/root.json"),
+            &serde_json::to_vec(&root).unwrap(),
+            "test",
+            false,
+            None,
+            Some(false),
+            Some(false),
+            None,
+        );
+        let child = projection
+            .traversal_seed
+            .tiles
+            .iter()
+            .find(|tile| tile.content_uris == vec!["child.glb".to_string()])
+            .unwrap();
+        assert_eq!(child.global_transform[12], 10.0);
+        assert_eq!(child.global_transform[13], 5.0);
+        assert_eq!(
+            projection.content_cache.records[0].tile_global_transform,
+            child.global_transform
+        );
+    }
+
+    #[test]
+    fn composes_maps_render_transform_in_tiles_spec_order() {
+        let tile_transform = banger_translation_mat4_f64([10.0, 0.0, 0.0]);
+        let gltf_node_transform = banger_translation_mat4_f64([0.0, 2.0, 0.0]);
+        let render_transform = banger_mat4_mul_f64(
+            banger_mat4_mul_f64(tile_transform, banger_gltf_y_up_to_z_up_matrix_f64()),
+            gltf_node_transform,
+        );
+        let transformed = banger_transform_point_f64(render_transform, [0.0, 1.0, 0.0]);
+        assert!((transformed[0] - 10.0).abs() < 0.0001);
+        assert!((transformed[1] - 0.0).abs() < 0.0001);
+        assert!((transformed[2] - 3.0).abs() < 0.0001);
     }
 
     #[test]
@@ -4983,7 +5312,12 @@ mod tests {
 
         #[cfg(target_os = "windows")]
         {
-            let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+            let mesh = banger_maps_render_mesh_from_gltf(
+                &decoded.gltf_value,
+                decoded.bin_chunk,
+                banger_identity_mat4_f64(),
+            )
+            .unwrap();
             assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
             assert_eq!(mesh.index_bytes.len(), 6);
         }
@@ -5014,7 +5348,12 @@ mod tests {
 
         #[cfg(target_os = "windows")]
         {
-            let mesh = banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk).unwrap();
+            let mesh = banger_maps_render_mesh_from_gltf(
+                &decoded.gltf_value,
+                decoded.bin_chunk,
+                banger_identity_mat4_f64(),
+            )
+            .unwrap();
             assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
             assert_eq!(mesh.index_bytes.len(), 6);
         }
