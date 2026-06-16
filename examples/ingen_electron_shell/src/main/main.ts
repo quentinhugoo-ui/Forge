@@ -15310,6 +15310,8 @@ async function loadChatArchive(): Promise<void> {
       for (const session of sessions) {
         chatArchiveSessions.set(session.sessionId, session);
       }
+      ensureAssistantPatternDemoSession();
+      ensureSearchArchiveLoopDemoSession();
       syncLocalChatSessionsFromArchive();
     } catch (error) {
       console.error("Failed to load canonical chat archive; preserving existing in-memory sessions.", error);
@@ -16252,6 +16254,10 @@ const SEARCHARCHIVE_LOOP_DEMO_SESSION_ID = "searcharchive-loop-stream-demo";
 const SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID = "searcharchive-loop-demo-memory";
 const SEARCHARCHIVE_DEMO_START_MARKER = "[[searcharchive_demo_start]]";
 
+function searchArchiveLoopDemoWorkspaceLabel(): string {
+  return activeSessionWorkspaceLabel("forge");
+}
+
 function assistantPatternDemoArchiveSession(): ChatArchiveSession {
   const now = "2026-06-13T03:20:00.000Z";
   const messages: ChatArchiveMessage[] = [
@@ -16306,6 +16312,7 @@ function assistantPatternDemoArchiveSession(): ChatArchiveSession {
 }
 
 function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
+  const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const messages: ChatArchiveMessage[] = [
     { turnId: "demo-memory-user-budget", role: "user", text: "Retrouve moi la note budget croissant et la temperature du four pour samedi.", createdAt: "2026-06-15T09:42:55.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-user-budget") },
     { turnId: "demo-memory-assistant-recipe", role: "assistant", text: "On garde le budget croissant a 24 euros, cuisson au four a 180 degres pendant 17 minutes, puis repos 8 minutes.", createdAt: "2026-06-15T09:43:12.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-assistant-recipe") }
@@ -16315,7 +16322,7 @@ function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
     sessionId: SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID,
     title: "Archive source - patisserie budget",
     section: "forge",
-    workspaceLabel: "Forge",
+    workspaceLabel,
     date: "2026-06-15",
     createdAt: "2026-06-15T09:42:55.000Z",
     updatedAt: "2026-06-15T09:43:12.000Z",
@@ -16326,6 +16333,7 @@ function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
 }
 
 function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
+  const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const messages: ChatArchiveMessage[] = [
     { turnId: "searcharchive-demo-user", role: "user", text: "Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.", createdAt: "2026-06-16T08:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-user") },
     { turnId: "searcharchive-demo-assistant-start", role: "assistant", text: `Loop stream archive test\n\n${SEARCHARCHIVE_DEMO_START_MARKER}`, createdAt: "2026-06-16T08:30:08.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-start") }
@@ -16335,7 +16343,7 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
     sessionId: SEARCHARCHIVE_LOOP_DEMO_SESSION_ID,
     title: "Loop stream archive test",
     section: "forge",
-    workspaceLabel: "Forge",
+    workspaceLabel,
     date: "2026-06-16",
     createdAt: "2026-06-16T08:30:00.000Z",
     updatedAt: "2026-06-16T08:30:08.000Z",
@@ -16346,19 +16354,31 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
 }
 
 function ensureSearchArchiveLoopDemoSession(): void {
+  const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID)) {
     chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID, searchArchiveLoopDemoMemoryArchiveSession());
+  } else {
+    chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID)!.workspaceLabel = workspaceLabel;
   }
   if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
     chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
+  } else {
+    const demoSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)!;
+    demoSession.workspaceLabel = workspaceLabel;
+    demoSession.archived = false;
   }
-  if (!localChatSessions.some((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
+  const localDemo = localChatSessions.find((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
+  if (localDemo) {
+    localDemo.workspaceLabel = workspaceLabel;
+    localDemo.rowVisible = true;
+    localDemo.archived = false;
+  } else {
     localChatSessions.unshift({
       sessionId: SEARCHARCHIVE_LOOP_DEMO_SESSION_ID,
       label: "Loop stream archive test",
       date: "2026-06-16",
       section: "forge",
-      workspaceLabel: "Forge",
+      workspaceLabel,
       rowVisible: true,
       pinned: false,
       working: false,
