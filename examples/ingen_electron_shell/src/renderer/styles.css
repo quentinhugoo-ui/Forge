@@ -8511,6 +8511,7 @@ ol.assistantText__list li::before {
 
   .bottomControls__flipButton svg,
   .bottomControls__flipText,
+  .bottomControls__llmRail,
   .bottomControls__llmActive,
   .bottomControls__llmProvider {
     animation: none;
@@ -8562,8 +8563,19 @@ ol.assistantText__list li::before {
   flex-direction: row-reverse;
   align-items: center;
   gap: 4px;
+  opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%);
+  transform: translateY(-50%) translateX(12px);
+  transform-origin: center right;
+  transition:
+    opacity 140ms ease-out,
+    transform 240ms cubic-bezier(0.2, 0.74, 0.18, 1);
+  will-change: opacity, transform;
+}
+
+.bottomControls__llmSelector--open .bottomControls__llmRail {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 .bottomControls__llmActive,
@@ -8590,14 +8602,16 @@ ol.assistantText__list li::before {
 .bottomControls__llmProvider {
   opacity: 0;
   pointer-events: none;
-  transform: translateX(8px) scale(0.88);
-  transition-delay: calc(var(--llm-provider-index, 0) * 28ms);
+  transform: translateX(14px) scale(0.86);
+  transition-delay: 0ms;
+  will-change: opacity, transform;
 }
 
 .bottomControls__llmSelector--open .bottomControls__llmProvider {
   opacity: 0.72;
   pointer-events: auto;
   transform: translateX(0) scale(1);
+  transition-delay: calc(70ms + var(--llm-provider-index, 0) * 36ms);
 }
 
 .bottomControls__llmActive:hover,

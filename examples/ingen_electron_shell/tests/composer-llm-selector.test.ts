@@ -20,9 +20,11 @@ describe("composer LLM selector", () => {
 
     expect(stylesSource).toContain(".bottomControls__llmRail");
     expect(stylesSource).toContain("right: calc(100% + 4px)");
-    expect(stylesSource).toContain("transform: translateX(8px) scale(0.88)");
+    expect(stylesSource).toContain("transform: translateY(-50%) translateX(12px)");
+    expect(stylesSource).toContain(".bottomControls__llmSelector--open .bottomControls__llmRail");
+    expect(stylesSource).toContain("transform: translateX(14px) scale(0.86)");
     expect(stylesSource).toContain(".bottomControls__llmSelector--open .bottomControls__llmProvider");
-    expect(stylesSource).toContain("transition-delay: calc(var(--llm-provider-index, 0) * 28ms)");
+    expect(stylesSource).toContain("transition-delay: calc(70ms + var(--llm-provider-index, 0) * 36ms)");
     expect(stylesSource).not.toContain(".composer" + "__providers");
     expect(stylesSource).not.toContain(".provider" + "Dot");
   });
