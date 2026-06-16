@@ -4390,11 +4390,13 @@ function TranscriptCanvas({
             ? `${message.id}:${assistantWorkingEvent?.command ?? "prose"}:${message.text.length}`
             : `${message.id}:idle`;
           const previousMessage = messages[index - 1];
+          const nextMessage = messages[index + 1];
           const followsVisualUserMessage =
             message.role !== "user" &&
             previousMessage?.role === "user" &&
             (previousMessage.attachments ?? []).some(isTranscriptVisualAttachment);
           const followsAssistantMessage = message.role !== "user" && previousMessage?.role === "assistant";
+          const assistantContinuesLoop = role === "assistant" && nextMessage?.role === "assistant";
           const pinned = pinnedIds.has(message.id);
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
@@ -4420,6 +4422,7 @@ function TranscriptCanvas({
           }
           const assistantAwaitingAnimation = assistantPending || assistantQueued;
           const renderedMessage = message;
+          const showMessageActions = role !== "assistant" || !assistantContinuesLoop;
           const actions = (
             <div className="transcriptActions">
               <button
@@ -4506,7 +4509,7 @@ function TranscriptCanvas({
                         agentName={agentName}
                       />
                     ) : null}
-                    {assistantAwaitingAnimation ? null : actions}
+                    {assistantAwaitingAnimation || !showMessageActions ? null : actions}
                   </div>
                 </>
               ) : (
@@ -4525,7 +4528,7 @@ function TranscriptCanvas({
                           ) : (
                             <p className="transcriptPill transcriptPill--user">{message.text}</p>
                           )}
-                          {actions}
+                          {showMessageActions ? actions : null}
                         </div>
                       ) : null}
                       {visualAttachments.length > 0 ? <TranscriptVisualAttachmentEvents previews={visualAttachments} /> : null}

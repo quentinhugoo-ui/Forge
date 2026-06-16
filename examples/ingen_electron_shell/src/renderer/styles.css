@@ -6933,7 +6933,7 @@ ol.assistantText__list li::before {
   display: grid;
   gap: 6px;
   width: min(560px, 100%);
-  margin: -2px 0 2px 28px;
+  margin: -12px 0 2px 38px;
   padding: 0 0 2px;
   color: color-mix(in oklab, var(--forge-text), transparent 6%);
 }
@@ -6965,9 +6965,10 @@ ol.assistantText__list li::before {
 
 .searchArchiveResultCard__keywords span {
   padding: 1px 6px 2px;
-  color: color-mix(in oklab, #b7d0ff, var(--forge-text) 18%);
-  background: color-mix(in oklab, #8fb7ff, transparent 91%);
-  border-radius: 999px;
+  color: color-mix(in oklab, var(--forge-text), transparent 18%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 7%);
+  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 90%);
+  border-radius: 5px;
   font-size: 10px;
   font-weight: 620;
   line-height: 1.35;
@@ -7019,8 +7020,8 @@ ol.assistantText__list li::before {
 
 .searchArchiveResultCard__hit mark {
   padding: 0 2px;
-  color: color-mix(in oklab, #d8e6ff, var(--forge-text) 12%);
-  background: color-mix(in oklab, #8fb7ff, transparent 83%);
+  color: color-mix(in oklab, var(--forge-text), transparent 8%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 12%);
   border-radius: 3px;
 }
 
@@ -7033,7 +7034,7 @@ ol.assistantText__list li::before {
 
 @media (max-width: 720px) {
   .searchArchiveResultCard {
-    margin-left: 0;
+    margin: -10px 0 2px 30px;
   }
 
   .searchArchiveResultCard__summary {
