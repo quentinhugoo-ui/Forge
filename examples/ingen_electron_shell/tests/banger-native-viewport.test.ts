@@ -7,6 +7,7 @@ const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx"
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
 const mainSource = readFileSync("src/main/main.ts", "utf8");
+const viteConfigSource = readFileSync("vite.config.ts", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
@@ -43,6 +44,8 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).not.toContain("showCreditsOnScreen");
     expect(canvasSurfacesSource).not.toContain("Banger Maps Cesium tileset failed.");
     expect(canvasSurfacesSource).not.toContain("Google Map Tiles direct mode requires GOOGLE_MAP_TILES_API_KEY.");
+    expect(viteConfigSource).not.toContain("vite-plugin-cesium");
+    expect(viteConfigSource).not.toContain("cesium()");
     expect(canvasSurfacesSource).toContain("BangerMapsNativeViewport");
     expect(canvasSurfacesSource).toContain("showNativeMaps");
     expect(canvasSurfacesSource).toContain("updateNativeMapsBounds");

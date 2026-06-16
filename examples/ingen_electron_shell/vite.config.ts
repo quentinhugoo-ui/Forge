@@ -1,13 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import cesium from "vite-plugin-cesium";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  plugins: [react(), cesium()],
+  plugins: [react()],
   root: ".",
   build: {
     outDir: "dist/renderer",
