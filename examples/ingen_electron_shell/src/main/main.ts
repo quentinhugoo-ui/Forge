@@ -17977,6 +17977,20 @@ function installIpc(): void {
     }
     const cesiumIonAccessToken = (process.env.CESIUM_ACCESS_TOKEN ?? process.env.VITE_CESIUM_ACCESS_TOKEN ?? "").trim();
     const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
+    const explicitCesiumIonAccessTokenUrl = (
+      process.env.FORGE_BANGER_CESIUM_ION_TOKEN_URL ??
+      process.env.FORGE_CESIUM_ION_TOKEN_URL ??
+      ""
+    ).trim();
+    const renderTokenBrokerBaseUrl = [
+      process.env.FORGE_REAL_ESTATE_BACKEND_URL,
+      process.env.FORGE_RENDER_BACKEND_URL,
+      "https://forge-6cai.onrender.com"
+    ]
+      .map((value) => value?.trim().replace(/\/+$/, ""))
+      .find((value): value is string => Boolean(value));
+    const cesiumIonAccessTokenUrl = explicitCesiumIonAccessTokenUrl ||
+      (renderTokenBrokerBaseUrl ? `${renderTokenBrokerBaseUrl}/api/banger/cesium-ion-token` : "");
     if (cesiumIonAccessToken) {
       const result = {
         ...base,
@@ -17996,6 +18010,33 @@ function installIpc(): void {
           source: result.source,
           accessMode: result.accessMode,
           tokenFingerprint: hashJson(cesiumIonAccessToken).slice(0, 16),
+          requestBudget: result.requestBudget,
+          lod: result.lod,
+          georeference: result.georeference,
+          attribution: result.attribution,
+          initialView
+        })
+      };
+    }
+    if (cesiumIonAccessTokenUrl) {
+      const result = {
+        ...base,
+        accepted: true,
+        source: "cesium-ion-token-broker" as const,
+        accessMode: "cesium-ion" as const,
+        rootTilesetUrl: "ion://google-photorealistic-3d-tiles",
+        cesiumIonAccessTokenUrl
+      };
+      return {
+        ...result,
+        proofHash: hashJson({
+          schema,
+          accepted: true,
+          provider: result.provider,
+          rendererModel: result.rendererModel,
+          source: result.source,
+          accessMode: result.accessMode,
+          tokenEndpointFingerprint: hashJson(cesiumIonAccessTokenUrl).slice(0, 16),
           requestBudget: result.requestBudget,
           lod: result.lod,
           georeference: result.georeference,
@@ -18034,7 +18075,7 @@ function installIpc(): void {
       accepted: false,
       error: {
         code: "shadow_only",
-        message: "Set CESIUM_ACCESS_TOKEN for Cesium ion direct mode, or GOOGLE_MAP_TILES_API_KEY for direct Google Map Tiles.",
+        message: "Set CESIUM_ACCESS_TOKEN, FORGE_BANGER_CESIUM_ION_TOKEN_URL, or GOOGLE_MAP_TILES_API_KEY.",
         proofHash: hashJson({ schema, configured: false })
       },
       proofHash: hashJson({ schema, accepted: false, configured: false })
