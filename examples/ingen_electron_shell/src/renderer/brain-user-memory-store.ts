@@ -1,4 +1,4 @@
-import { BRAIN_CODEACT_COMMANDS, type BrainCanonicalMemorySnapshot } from "../shared/ipc-contract";
+import { BRAIN_CODEACT_COMMANDS, BRAIN_LOCAL_ACTIONS_COMMAND, type BrainCanonicalMemorySnapshot } from "../shared/ipc-contract";
 
 export interface BrainUserMemorySlot {
   schema: "ingen.brain.memory.user_identity.v1";
@@ -129,6 +129,7 @@ const MAX_SPECIALIZED_BRAIN_FIELD_LENGTH = 1600;
 const MAX_PERSONALITY_MANIFEST_LENGTH = 5000;
 const MAX_DURABLE_MANIFEST_LENGTH = 9000;
 const EXECUTABLE_CODEACT_COMMANDS = new Set<string>(BRAIN_CODEACT_COMMANDS as readonly string[]);
+const DEFAULT_SPECIALIZED_BRAIN_CODEACTS = [BRAIN_LOCAL_ACTIONS_COMMAND];
 const DURABLE_MANIFEST_CATEGORY_ORDER: BrainLearningMemoryCategory[] = ["lesson", "skill", "task"];
 const DURABLE_MANIFEST_CATEGORY_KEYS: Record<BrainLearningMemoryCategory, string> = {
   lesson: "lessons",
@@ -440,7 +441,7 @@ function normalizeBrainSpecializedBrainEntry(value: unknown): BrainSpecializedBr
       lessons: normalizeSpecializedBrainItemList(candidate.lessons),
       skills: normalizeSpecializedBrainItemList(candidate.skills),
       tasks: normalizeSpecializedBrainItemList(candidate.tasks),
-      codeActs: normalizeSpecializedBrainCodeActList(candidate.codeActs),
+      codeActs: mergeSpecializedBrainItems(DEFAULT_SPECIALIZED_BRAIN_CODEACTS, normalizeSpecializedBrainCodeActList(candidate.codeActs)),
       source: candidate.source as BrainDurableCandidateSource,
       trust: candidate.trust === "user_confirmed" ? "user_confirmed" : "agent_candidate",
       evidence: candidate.evidence,
@@ -681,6 +682,7 @@ export function upsertBrainSpecializedBrain(input: {
   const current = readBrainSpecializedBrains();
   const existing = current.find((entry) => entry.brainName === brainName);
   const timestamp = nowIso();
+  const existingCodeActs = mergeSpecializedBrainItems(DEFAULT_SPECIALIZED_BRAIN_CODEACTS, existing?.codeActs ?? []);
   const nextEntry: BrainSpecializedBrainEntry = {
     schema: "ingen.brain.memory.specialized_brain.v1",
     id: existing?.id ?? localId("specialized_brain"),
@@ -693,7 +695,7 @@ export function upsertBrainSpecializedBrain(input: {
     lessons: mergeSpecializedBrainItems(existing?.lessons ?? [], splitSpecializedBrainList(input.lessons)),
     skills: mergeSpecializedBrainItems(existing?.skills ?? [], splitSpecializedBrainList(input.skills)),
     tasks: mergeSpecializedBrainItems(existing?.tasks ?? [], splitSpecializedBrainList(input.tasks)),
-    codeActs: mergeSpecializedBrainItems(existing?.codeActs ?? [], splitSpecializedBrainExecutableCodeActs(input.codeActs)),
+    codeActs: mergeSpecializedBrainItems(existingCodeActs, splitSpecializedBrainExecutableCodeActs(input.codeActs)),
     source: input.source,
     trust: input.trust ?? existing?.trust ?? (input.source === "manual" ? "user_confirmed" : "agent_candidate"),
     evidence: input.evidence ?? existing?.evidence ?? `brain_specialized_registry:${input.source}`,
@@ -885,7 +887,7 @@ export function brainDurableMemoryManifestFromEntries(
     "injection_policy=session_boot_and_after_context_compaction",
     "specialized_brain_policy=The root catalog is read-only. Use /newbrain_ to create a named specialized Brain, /<name>brain_ to activate it, and /modify\"<name>\"brain_ to append explicit lessons, skills, tasks, or executable CodeAct references to that named Brain only.",
     "entry_kind_policy=lesson is a compact rule learned from an error, repeated failure, user preference, or successful outcome. skill is a reusable workflow built from lessons; it should include a trigger, inputs, steps, and a check. task is follow-up work, including requests to implement a future native CodeAct. codeact is only for commands with an existing executable app/front/runtime/MCP handler listed in BRAIN_CODEACT_COMMANDS; never store plain reasoning templates as codeact.",
-    "newbrain_template_example=/newbrain_ brain_name=\"marketing\" title=\"Marketing Brain\" purpose=\"Store durable campaign lessons, anti-patterns, reusable workflows and executable tool routes.\" activation_triggers=\"campaign strategy, copywriting, funnel iteration\" initial_lessons=\"campaign ideas before ICP -> define one concrete ICP before writing copy\" initial_rules=\"identify offer, audience, channel and metric before campaign ideas\" initial_skills=\"Campaign critique workflow: Trigger=campaign brainstorming; Inputs=offer, audience, channel, metric; Steps=identify gaps -> rewrite brief -> verify concrete scene; Check=brief names one ICP and one measurable promise\" initial_tasks=\"review campaign learnings before next launch\" initial_codeacts='/websearch_ query=\"current campaign benchmark sources\" output=\"compact_answer_url_citation_manifest\"' token_budget=\"1200\"",
+    "newbrain_template_example=/newbrain_ brain_name=\"marketing\" title=\"Marketing Brain\" purpose=\"Store durable campaign lessons, anti-patterns, reusable workflows and executable tool routes.\" activation_triggers=\"campaign strategy, copywriting, funnel iteration\" initial_lessons=\"campaign ideas before ICP -> define one concrete ICP before writing copy\" initial_rules=\"identify offer, audience, channel and metric before campaign ideas\" initial_skills=\"Campaign critique workflow: Trigger=campaign brainstorming; Inputs=offer, audience, channel, metric; Steps=identify gaps -> rewrite brief -> verify concrete scene; Check=brief names one ICP and one measurable promise\" initial_tasks=\"review campaign learnings before next launch\" initial_codeacts='/local_actions_ scope=\"all\" query=\"local route discovery\" output=\"agent_action_manifest\" | /websearch_ query=\"current campaign benchmark sources\" output=\"compact_answer_url_citation_manifest\"' token_budget=\"1200\"",
     "modifybrain_template_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"lesson\" observation=\"campaign ideas were proposed before defining the ICP\" replacement_rule=\"define one concrete ICP before campaign ideas\" trigger=\"campaign brainstorming or copy iteration\" exceptions=\"user already supplied a precise ICP\" content=\"Observed error: proposing campaigns before ICP -> Replacement rule: define one concrete ICP before campaign ideas.\" evidence=\"session pattern or user-confirmed correction\" output=\"append_to_specialized_brain\"",
     "modifybrain_skill_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"skill\" content=\"Campaign critique workflow: Trigger=campaign brainstorming; Inputs=offer, audience, channel, metric; Steps=identify gaps -> rewrite brief -> verify concrete scene; Check=brief names one ICP and one measurable promise.\" trigger=\"campaign brainstorming\" output=\"append_to_specialized_brain\"",
     "modifybrain_codeact_example=/modify\"marketing\"brain_ brain_name=\"marketing\" entry_kind=\"codeact\" content='/websearch_ query=\"current campaign benchmark sources\" output=\"compact_answer_url_citation_manifest\"' evidence=\"known executable command from BRAIN_CODEACT_COMMANDS\" output=\"append_to_specialized_brain\"",

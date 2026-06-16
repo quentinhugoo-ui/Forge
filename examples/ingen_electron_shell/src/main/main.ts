@@ -49,7 +49,7 @@ import {
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
   BRAIN_WORKSPACE_COMMAND,
-  BRAIN_CAPABILITIES_COMMAND,
+  BRAIN_LOCAL_ACTIONS_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
   type CanvasSurfaceSummary,
   type CanvasSurfacesCommand,
@@ -177,6 +177,11 @@ import {
   extractPriorityMcpCodeAct,
   renderPriorityMcpCodeActResult
 } from "./priority-mcp-codeacts.js";
+import {
+  extractLocalActionsCodeAct,
+  localActionsCodeActToAgentActionRequest,
+  renderLocalActionsCodeActResult
+} from "./local-actions-codeact.js";
 import { runPriorityMcpBridge } from "./priority-mcp-bridge.js";
 import {
   createMapsCodeActRequest,
@@ -5442,7 +5447,7 @@ function brainBootManifest(): string {
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`,
     "LOCAL_ACTION_ATLAS_BOOT v1",
     "rule=This full local action atlas is injected at session boot and after conversation compaction only. Do not require the app to semantically guess local tool needs on each turn.",
-    `capabilities_codeact=Emit AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40} whenever a task may involve local files, coding, Windows, browser, documents, cloud CLIs, virtualization or automation and the exact action is not obvious.`,
+    `local_actions_codeact=Emit ${BRAIN_LOCAL_ACTIONS_COMMAND} scope="all" query="short task" maxResults="40" whenever a task may involve local files, coding, Windows, browser, documents, cloud CLIs, virtualization or automation and the exact action is not obvious. The host maps this read-only CodeAct to AGENT_ACTION_JSON action:"capabilities" and returns LOCAL_ACTIONS_RESULT.`,
     ingenLoopActionRhythmManifest(),
     agentActionRoutingHint(),
     actionManifest
@@ -5473,8 +5478,8 @@ function brainRuntimeReminderManifest(): string {
     "brain_catalogs=general_at_boot; science_or_coding_only_on_switch_and_after_compaction",
     brainPersonalityContextManifest(),
     ingenLoopActionRhythmManifest(),
-    `capabilities_codeact=${BRAIN_CAPABILITIES_COMMAND} is available in General, Science and Coding Brain through AGENT_ACTION_JSON {"action":"capabilities","scope":"all","query":"short task","maxResults":40}.`,
-    "rule=Do not invent local tool access. If the exact local route is unclear, request capabilities, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
+    `local_actions_codeact=${BRAIN_LOCAL_ACTIONS_COMMAND} is available in General, Science, Coding and specialized Brains; it executes a read-only atlas lookup through AGENT_ACTION_JSON action:"capabilities".`,
+    "rule=Do not invent local tool access. If the exact local route is unclear, call /local_actions_, then choose one executable action from the returned atlas and wait for AGENT_ACTION_RESULT."
   ].join("\n");
 }
 
@@ -5611,7 +5616,7 @@ function shouldContinueAfterBrainCodeAct(params: {
     textLooksLikeVisualCodingArtifactGoal(params.originalUserText) ||
     commands.some(
       (command) =>
-        command === BRAIN_CAPABILITIES_COMMAND ||
+        command === BRAIN_LOCAL_ACTIONS_COMMAND ||
         command === BRAIN_SEARCHARCHIVE_COMMAND ||
         command === BRAIN_NEWCOMPUTE_COMMAND ||
         command === BRAIN_SELECTCOMPUTE_COMMAND ||
@@ -5698,7 +5703,7 @@ function agentActionContextManifest(
     return [
       "AGENT_ACTION_LOCAL_INTENT_REMINDER v1",
       "full_atlas_location=brain_boot_manifest_or_post_compaction_reinjection",
-      "rule=Use the boot atlas for known routes. If the exact local route is unclear, request a fresh targeted atlas with AGENT_ACTION_JSON capabilities before answering verbally.",
+      `rule=Use the boot atlas for known routes. If the exact local route is unclear, request a fresh targeted atlas with ${BRAIN_LOCAL_ACTIONS_COMMAND} before answering verbally.`,
       agentActionRoutingHint(),
       agentActionContinuationManifest()
     ].join("\n");
@@ -16007,10 +16012,11 @@ async function executeAssistantModuleCodeActs(
   parallelSessionIndex: number,
   originalUserText = ""
 ): Promise<TranscriptMessage> {
+  let next = await executeAssistantLocalActionsCodeAct(message);
   if (moduleId === "gmail") {
-    return executeAssistantGmailCodeAct(message, parallelSessionIndex);
+    return executeAssistantGmailCodeAct(next, parallelSessionIndex);
   }
-  let next = executeAssistantGoogleWebCodeAct(message, parallelSessionIndex);
+  next = executeAssistantGoogleWebCodeAct(next, parallelSessionIndex);
   next = await executeAssistantWebSearchCodeAct(next);
   next = await executeAssistantPriorityMcpCodeAct(next);
   next = await executeAssistantScrapersCodeAct(next);
@@ -16029,6 +16035,22 @@ async function executeAssistantModuleCodeActs(
   next = executeAssistantGmailCodeAct(next, parallelSessionIndex);
   next = executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
   return next;
+}
+
+async function executeAssistantLocalActionsCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (message.role !== "assistant") {
+    return message;
+  }
+  const request = extractLocalActionsCodeAct(message.text);
+  if (!request) {
+    return message;
+  }
+  const result = await executeTrackedAgentAction(localActionsCodeActToAgentActionRequest(request));
+  const rendered = renderLocalActionsCodeActResult(request, result, compactAgentActionResult(result));
+  return {
+    ...message,
+    text: `${message.text.trimEnd()}\n\n${rendered}`
+  };
 }
 
 function assistantCodeActVisibleText(text: string): string {

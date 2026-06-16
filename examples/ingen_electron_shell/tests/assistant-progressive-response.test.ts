@@ -248,7 +248,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("LOCAL_ACTION_ATLAS_BOOT v1");
     expect(mainSource).toContain("full local action atlas is injected at session boot and after conversation compaction only");
     expect(mainSource).toContain("boot_manifest=already_injected_once_for_this_session_or_reinjected_after_compaction");
-    expect(mainSource).toContain("capabilities_codeact=");
+    expect(mainSource).toContain("local_actions_codeact=");
+    expect(mainSource).toContain("executeAssistantLocalActionsCodeAct");
+    expect(mainSource).toContain("LOCAL_ACTIONS_RESULT");
     expect(mainSource).toContain("manifest.runtime.manifestHash");
     expect(mainSource).toContain("manifest.runtime.atlasHash");
     expect(mainSource).toContain("delta_policy=${manifest.runtime.injectionPolicy}");

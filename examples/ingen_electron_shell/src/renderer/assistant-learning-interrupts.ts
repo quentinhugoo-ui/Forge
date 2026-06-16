@@ -1,5 +1,5 @@
 import type { BrainLearningMemoryCategory, BrainSpecializedBrainEntryKind } from "./brain-user-memory-store";
-import { BRAIN_CODEACT_COMMANDS, BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
+import { BRAIN_CODEACT_COMMANDS, BRAIN_LOCAL_ACTIONS_COMMAND, BRAIN_NEWBRAIN_COMMAND } from "../shared/ipc-contract";
 
 export type BrainLearningInterruptType =
   | "anti_pattern"
@@ -156,7 +156,10 @@ function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedC
   const initialRules = cleanNewBrainField(fields.get("initial_rules"), 840);
   const initialSkills = cleanNewBrainField(fields.get("initial_skills"), 840);
   const initialTasks = cleanNewBrainField(fields.get("initial_tasks"), 840);
-  const initialCodeActs = cleanNewBrainField(fields.get("initial_codeacts"), 840);
+  const requestedInitialCodeActs = cleanNewBrainField(fields.get("initial_codeacts"), 840);
+  const initialCodeActs = requestedInitialCodeActs
+    ? `${BRAIN_LOCAL_ACTIONS_COMMAND} | ${requestedInitialCodeActs}`
+    : BRAIN_LOCAL_ACTIONS_COMMAND;
   const tokenBudget = cleanNewBrainField(fields.get("token_budget"), 32);
   const description = [
     `Activate ${title} as a specialized Brain scope created by ${BRAIN_NEWBRAIN_COMMAND}.`,
@@ -172,7 +175,7 @@ function newBrainDraftFromFields(fields: Map<string, string>): BrainSpecializedC
     "initial_codeacts",
     "token_budget"
   ]
-    .map((key) => [key, cleanNewBrainField(fields.get(key), 420)] as const)
+    .map((key) => [key, key === "initial_codeacts" ? initialCodeActs : cleanNewBrainField(fields.get(key), 420)] as const)
     .filter(([, value]) => value.length > 0)
     .map(([key, value]) => `${key}=${JSON.stringify(value)}`);
   const template = [
