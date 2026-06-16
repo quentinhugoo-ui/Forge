@@ -11164,36 +11164,68 @@ ol.assistantText__list li::before {
 .brainLearningRegistry__tabs {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 5px;
-  align-items: stretch;
+  gap: 16px;
+  align-items: center;
   min-width: 0;
+  padding: 1px 0 0;
 }
 
 .brainLearningRegistry__tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   min-width: 0;
-  min-height: 26px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in oklab, #ffbf48, transparent 76%);
-  border-radius: 6px;
+  min-height: 20px;
+  padding: 0 0 5px;
+  border: 0;
   color: var(--forge-muted);
   background: transparent;
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 650;
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+  transition: color 160ms ease, opacity 160ms ease;
+}
+
+.brainLearningRegistry__tab::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0;
+  transform: scaleX(0.32);
+  transition: opacity 160ms ease, transform 160ms ease;
 }
 
 .brainLearningRegistry__tab:hover,
-.brainLearningRegistry__tab:focus-visible,
+.brainLearningRegistry__tab:focus-visible {
+  color: color-mix(in oklab, #f1d596, var(--forge-muted) 18%);
+  outline: 0;
+}
+
 .brainLearningRegistry__tab--active {
-  border-color: color-mix(in oklab, #ffbf48, transparent 42%);
   color: #f1d596;
-  background: color-mix(in oklab, #ffbf48, transparent 92%);
+  outline: 0;
+}
+
+.brainLearningRegistry__tab:focus-visible::after,
+.brainLearningRegistry__tab--active::after {
+  opacity: 0.82;
+  transform: scaleX(1);
+}
+
+.brainLearningRegistry__tab:hover::after {
+  opacity: 0.38;
+  transform: scaleX(1);
+}
+
+.brainLearningRegistry__tab--active:hover::after {
+  opacity: 0.82;
   outline: 0;
 }
 

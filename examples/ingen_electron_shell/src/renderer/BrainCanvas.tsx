@@ -314,21 +314,18 @@ const BRAIN_LEARNING_MEMORY_CATEGORIES: Array<{
   id: BrainLearningRegistryCategory;
   label: string;
   title: string;
-  glyph: string;
   placeholder: string;
 }> = [
   {
     id: "lesson",
     label: "Lessons",
     title: "Rules learned from mistakes and useful outcomes. Each bullet captures the observed pattern and the better rule to reuse.",
-    glyph: "lesson-book",
     placeholder: "Ex: Observed error: campaign stayed abstract -> Rule: start from one concrete user scene before writing the promise."
   },
   {
     id: "skill",
     label: "Skills",
     title: "Reusable workflows built from lessons. Each bullet should name a trigger, inputs, steps, and a check.",
-    glyph: "zap",
     placeholder: "Ex: UI correction workflow: Trigger=user rejects a visual change; Inputs=screenshot + accepted state; Steps=compare -> simplify -> verify; Check=no extra frame."
   }
 ];
@@ -940,7 +937,6 @@ function BrainLearningRegistry() {
               onClick={() => selectCategory(item.id)}
               onKeyDown={onCategoryTabKeyDown}
             >
-              <Glyph kind={item.glyph} size={13} />
               {item.label}
             </button>
           ))}
