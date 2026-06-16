@@ -4000,8 +4000,8 @@ button {
   --widget-transcript-top-tab-height: 15px;
   grid-template-rows: 32px minmax(0, 1fr);
   gap: 0;
-  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 25px);
-  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 111px));
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 34px);
+  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 120px));
   overflow: visible;
   padding: 0;
   background: transparent;
@@ -4257,9 +4257,9 @@ button {
   position: fixed;
   left: calc(var(--chat-left) + 16px);
   right: calc(100vw - var(--chat-left) - var(--chat-width) + 16px);
-  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) - 1px);
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 5px);
   z-index: 31;
-  height: 24px;
+  height: 26px;
   pointer-events: none;
   transition:
     left var(--sidebar-motion),
