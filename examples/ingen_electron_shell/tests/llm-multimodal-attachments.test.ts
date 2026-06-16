@@ -410,8 +410,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain("outline: 0");
     expect(stylesSource).toContain(".permissionModeTrigger--selfDirected > span");
     expect(stylesSource).toContain(".permissionModeTrigger--selfDirected > svg:first-child");
-    expect(stylesSource).toContain("animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite");
-    expect(stylesSource).toContain("animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite");
+    expect(stylesSource).toContain("animation: permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite");
+    expect(stylesSource).toContain("animation: permissionSelfDirectedIconFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite");
   });
 
   it("registers /plan_ as a visible action-plan CodeAct", () => {

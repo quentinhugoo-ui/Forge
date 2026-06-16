@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
+const rendererSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(root, "src", "renderer", "styles.css"), "utf8");
 
 describe("Self-Directed palette", () => {
@@ -12,6 +13,9 @@ describe("Self-Directed palette", () => {
     );
     expect(stylesSource).toContain("--self-directed-purple: #6b21a8;");
     expect(stylesSource).toContain("--self-directed-wine: #9f1239;");
+    expect(stylesSource).toContain("--self-directed-flow-duration: 18s;");
+    expect(stylesSource).toContain("permissionSelfDirectedTextFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite");
+    expect(stylesSource).toContain("permissionSelfDirectedIconFlow var(--self-directed-flow-duration) var(--self-directed-flow-easing) infinite");
     expect(stylesSource).toContain(".permissionModeTrigger--selfDirected > span");
     expect(stylesSource).toContain(".bottomControls .permissionModeOption.permissionModeOption--selfDirected::after");
     expect(stylesSource).toContain(".permissionModeOption--selfDirectedExpanded");
@@ -21,5 +25,13 @@ describe("Self-Directed palette", () => {
     expect(stylesSource).not.toContain(
       "linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399)"
     );
+  });
+
+  it("restarts the trigger and menu animations together when Self-Directed opens", () => {
+    expect(rendererSource).toContain("selfDirectedColorCycle");
+    expect(rendererSource).toContain("setSelfDirectedColorCycle((cycle) => cycle + 1)");
+    expect(rendererSource).toContain('key={`permission-trigger-${permissionMode === "self-directed" ? selfDirectedColorCycle : "static"}`}');
+    expect(rendererSource).toContain('key={`permission-menu-${selfDirectedColorCycle}`}');
+    expect(rendererSource).toContain("onClick={togglePermissionMenu}");
   });
 });
