@@ -99,7 +99,6 @@ button {
   border-radius: 6px !important;
 }
 
-.shell .widgetTranscriptPanel__topTab,
 .shell .widgetTranscriptPanel__header,
 .shell .widgetTranscriptTab {
   border-radius: 6px 6px 0 0 !important;
@@ -3885,6 +3884,7 @@ button {
 }
 
 .panelsChatBottom--questionnaireOpen,
+.panelsChatBottom--widgetSessionDocking,
 .panelsChatBottom--widgetTranscriptOpen,
 .panelsChatBottom--widgetTranscriptCollapsed {
   z-index: 31;
@@ -3997,7 +3997,6 @@ button {
 
 .widgetTranscriptPanel {
   --widget-transcript-tab-height: 22px;
-  --widget-transcript-top-tab-height: 15px;
   grid-template-rows: 32px minmax(0, 1fr);
   gap: 0;
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 18px);
@@ -4008,7 +4007,7 @@ button {
   border: 0;
   box-shadow: none;
   animation: widgetTranscriptPanelEnter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-origin: bottom center;
+  transform-origin: bottom left;
   will-change: transform, opacity;
   transition:
     left var(--sidebar-motion),
@@ -4030,53 +4029,16 @@ button {
   transition: opacity 140ms ease-out;
 }
 
-.widgetTranscriptPanel__topTab {
-  position: absolute;
-  right: 18px;
-  top: calc(-1 * var(--widget-transcript-top-tab-height) + 1px);
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  width: 42px;
-  min-width: 42px;
-  height: var(--widget-transcript-top-tab-height);
-  min-height: var(--widget-transcript-top-tab-height);
-  padding: 0;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
-  background: var(--forge-sidebar-bg);
-  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
-  border-bottom: 0;
-  box-shadow:
-    0 -5px 12px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  cursor: pointer;
-  pointer-events: auto;
-  transition:
-    opacity 140ms ease-out,
-    color 160ms ease,
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease,
-    transform 180ms ease;
-}
-
-.widgetTranscriptPanel--collapsing .widgetTranscriptPanel__topTab {
-  transform: translateY(2px);
-}
-
-.widgetTranscriptPanel__topTab svg {
-  width: 13px;
-  height: 13px;
-}
-
 .widgetTranscriptPanel .widgetTranscriptPanel__header {
   position: relative;
   z-index: 2;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
   align-items: center;
+  gap: 8px;
   min-width: 0;
   min-height: 0;
-  padding: 0 12px 0 14px;
+  padding: 0 5px 0 14px;
   color: color-mix(in oklab, var(--forge-chat-text), transparent 10%);
   background: var(--forge-sidebar-bg);
   border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
@@ -4097,22 +4059,42 @@ button {
   color: currentColor;
 }
 
-.widgetTranscriptPanel__topTab:hover,
-.widgetTranscriptPanel__topTab:focus-visible {
+.widgetTranscriptPanel__reduce {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  color: color-mix(in oklab, var(--forge-chat-text), transparent 18%);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition:
+    opacity 140ms ease-out,
+    color 160ms ease,
+    background 160ms ease,
+    transform 180ms ease;
+}
+
+.widgetTranscriptPanel__reduce svg {
+  width: 13px;
+  height: 13px;
+}
+
+.widgetTranscriptPanel__reduce:hover,
+.widgetTranscriptPanel__reduce:focus-visible {
   color: #ffffff;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
-  border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
-  box-shadow:
-    0 -5px 14px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 6%);
   transform: translateY(-1px);
 }
 
-.widgetTranscriptPanel__topTab:active {
+.widgetTranscriptPanel__reduce:active {
   transform: translateY(1px);
 }
 
-.widgetTranscriptPanel__topTab:focus-visible {
+.widgetTranscriptPanel__reduce:focus-visible {
   outline: 2px solid rgba(125, 190, 255, 0.58);
   outline-offset: 2px;
 }
@@ -4264,13 +4246,20 @@ button {
   pointer-events: none;
   transition:
     left var(--sidebar-motion),
+    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
     right var(--sidebar-motion),
     opacity 160ms ease,
-    transform 180ms ease;
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .panelsChatBottom--widgetTranscriptCollapsed .widgetSessionTabs {
   width: min(318px, calc(var(--chat-width) - 206px));
+}
+
+.widgetSessionTabs--panelAnchored {
+  left: var(--questionnaire-left);
+  width: min(132px, calc(var(--questionnaire-width) - 18px));
+  transform: translate3d(0, 0, 0);
 }
 
 .widgetSessionTabs__list {
@@ -4282,6 +4271,10 @@ button {
   min-width: 0;
   height: 100%;
   pointer-events: auto;
+}
+
+.widgetSessionTabs--panelAnchored .widgetSessionTabs__list {
+  overflow: hidden;
 }
 
 .widgetSessionTabs__tab,
@@ -4300,11 +4293,16 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.035);
   cursor: pointer;
   transition:
+    flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 220ms cubic-bezier(0.22, 1, 0.36, 1),
     color 150ms ease,
     background 150ms ease,
     border-color 150ms ease,
     box-shadow 150ms ease,
-    transform 160ms ease;
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease;
 }
 
 .widgetSessionTabs__tab {
@@ -4320,6 +4318,27 @@ button {
   font-weight: 610;
   letter-spacing: 0;
   line-height: 1;
+}
+
+.widgetSessionTabs--panelAnchored .widgetSessionTabs__tab:not(.widgetSessionTabs__tab--active),
+.widgetSessionTabs--panelAnchored .widgetSessionTabs__new {
+  flex-basis: 0;
+  width: 0;
+  max-width: 0;
+  min-width: 0;
+  padding-inline: 0;
+  opacity: 0;
+  border-color: transparent;
+  pointer-events: none;
+  transform: translate3d(-8px, 0, 0);
+}
+
+.widgetSessionTabs--panelAnchored .widgetSessionTabs__tab--active {
+  flex: 0 0 126px;
+  width: 126px;
+  max-width: 126px;
+  color: #ffffff;
+  transform: translate3d(0, 0, 0);
 }
 
 .widgetSessionTabs__tab::before {
@@ -7643,7 +7662,7 @@ ol.assistantText__list li::before {
 @keyframes widgetTranscriptPanelEnter {
   from {
     opacity: 0;
-    transform: translate3d(0, 18px, 0) scaleY(0.96);
+    transform: translate3d(0, 18px, 0) scaleY(0.88);
   }
   to {
     opacity: 1;
@@ -14049,8 +14068,8 @@ ol.assistantText__list li::before {
   .sidebarModule,
   .sidebarModule__logo,
   .widgetTranscriptPanel,
-  .widgetTranscriptPanel__topTab,
   .widgetTranscriptPanel__header,
+  .widgetTranscriptPanel__reduce,
   .widgetTranscriptPanel__body,
   .widgetTranscriptTab,
   .widgetSessionTabs,
