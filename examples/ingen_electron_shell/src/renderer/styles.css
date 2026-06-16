@@ -5348,20 +5348,30 @@ button {
 }
 
 .transcriptCodeActEvent__icon {
+  --event-icon-box: 18px;
+  --event-icon-glyph: 14px;
   --icon-stroke-width: 1.75px;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: var(--event-icon-box);
+  min-width: var(--event-icon-box);
+  max-width: var(--event-icon-box);
+  height: var(--event-icon-box);
+  min-height: var(--event-icon-box);
+  max-height: var(--event-icon-box);
   color: #a4aaad;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .transcriptCodeActEvent__icon svg {
   display: block;
-  width: 18px;
-  height: 18px;
-  overflow: visible;
+  width: var(--event-icon-glyph);
+  min-width: var(--event-icon-glyph);
+  max-width: var(--event-icon-glyph);
+  height: var(--event-icon-glyph);
+  min-height: var(--event-icon-glyph);
+  max-height: var(--event-icon-glyph);
+  overflow: hidden;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -5370,7 +5380,14 @@ button {
 }
 
 .transcriptCodeActEvent__icon .sidebarModule__logo {
+  width: var(--event-icon-glyph);
+  min-width: var(--event-icon-glyph);
+  max-width: var(--event-icon-glyph);
+  height: var(--event-icon-glyph);
+  min-height: var(--event-icon-glyph);
+  max-height: var(--event-icon-glyph);
   fill: revert;
+  overflow: hidden;
   stroke: none;
   stroke-width: 0;
 }
@@ -5446,9 +5463,13 @@ button {
 .transcriptCodeActEvent__icon .cubeIconBox {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  overflow: visible;
+  width: var(--event-icon-glyph);
+  min-width: var(--event-icon-glyph);
+  max-width: var(--event-icon-glyph);
+  height: var(--event-icon-glyph);
+  min-height: var(--event-icon-glyph);
+  max-height: var(--event-icon-glyph);
+  overflow: hidden;
   perspective: 96px;
 }
 
@@ -5501,8 +5522,13 @@ button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: var(--event-icon-glyph);
+  min-width: var(--event-icon-glyph);
+  max-width: var(--event-icon-glyph);
+  height: var(--event-icon-glyph);
+  min-height: var(--event-icon-glyph);
+  max-height: var(--event-icon-glyph);
+  overflow: hidden;
 }
 
 .transcriptCodeActEvent__icon .calendarIcon {
@@ -6932,6 +6958,13 @@ ol.assistantText__list li::before {
 .searchArchiveResultCard__icon .sidebarModule__logo {
   width: 15px;
   height: 15px;
+}
+
+.searchArchiveResultCard__icon svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 1.9;
 }
 
 .searchArchiveResultCard__title {

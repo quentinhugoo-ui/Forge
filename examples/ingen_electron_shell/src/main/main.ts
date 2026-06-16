@@ -16347,25 +16347,21 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
       proofHash: stableSearchArchiveHash("searcharchive-demo-user")
     },
     {
-      turnId: "searcharchive-demo-assistant-template",
+      turnId: "searcharchive-demo-assistant-tool",
       role: "assistant",
       text: [
-        "Je lance la recherche dans les archives avec le CodeAct dedie. L'application ne raisonne pas : elle affiche l'action et execute le contrat local.",
+        "Je vais vérifier dans l'historique et revenir avec les passages pertinents.",
         "",
         BRAIN_SEARCHARCHIVE_COMMAND
       ].join("\n"),
       createdAt: "2026-06-16T08:30:07.000Z",
       attachments: [],
-      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-template")
+      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-tool")
     },
     {
       turnId: "searcharchive-demo-assistant-result",
       role: "assistant",
       text: [
-        "Le template est rempli, Search Archive scanne les sessions et remonte les morceaux pertinents.",
-        "",
-        `${BRAIN_SEARCHARCHIVE_COMMAND} query="croissant four 180" keywords=["croissant","four","180"] session_scope=all content_scope=messages file_origin=all top_k=3 context_turns=1 include_file_previews=true include_artifact_refs=true template_proof_hash=sha256:demo-searcharchive-template`,
-        "",
         "SEARCHARCHIVE_RESULT",
         "schema=forge.brain.searcharchive.result.v1",
         "query=\"croissant four 180\"",
@@ -16407,6 +16403,14 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
       createdAt: "2026-06-16T08:30:15.000Z",
       attachments: [],
       proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-result")
+    },
+    {
+      turnId: "searcharchive-demo-assistant-final",
+      role: "assistant",
+      text: "J'ai retrouvé deux morceaux utiles. Le passage principal dit que le budget croissant était de 24 euros, avec une cuisson au four à 180 degrés pendant 17 minutes, puis 8 minutes de repos. Le second morceau confirme que la demande portait bien sur la note budget croissant et la température du four.",
+      createdAt: "2026-06-16T08:30:21.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-final")
     }
   ];
   return {
@@ -16417,7 +16421,7 @@ function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
     workspaceLabel,
     date: "2026-06-16",
     createdAt: "2026-06-16T08:30:00.000Z",
-    updatedAt: "2026-06-16T08:30:15.000Z",
+    updatedAt: "2026-06-16T08:30:21.000Z",
     archived: false,
     messages,
     proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))

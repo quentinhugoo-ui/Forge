@@ -1340,7 +1340,7 @@ const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "r
 const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", "revised"] as const;
 
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
-  [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
+  [BRAIN_SEARCHARCHIVE_COMMAND, "Search Archive"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
   [BRAIN_SCRAPERS_COMMAND, "parallel scraper MCP request prepared"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
@@ -3065,7 +3065,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
   if (command === BRAIN_PLAN_COMMAND) return <ListChecks />;
-  if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <ModuleLogo id="searcharchive" />;
+  if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <Search />;
   if (command === BRAIN_SCRAPERS_COMMAND) return <Search />;
   if (command === BRAIN_NEWOBJECT_COMMAND) return <NewObjectCodeActIcon />;
   if (command === BRAIN_GOOGLE_AGENDA_COMMAND) return <CalendarCodeActIcon />;
@@ -3521,7 +3521,7 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
     <section className="searchArchiveResultCard" aria-label="Search Archive result chunks">
       <header className="searchArchiveResultCard__header">
         <span className="searchArchiveResultCard__icon" aria-hidden="true">
-          <ModuleLogo id="searcharchive" />
+          <Search />
         </span>
         <span className="searchArchiveResultCard__title">Search Archive</span>
         <span className="searchArchiveResultCard__meta">{resultCount} chunks</span>
