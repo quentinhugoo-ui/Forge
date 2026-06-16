@@ -16335,7 +16335,6 @@ function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
 function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
   const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const messages: ChatArchiveMessage[] = [
-    { turnId: "searcharchive-demo-user", role: "user", text: "Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.", createdAt: "2026-06-16T08:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-user") },
     { turnId: "searcharchive-demo-assistant-start", role: "assistant", text: `Loop stream archive test\n\n${SEARCHARCHIVE_DEMO_START_MARKER}`, createdAt: "2026-06-16T08:30:08.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-start") }
   ];
   return {
@@ -16364,7 +16363,11 @@ function ensureSearchArchiveLoopDemoSession(): void {
     chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
   } else {
     const demoSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)!;
+    const initialDemo = searchArchiveLoopDemoArchiveSession();
     demoSession.workspaceLabel = workspaceLabel;
+    demoSession.messages = initialDemo.messages;
+    demoSession.updatedAt = initialDemo.updatedAt;
+    demoSession.proofHash = archiveSessionProofHash(demoSession);
     demoSession.archived = false;
   }
   const localDemo = localChatSessions.find((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
@@ -16386,6 +16389,137 @@ function ensureSearchArchiveLoopDemoSession(): void {
       archived: false
     });
   }
+}
+
+const searchArchiveLoopDemoTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function clearSearchArchiveLoopDemoTimers(): void {
+  for (const timer of searchArchiveLoopDemoTimers) {
+    clearTimeout(timer);
+  }
+  searchArchiveLoopDemoTimers.clear();
+}
+
+function scheduleSearchArchiveLoopDemoStep(delayMs: number, step: () => void): void {
+  const timer = setTimeout(() => {
+    searchArchiveLoopDemoTimers.delete(timer);
+    step();
+  }, delayMs);
+  searchArchiveLoopDemoTimers.add(timer);
+}
+
+function searchArchiveLoopDemoTranscriptMessage(
+  id: string,
+  role: "user" | "assistant",
+  text: string,
+  seed: string
+): TranscriptMessage {
+  return {
+    id,
+    role,
+    text,
+    attachments: [],
+    proofHash: stableSearchArchiveHash({ id, role, text, seed })
+  };
+}
+
+function searchArchiveLoopDemoArchiveMessage(message: TranscriptMessage, createdAt: string): ChatArchiveMessage {
+  return {
+    turnId: message.id,
+    role: message.role,
+    text: message.text,
+    createdAt,
+    attachments: [],
+    proofHash: message.proofHash
+  };
+}
+
+function commitSearchArchiveLoopDemoTranscript(messages: TranscriptMessage[], createdAtById: Record<string, string>): void {
+  ensureSearchArchiveLoopDemoSession();
+  const archiveSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
+  if (!archiveSession) {
+    return;
+  }
+  panelsChatBottomState.activeSessionId = SEARCHARCHIVE_LOOP_DEMO_SESSION_ID;
+  sidebarState.recentSessionId = SEARCHARCHIVE_LOOP_DEMO_SESSION_ID;
+  panelsChatBottomState.chatText = "";
+  panelsChatBottomState.transcript = [...messages];
+  panelsChatBottomState.uploadItems = [];
+  panelsChatBottomState.uploadCount = 0;
+  panelsChatBottomState.uploadErrorText = "";
+  panelsChatBottomState.uploadEditTargetId = "";
+  panelsChatBottomState.permissionModeOpen = false;
+  panelsChatBottomState.activeBrainSegment = activeBrainSegmentFromTranscript(panelsChatBottomState.transcript);
+  ensureBrainBootTranscript(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
+
+  archiveSession.messages = messages.map((message) =>
+    searchArchiveLoopDemoArchiveMessage(message, createdAtById[message.id] ?? "2026-06-16T08:30:00.000Z")
+  );
+  archiveSession.updatedAt = Object.values(createdAtById).sort().at(-1) ?? "2026-06-16T08:30:00.000Z";
+  archiveSession.archived = false;
+  archiveSession.proofHash = archiveSessionProofHash(archiveSession);
+  persistChatArchiveSoon();
+  emitPanelsChatBottomSnapshotEvent("transcript_committed", SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
+}
+
+function searchArchiveLoopDemoResultText(): string {
+  const request: SearchArchiveRequest = {
+    query: "croissant four 180",
+    keywords: ["croissant", "four", "180"],
+    scope: "all",
+    sessionScope: "all",
+    contentScope: "messages",
+    fileOrigin: "all",
+    topK: 3,
+    contextTurns: 1,
+    includeFilePreviews: true,
+    includeArtifactRefs: true,
+    templateProofHash: "sha256:demo-searcharchive-template"
+  };
+  const result = searchArchiveSessions(Array.from(chatArchiveSessions.values()), request);
+  return renderSearchArchiveResult(result);
+}
+
+function startSearchArchiveLoopDemo(): void {
+  ensureSearchArchiveLoopDemoSession();
+  clearSearchArchiveLoopDemoTimers();
+  const createdAtById = {
+    "searcharchive-demo-user": "2026-06-16T08:30:00.000Z",
+    "searcharchive-demo-assistant-template": "2026-06-16T08:30:07.000Z",
+    "searcharchive-demo-assistant-result": "2026-06-16T08:30:15.000Z"
+  };
+  const userMessage = searchArchiveLoopDemoTranscriptMessage(
+    "searcharchive-demo-user",
+    "user",
+    "Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.",
+    "demo-user"
+  );
+  const templateMessage = searchArchiveLoopDemoTranscriptMessage(
+    "searcharchive-demo-assistant-template",
+    "assistant",
+    [
+      "Je demarre le loop stream. Je ne decide rien cote application : j'appelle le CodeAct et j'attends le contrat a remplir.",
+      "",
+      BRAIN_SEARCHARCHIVE_COMMAND
+    ].join("\n"),
+    "demo-template"
+  );
+  const resultMessage = searchArchiveLoopDemoTranscriptMessage(
+    "searcharchive-demo-assistant-result",
+    "assistant",
+    [
+      "Template rempli. J'execute la recherche locale et je renvoie le resultat au LLM pour continuer le loop.",
+      "",
+      `${BRAIN_SEARCHARCHIVE_COMMAND} query="croissant four 180" keywords=["croissant","four","180"] session_scope=all content_scope=messages file_origin=all top_k=3 context_turns=1 include_file_previews=true include_artifact_refs=true template_proof_hash=sha256:demo-searcharchive-template`,
+      "",
+      searchArchiveLoopDemoResultText()
+    ].join("\n"),
+    "demo-result"
+  );
+
+  commitSearchArchiveLoopDemoTranscript([userMessage], createdAtById);
+  scheduleSearchArchiveLoopDemoStep(900, () => commitSearchArchiveLoopDemoTranscript([userMessage, templateMessage], createdAtById));
+  scheduleSearchArchiveLoopDemoStep(2100, () => commitSearchArchiveLoopDemoTranscript([userMessage, templateMessage, resultMessage], createdAtById));
 }
 
 function ensureAssistantPatternDemoSession(): void {
@@ -17834,6 +17968,11 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       resetPanelsChatSessionView();
       panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
       sidebarState.recentSessionId = "";
+      break;
+    case "start_searcharchive_loop_demo":
+      startSearchArchiveLoopDemo();
+      panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
+      panelsChatBottomState.chatText = "";
       break;
     case "chat_text_edited": {
       if (panelsChatBottomCommandTime(command) <= panelsChatBottomState.composerResetRequestTime) {

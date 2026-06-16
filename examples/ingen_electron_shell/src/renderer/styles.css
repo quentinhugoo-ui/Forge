@@ -7060,24 +7060,6 @@ ol.assistantText__list li::before {
   opacity: 0.72;
 }
 
-.searchArchiveDemoFlow {
-  display: grid;
-  gap: 9px;
-}
-
-.searchArchiveDemoFlow__turn {
-  width: min(620px, 100%);
-  padding: 8px 10px;
-  color: color-mix(in oklab, var(--forge-text), transparent 8%);
-  border-left: 1px solid color-mix(in oklab, #8fb7ff, transparent 66%);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
-.searchArchiveDemoFlow__turn--user {
-  color: color-mix(in oklab, var(--forge-text), #8fb7ff 8%);
-}
-
 @media (max-width: 720px) {
   .searchArchiveResultCard__header {
     grid-template-columns: 24px minmax(0, 1fr);

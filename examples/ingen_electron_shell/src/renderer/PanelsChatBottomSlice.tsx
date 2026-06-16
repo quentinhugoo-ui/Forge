@@ -3564,62 +3564,24 @@ function SearchArchiveResultCard({ result, messageId, blockIndex }: { result: As
   );
 }
 
-function SearchArchiveDemoStartCard({ agentName }: { agentName: string }) {
-  const [started, setStarted] = useState(false);
-  const demoEvent = transcriptCodeActEvent(
-    BRAIN_SEARCHARCHIVE_COMMAND,
-    `${BRAIN_SEARCHARCHIVE_COMMAND} template_proof_hash=sha256:demo query="croissant four 180" session_scope=all content_scope=messages top_k=3`
-  );
-  const demoResult = parseSearchArchiveResultBlock([
-    "SEARCHARCHIVE_RESULT",
-    "schema=forge.brain.searcharchive.result.v1",
-    "query=\"croissant four 180\"",
-    "scope=all",
-    "match_count=2",
-    "returned_count=2",
-    "truncated=false",
-    "proof_hash=sha256:demo-searcharchive-loop-proof",
-    "hits:",
-    "  - rank: 1",
-    "    source_type: session_message",
-    "    session_id: \"searcharchive-loop-demo-memory\"",
-    "    session_title: \"Archive source - patisserie budget\"",
-    "    turn_id: \"demo-memory-assistant-recipe\"",
-    "    role: assistant",
-    "    created_at: \"2026-06-15T09:43:12.000Z\"",
-    "    matched_field: message_text",
-    "    score: 19",
-    "    snippet: \"On garde le budget croissant a 24 euros, cuisson au four a 180 degres pendant 17 minutes, puis repos 8 minutes.\"",
-    "    open_ref=forge://archive/session/searcharchive-loop-demo-memory?turn=demo-memory-assistant-recipe",
-    "  - rank: 2",
-    "    source_type: session_message",
-    "    session_id: \"searcharchive-loop-demo-memory\"",
-    "    session_title: \"Archive source - patisserie budget\"",
-    "    turn_id: \"demo-memory-user-budget\"",
-    "    role: user",
-    "    created_at: \"2026-06-15T09:42:55.000Z\"",
-    "    matched_field: message_text",
-    "    score: 12",
-    "    snippet: \"Retrouve moi la note budget croissant et la temperature du four pour samedi.\"",
-    "    open_ref=forge://archive/session/searcharchive-loop-demo-memory?turn=demo-memory-user-budget"
-  ]);
+function SearchArchiveDemoStartCard() {
+  const [starting, setStarting] = useState(false);
+  const startDemo = () => {
+    if (starting) {
+      return;
+    }
+    setStarting(true);
+    void panelsChatBottomStore.dispatch({ kind: "start_searcharchive_loop_demo" }).catch(() => setStarting(false));
+  };
 
   return (
     <section className="searchArchiveDemoCard" aria-label="SearchArchive loop stream demo">
-      <button className="searchArchiveDemoCard__start" type="button" onClick={() => setStarted(true)} disabled={started}>
+      <button className="searchArchiveDemoCard__start" type="button" onClick={startDemo} disabled={starting}>
         <span className="searchArchiveDemoCard__startIcon" aria-hidden="true">
           <ModuleLogo id="searcharchive" />
         </span>
-        <span>{started ? "Started" : "Start"}</span>
+        <span>{starting ? "Starting" : "Start"}</span>
       </button>
-      {started ? (
-        <div className="searchArchiveDemoFlow">
-          <div className="searchArchiveDemoFlow__turn searchArchiveDemoFlow__turn--user">Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.</div>
-          <div className="searchArchiveDemoFlow__turn searchArchiveDemoFlow__turn--assistant">Je lance le CodeAct d'archive, je recois le template, puis je renvoie le template rempli pour executer la recherche.</div>
-          <TranscriptCodeActEventLine agentName={agentName} event={demoEvent} writing />
-          <SearchArchiveResultCard blockIndex={0} messageId="searcharchive-demo" result={demoResult} />
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -3726,7 +3688,7 @@ function AssistantMarkdownText({
           return <SearchArchiveResultCard blockIndex={index} key={`${messageId}-searcharchive-${index}`} messageId={messageId} result={block.result} />;
         }
         if (block.kind === "search_archive_demo_start") {
-          return <SearchArchiveDemoStartCard agentName={agentName} key={`${messageId}-searcharchive-demo-${index}`} />;
+          return <SearchArchiveDemoStartCard key={`${messageId}-searcharchive-demo-${index}`} />;
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";

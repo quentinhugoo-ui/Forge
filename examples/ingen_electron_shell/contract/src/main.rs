@@ -264,6 +264,7 @@ const PANELS_CHAT_BOTTOM_COMMAND_KIND: EnumSpec = EnumSpec {
         "assistant_write_complete",
         "update_brain_identity",
         "new_session",
+        "start_searcharchive_loop_demo",
         "select_llm",
         "open_llm_providers",
         "cycle_llm_model",
