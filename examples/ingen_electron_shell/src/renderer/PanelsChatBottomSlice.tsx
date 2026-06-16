@@ -4384,10 +4384,11 @@ function WidgetTranscriptPanel({
       ].filter(Boolean).join(" ")}
       aria-labelledby={titleId}
     >
+      <div className="widgetTranscriptPanel__topSessionTab" title={sessionLabel}>
+        <strong id={titleId}>{sessionLabel}</strong>
+      </div>
       <div className="composerQuestionnaire__header widgetTranscriptPanel__header">
-        <strong id={titleId} className="widgetTranscriptPanel__title" title={sessionLabel}>
-          {sessionLabel}
-        </strong>
+        <span className="widgetTranscriptPanel__headerSpacer" aria-hidden="true" />
         <button
           type="button"
           className="widgetTranscriptPanel__reduce"

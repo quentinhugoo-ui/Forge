@@ -99,7 +99,7 @@ button {
   border-radius: 6px !important;
 }
 
-.shell .widgetTranscriptPanel__header,
+.shell .widgetTranscriptPanel__topSessionTab,
 .shell .widgetTranscriptTab {
   border-radius: 6px 6px 0 0 !important;
 }
@@ -3997,7 +3997,8 @@ button {
 
 .widgetTranscriptPanel {
   --widget-transcript-tab-height: 22px;
-  grid-template-rows: 32px minmax(0, 1fr);
+  --widget-transcript-panel-tab-height: 18px;
+  grid-template-rows: 24px minmax(0, 1fr);
   gap: 0;
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 18px);
   height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 104px));
@@ -4029,6 +4030,41 @@ button {
   transition: opacity 140ms ease-out;
 }
 
+.widgetTranscriptPanel__topSessionTab {
+  position: absolute;
+  left: 0;
+  top: calc(-1 * var(--widget-transcript-panel-tab-height) + 1px);
+  z-index: 3;
+  display: inline-grid;
+  align-items: center;
+  width: 126px;
+  max-width: min(126px, calc(var(--questionnaire-width) - 46px));
+  height: var(--widget-transcript-panel-tab-height);
+  min-height: var(--widget-transcript-panel-tab-height);
+  padding: 0 7px;
+  overflow: hidden;
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 16%);
+  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 10%);
+  box-shadow:
+    0 -2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  pointer-events: auto;
+}
+
+.widgetTranscriptPanel__topSessionTab strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 610;
+  letter-spacing: 0;
+  line-height: 1;
+  color: currentColor;
+}
+
 .widgetTranscriptPanel .widgetTranscriptPanel__header {
   position: relative;
   z-index: 2;
@@ -4037,7 +4073,7 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 0;
+  min-height: 24px;
   padding: 0 5px 0 14px;
   color: color-mix(in oklab, var(--forge-chat-text), transparent 10%);
   background: var(--forge-sidebar-bg);
@@ -4047,16 +4083,8 @@ button {
   transition: opacity 140ms ease-out;
 }
 
-.widgetTranscriptPanel .widgetTranscriptPanel__title {
+.widgetTranscriptPanel__headerSpacer {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1;
-  color: currentColor;
 }
 
 .widgetTranscriptPanel__reduce {
@@ -14068,6 +14096,7 @@ ol.assistantText__list li::before {
   .sidebarModule,
   .sidebarModule__logo,
   .widgetTranscriptPanel,
+  .widgetTranscriptPanel__topSessionTab,
   .widgetTranscriptPanel__header,
   .widgetTranscriptPanel__reduce,
   .widgetTranscriptPanel__body,
