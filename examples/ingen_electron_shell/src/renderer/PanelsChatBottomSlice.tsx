@@ -4341,14 +4341,39 @@ function TranscriptCanvas({
   );
 }
 
-/* Widget mini-mode languette: a single compact tab pinned above the chat bar
-   showing the most recent session's name. Intentionally minimal — the panel
-   reveal behaviour is built on top of this in a later step. */
-function WidgetSessionTab({ sessionName }: { sessionName: string }) {
+/* Widget mini-mode drawer: a single element that IS the panel. The languette
+   is its top edge (a flex row). Closed, the panel is slid down so only the
+   languette pokes out above the chat bar; the rest is hidden by the wrapper's
+   bottom clip (no z-index tricks, nothing leaks below the bar). Clicking the
+   languette toggles a pure CSS transform, so the reveal is one smooth slide. */
+function WidgetSessionDrawer({
+  sessionName,
+  open,
+  onToggle,
+  children
+}: {
+  sessionName: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
   const label = sessionName.trim() || "New session";
   return (
-    <div className="widgetSessionTab" title={label}>
-      <span className="widgetSessionTab__label">{label}</span>
+    <div className={["widgetSessionDrawer", open ? "widgetSessionDrawer--open" : ""].filter(Boolean).join(" ")}>
+      <section className="widgetSessionDrawer__panel" aria-label={`Session ${label}`}>
+        <button
+          type="button"
+          className="widgetSessionTab"
+          aria-expanded={open}
+          title={label}
+          onClick={onToggle}
+        >
+          <span className="widgetSessionTab__label">{label}</span>
+        </button>
+        <div className="widgetSessionDrawer__body" aria-hidden={!open}>
+          {open ? children : null}
+        </div>
+      </section>
     </div>
   );
 }
@@ -4574,6 +4599,7 @@ export function PanelsChatBottomSlice({
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
   const [assistantStopSignal, setAssistantStopSignal] = useState(0);
+  const [widgetPanelOpen, setWidgetPanelOpen] = useState(false);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -4937,6 +4963,13 @@ export function PanelsChatBottomSlice({
     widgetMode &&
     !widgetModeTransitioning &&
     !composerQuestionnaire;
+  // The drawer only exists while the languette is shown; collapse it whenever
+  // that stops being true so it never reopens stale on the next widget entry.
+  useEffect(() => {
+    if (!widgetSessionTabVisible) {
+      setWidgetPanelOpen(false);
+    }
+  }, [widgetSessionTabVisible]);
   const useMathInCompute = useCallback((formula: string) => {
     const math = formula.trim();
     if (!math || parallelMode) {
@@ -5219,7 +5252,25 @@ export function PanelsChatBottomSlice({
           onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
         />
       ) : null}
-      {widgetSessionTabVisible ? <WidgetSessionTab sessionName={sessionName} /> : null}
+      {widgetSessionTabVisible ? (
+        <WidgetSessionDrawer
+          sessionName={sessionName}
+          open={widgetPanelOpen}
+          onToggle={() => setWidgetPanelOpen((value) => !value)}
+        >
+          <TranscriptCanvas
+            activeSessionId={snapshot.activeSessionId}
+            messages={canvasMessages}
+            agentName={brainAgentName}
+            parallelSessionIndex={0}
+            className="chatCanvas chatCanvas--widgetDrawer"
+            assistantBusy={Boolean(snapshot.composer.assistantBusy)}
+            stopAnimationSignal={assistantStopSignal}
+            onEditImage={stageImageForEdit}
+            onUseMathInCompute={useMathInCompute}
+          />
+        </WidgetSessionDrawer>
+      ) : null}
       <form
         ref={composerRef}
         className={[

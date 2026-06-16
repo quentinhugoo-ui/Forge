@@ -3824,33 +3824,90 @@ button {
   transition: left var(--sidebar-motion), width var(--sidebar-motion), bottom var(--sidebar-motion);
 }
 
-/* Widget mini-mode languette: one compact tab pinned just above the chat bar,
-   showing the most recent session's name. Top corners are rounded by the
-   .shell .widgetSessionTab override (the global reset flattens radii). */
-.widgetSessionTab {
+/* Widget mini-mode drawer. The wrapper is anchored just above the chat bar and
+   clipped exactly at the bar line, so the panel can slide fully down (collapsed)
+   without ever leaking below the bar — no z-index tricks needed. The compact
+   languette overhangs the panel's top-left and rides the same transform, so it
+   is literally the top of the panel: collapsed, only it pokes out. */
+.widgetSessionDrawer {
+  --widget-languette-h: 16px;
+  --widget-panel-body-h: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 86px));
   position: fixed;
   left: var(--questionnaire-left);
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px));
   z-index: 31;
+  width: var(--questionnaire-width);
+  height: var(--widget-panel-body-h);
+  pointer-events: none;
+  clip-path: inset(-44px -40px 0 -40px);
+  transition: left var(--sidebar-motion), width var(--sidebar-motion);
+}
+
+/* The panel body matches the /questionnaire_ panel in size and format. */
+.widgetSessionDrawer__panel {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 8%);
+  box-shadow:
+    0 14px 28px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  pointer-events: auto;
+  transform: translateY(100%);
+  transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.widgetSessionDrawer--open .widgetSessionDrawer__panel {
+  transform: translateY(0);
+}
+
+.widgetSessionDrawer__body {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 6px 5px;
+}
+
+.chatCanvas--widgetDrawer {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Compact session languette: same grey as the chat-bar upload square, narrow
+   and short, rounded top corners (the .shell override restores the radius). */
+.widgetSessionTab {
+  position: absolute;
+  top: calc(-1 * var(--widget-languette-h) + 1px);
+  left: 0;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
-  max-width: min(190px, calc(var(--questionnaire-width) - 16px));
-  height: 20px;
+  max-width: min(186px, calc(var(--questionnaire-width) - 16px));
+  height: var(--widget-languette-h);
   padding: 0 9px;
   color: color-mix(in oklab, var(--forge-chat-text), #ffffff 6%);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
-  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 12%);
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 10%);
   border-bottom: 0;
   box-shadow:
-    0 -3px 10px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 -2px 7px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: pointer;
   pointer-events: auto;
-  animation: widgetSessionTabReveal 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: left var(--sidebar-motion), max-width var(--sidebar-motion);
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.widgetSessionTab:hover,
+.widgetSessionTab:focus-visible {
+  color: #ffffff;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
+  outline: none;
 }
 
 .widgetSessionTab__label {
@@ -7015,16 +7072,6 @@ ol.assistantText__list li::before {
   }
 }
 
-@keyframes widgetSessionTabReveal {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
 @keyframes composerQuestionnaireExit {
   0% {
@@ -13466,7 +13513,9 @@ ol.assistantText__list li::before {
   .sidebarPoolCard__logo,
   .sidebarModule,
   .sidebarModule__logo,
-  .widgetSessionTab {
+  .widgetSessionTab,
+  .widgetSessionDrawer,
+  .widgetSessionDrawer__panel {
     animation: none;
     transition: none;
   }
