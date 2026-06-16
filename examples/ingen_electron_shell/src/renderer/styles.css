@@ -14,6 +14,14 @@
   color-scheme: dark;
   font-family: "Geist", system-ui, sans-serif;
   background: #0e0e0f;
+  --self-directed-spectrum: linear-gradient(110deg, #5eead4 0%, #38bdf8 22%, #4338ca 46%, #6b21a8 66%, #9f1239 84%, #e9c46a 100%);
+  --self-directed-teal: #5eead4;
+  --self-directed-cyan: #38bdf8;
+  --self-directed-indigo: #4338ca;
+  --self-directed-purple: #6b21a8;
+  --self-directed-wine: #9f1239;
+  --self-directed-gold: #e9c46a;
+  --self-directed-icon: color-mix(in oklab, var(--self-directed-cyan), var(--self-directed-purple) 34%);
 }
 
 html.ingen-widget-mode {
@@ -3720,10 +3728,6 @@ button {
   z-index: 31;
 }
 
-.panelsChatBottom--selfDirected {
-  --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
-}
-
 .questionnaireFocusScrim {
   position: fixed;
   inset: 0;
@@ -4078,7 +4082,7 @@ button {
   border-color: transparent;
   box-shadow:
     0 18px 44px rgba(0, 0, 0, 0.34),
-    0 0 26px color-mix(in oklab, #22d3ee, transparent 82%),
+    0 0 26px color-mix(in oklab, var(--self-directed-purple), transparent 82%),
     inset 0 1px 0 rgba(255, 255, 255, 0.045);
   animation:
     composerQuestionnaireEnter 180ms ease-out both,
@@ -4091,9 +4095,9 @@ button {
   content: "";
   pointer-events: none;
   background:
-    radial-gradient(circle at 12% 18%, color-mix(in oklab, #34d399, transparent 78%), transparent 28%),
-    radial-gradient(circle at 82% 12%, color-mix(in oklab, #c084fc, transparent 78%), transparent 30%),
-    radial-gradient(circle at 72% 86%, color-mix(in oklab, #fb923c, transparent 82%), transparent 32%);
+    radial-gradient(circle at 12% 18%, color-mix(in oklab, var(--self-directed-teal), transparent 80%), transparent 28%),
+    radial-gradient(circle at 82% 12%, color-mix(in oklab, var(--self-directed-purple), transparent 76%), transparent 30%),
+    radial-gradient(circle at 72% 86%, color-mix(in oklab, var(--self-directed-wine), transparent 82%), transparent 32%);
   opacity: 0.78;
 }
 
@@ -4122,9 +4126,9 @@ button {
 .panelsChatBottom--selfDirected .composerQuestionnaire__option:hover,
 .panelsChatBottom--selfDirected .composerQuestionnaire__option:has(input:checked),
 .panelsChatBottom--selfDirected .composerQuestionnaire__option:has(textarea:focus) {
-  color: color-mix(in oklab, #22d3ee, #facc15 22%);
-  border-color: color-mix(in oklab, #22d3ee, #facc15 22%);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, #22d3ee, #facc15 22%, transparent 58%);
+  color: color-mix(in oklab, var(--self-directed-cyan), var(--self-directed-gold) 16%);
+  border-color: color-mix(in oklab, var(--self-directed-cyan), var(--self-directed-gold) 16%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--self-directed-cyan), var(--self-directed-gold) 16%, transparent 58%);
 }
 
 .composerQuestionnaire--untitled {
@@ -7461,7 +7465,7 @@ ol.assistantText__list li::before {
   inset: 0;
   z-index: 1;
   padding: 1px;
-  background: linear-gradient(90deg, #34d399, #22d3ee, #818cf8, #facc15, #fb923c, #f472b6, #34d399);
+  background: var(--self-directed-spectrum);
   background-size: 180% 100%;
   border-radius: inherit;
   opacity: 0.82;
@@ -7478,8 +7482,8 @@ ol.assistantText__list li::before {
 }
 
 .composer--selfDirectedDrafting .composer__input {
-  color: color-mix(in oklab, var(--forge-chat-text), #a7f3d0 10%);
-  caret-color: #67e8f9;
+  color: color-mix(in oklab, var(--forge-chat-text), var(--self-directed-cyan) 10%);
+  caret-color: var(--self-directed-cyan);
 }
 
 .composer > * {
@@ -8078,7 +8082,6 @@ ol.assistantText__list li::before {
 }
 
 .permissionModeControl {
-  --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
   grid-column: 1;
   justify-self: start;
   position: relative;
@@ -8193,7 +8196,7 @@ ol.assistantText__list li::before {
 }
 
 .permissionModeTrigger--selfDirected > svg:first-child {
-  color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  color: var(--self-directed-icon);
   opacity: 1;
   animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
 }
@@ -8347,7 +8350,7 @@ ol.assistantText__list li::before {
 
 .permissionModeOption--selfDirected .permissionModeOption__icon,
 .permissionModeOption--selfDirected.permissionModeOption--selected .permissionModeOption__icon {
-  color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  color: var(--self-directed-icon);
   animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
 }
 
@@ -8362,7 +8365,7 @@ ol.assistantText__list li::before {
 }
 
 .permissionModeOption--selfDirected .permissionModeOption__detail {
-  color: color-mix(in oklab, var(--forge-muted), #a7f3d0 16%);
+  color: color-mix(in oklab, var(--forge-muted), var(--self-directed-cyan) 16%);
 }
 
 .permissionModeOption__icon {
@@ -8436,7 +8439,7 @@ ol.assistantText__list li::before {
 
 .permissionModeOption__autonomyItem svg {
   justify-self: center;
-  color: color-mix(in oklab, #facc15, #38bdf8 34%);
+  color: color-mix(in oklab, var(--self-directed-gold), var(--self-directed-cyan) 34%);
 }
 
 .permissionModeOption__autonomyItem > span {
@@ -8565,34 +8568,25 @@ ol.assistantText__list li::before {
 
 @keyframes permissionSelfDirectedIconFlow {
   0% {
-    color: #34d399;
+    color: var(--self-directed-teal);
   }
-  12% {
-    color: #22d3ee;
+  16% {
+    color: var(--self-directed-cyan);
   }
-  24% {
-    color: #38bdf8;
+  32% {
+    color: var(--self-directed-indigo);
   }
-  36% {
-    color: #818cf8;
+  50% {
+    color: var(--self-directed-purple);
   }
-  48% {
-    color: #c084fc;
-  }
-  60% {
-    color: #facc15;
-  }
-  72% {
-    color: #fb923c;
+  68% {
+    color: var(--self-directed-wine);
   }
   84% {
-    color: #ef4444;
-  }
-  92% {
-    color: #f472b6;
+    color: var(--self-directed-gold);
   }
   100% {
-    color: #34d399;
+    color: var(--self-directed-teal);
   }
 }
 
@@ -8604,7 +8598,7 @@ ol.assistantText__list li::before {
 
   .permissionModeTrigger--selfDirected > svg:first-child {
     animation: none;
-    color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+    color: var(--self-directed-icon);
   }
 
   .permissionModeOption--selfDirected .permissionModeOption__label {
@@ -8622,7 +8616,7 @@ ol.assistantText__list li::before {
 
   .permissionModeOption--selfDirected .permissionModeOption__icon {
     animation: none;
-    color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+    color: var(--self-directed-icon);
   }
 
   .bottomControls .permissionModeOption.permissionModeOption--selfDirected::after {
