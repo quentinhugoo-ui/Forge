@@ -1295,6 +1295,7 @@ interface AssistantMacroListItem {
 
 interface AssistantSearchArchiveHit {
   rank: number;
+  sessionId: string;
   sessionTitle: string;
   role: string;
   createdAt: string;
@@ -1808,6 +1809,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
     if (rank) {
       activeHit = {
         rank: Number(rank[1]),
+        sessionId: "",
         sessionTitle: "",
         role: "",
         createdAt: "",
@@ -1820,6 +1822,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
       continue;
     }
     if (activeHit) {
+      const sessionId = searchArchiveValue(trimmed, "session_id");
       const sessionTitle = searchArchiveValue(trimmed, "session_title");
       const role = searchArchiveValue(trimmed, "role");
       const createdAt = searchArchiveValue(trimmed, "created_at");
@@ -1827,6 +1830,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
       const score = searchArchiveValue(trimmed, "score");
       const snippet = searchArchiveValue(trimmed, "snippet");
       const openRef = searchArchiveValue(trimmed, "open_ref");
+      if (sessionId) activeHit.sessionId = sessionId;
       if (sessionTitle) activeHit.sessionTitle = sessionTitle;
       if (role) activeHit.role = role;
       if (createdAt) activeHit.createdAt = createdAt;
@@ -3268,7 +3272,27 @@ function TranscriptContextCompactionEventLine({ event }: { event: TranscriptCode
   );
 }
 
-function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: string; event: TranscriptCodeActEvent; writing: boolean }) {
+function SearchArchiveKeywordPill({ term }: { term: string }) {
+  return <span className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill">{term}</span>;
+}
+
+function searchArchiveResultLabel(result: AssistantSearchArchiveResult): string {
+  const resultCount = result.returnedCount || String(result.hits.length);
+  const resultCountNumber = Number.parseInt(resultCount, 10);
+  return `${resultCount} ${resultCountNumber === 1 ? "match" : "matches"}`;
+}
+
+function TranscriptCodeActEventLine({
+  agentName,
+  event,
+  searchArchiveResult,
+  writing
+}: {
+  agentName: string;
+  event: TranscriptCodeActEvent;
+  searchArchiveResult?: AssistantSearchArchiveResult;
+  writing: boolean;
+}) {
   if (isContextCompactionCommand(event.command)) {
     return <TranscriptContextCompactionEventLine event={event} />;
   }
@@ -3315,6 +3339,10 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
     : isPendingAgentEvent
       ? activeAgentEventText(agentName, agentCommand!)
       : event.text;
+  const searchArchiveTerms =
+    event.command === BRAIN_SEARCHARCHIVE_COMMAND && searchArchiveResult
+      ? searchArchiveHighlightTerms(searchArchiveResult.query)
+      : [];
 
   if (fileModification) {
     return (
@@ -3339,6 +3367,11 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
         <CodeActEventIcon command={event.command} brainSegmentPhase={brainSegmentPhase} />
       </span>
       <span className="transcriptCodeActEvent__text">{text}</span>
+      {searchArchiveTerms.length > 0 ? (
+        <span className="transcriptCodeActEvent__keywords" aria-label="Search keywords">
+          {searchArchiveTerms.map((term) => <SearchArchiveKeywordPill key={`event-search-keyword-${term}`} term={term} />)}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -3527,6 +3560,29 @@ function searchArchiveHitAuthorLabel(role: string, userName: string, agentName: 
   return role.trim() || "message";
 }
 
+interface SearchArchiveHitGroup {
+  key: string;
+  title: string;
+  hits: AssistantSearchArchiveHit[];
+}
+
+function groupedSearchArchiveHits(hits: AssistantSearchArchiveHit[]): SearchArchiveHitGroup[] {
+  const groups: SearchArchiveHitGroup[] = [];
+  const groupByKey = new Map<string, SearchArchiveHitGroup>();
+  for (const hit of hits) {
+    const title = hit.sessionTitle || "Untitled session";
+    const key = hit.sessionId || title;
+    let group = groupByKey.get(key);
+    if (!group) {
+      group = { key, title, hits: [] };
+      groupByKey.set(key, group);
+      groups.push(group);
+    }
+    group.hits.push(hit);
+  }
+  return groups;
+}
+
 function SearchArchiveResultCard({
   agentName,
   blockIndex,
@@ -3540,45 +3596,51 @@ function SearchArchiveResultCard({
   result: AssistantSearchArchiveResult;
   userName: string;
 }) {
-  const resultCount = result.returnedCount || String(result.hits.length);
-  const resultCountNumber = Number.parseInt(resultCount, 10);
-  const resultLabel = `${resultCount} ${resultCountNumber === 1 ? "match" : "matches"}`;
-  const terms = searchArchiveHighlightTerms(result.query);
+  const resultLabel = searchArchiveResultLabel(result);
+  const groups = groupedSearchArchiveHits(result.hits);
   return (
     <section className="searchArchiveResultCard" aria-label="Search Archive result matches">
       <div className="searchArchiveResultCard__summary">
-        {terms.length > 0 ? (
-          <div className="searchArchiveResultCard__keywords" aria-label="Matched keywords">
-            {terms.map((term) => (
-              <span className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill" key={`${messageId}-search-term-${blockIndex}-${term}`}>
-                {term}
-              </span>
-            ))}
-          </div>
-        ) : null}
         <span className="searchArchiveResultCard__meta">{resultLabel}</span>
       </div>
-      <ol className="searchArchiveResultCard__hits">
-        {result.hits.map((hit, hitIndex) => (
-          <li
-            className="searchArchiveResultCard__hit"
-            key={`${messageId}-search-hit-${blockIndex}-${hit.rank}-${hitIndex}`}
-          >
-            <div className="searchArchiveResultCard__hitTop">
-              <strong>{hit.sessionTitle || "Untitled session"}</strong>
-              {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
-              <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+      <div className="searchArchiveResultCard__groups">
+        {groups.map((group, groupIndex) => (
+          <section className="searchArchiveResultCard__group" key={`${messageId}-search-group-${blockIndex}-${group.key}`}>
+            <div className="searchArchiveResultCard__groupTitle">
+              <strong>{group.title}</strong>
             </div>
-            <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${hitIndex}`)}</p>
-            <div className="searchArchiveResultCard__hitBottom">
-              <span>match {hit.rank || hitIndex + 1}</span>
-              <span>{hit.matchedField || "message_text"}</span>
-            </div>
-          </li>
+            <ol className="searchArchiveResultCard__hits">
+              {group.hits.map((hit, hitIndex) => (
+                <li
+                  className="searchArchiveResultCard__hit"
+                  key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}
+                >
+                  <div className="searchArchiveResultCard__hitTop">
+                    {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
+                    <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+                  </div>
+                  <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
         ))}
-      </ol>
+      </div>
     </section>
   );
+}
+
+function followingSearchArchiveResult(blocks: AssistantMarkdownBlock[], eventIndex: number): AssistantSearchArchiveResult | undefined {
+  for (let index = eventIndex + 1; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block.kind === "search_archive_result") {
+      return block.result;
+    }
+    if (block.kind === "event" || block.kind === "event_group") {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function specializedBrainActivationCommandsFromText(text: string): string[] {
@@ -3668,7 +3730,19 @@ function AssistantMarkdownText({
           return <TranscriptCommandSummaryLine events={block.events} key={`${messageId}-event-group-${index}`} />;
         }
         if (block.kind === "event") {
-          return <TranscriptCodeActEventLine agentName={agentName} event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} writing={writing} />;
+          const searchArchiveResult =
+            block.event.command === BRAIN_SEARCHARCHIVE_COMMAND
+              ? followingSearchArchiveResult(blocks, index)
+              : undefined;
+          return (
+            <TranscriptCodeActEventLine
+              agentName={agentName}
+              event={block.event}
+              key={`${messageId}-event-${index}-${block.event.command}`}
+              searchArchiveResult={searchArchiveResult}
+              writing={writing}
+            />
+          );
         }
         if (block.kind === "learning_interrupt") {
           return (
