@@ -3965,7 +3965,7 @@ button {
   z-index: 1;
   display: flex;
   align-items: flex-end;
-  gap: 3px;
+  gap: 0;
   max-width: calc(var(--questionnaire-width) - 10px);
   height: var(--widget-languette-h);
   pointer-events: none;
@@ -4004,6 +4004,7 @@ button {
 }
 
 .widgetSessionTab {
+  z-index: 2;
   max-width: min(174px, calc(var(--questionnaire-width) - 42px));
   padding: 0 9px;
 }
@@ -4025,11 +4026,16 @@ button {
 }
 
 .widgetNewSessionTab {
-  justify-content: center;
-  width: 20px;
-  max-width: 20px;
-  min-width: 20px;
-  padding: 0;
+  z-index: 1;
+  justify-content: flex-end;
+  /* Folder-tab overlap: tuck the left edge behind the session tab so the two
+     read as stacked tabs, not separated buttons. The icon sits past the
+     overlap, on the visible right side. */
+  margin-left: -9px;
+  width: 25px;
+  max-width: 25px;
+  min-width: 25px;
+  padding: 0 5px 0 0;
   overflow: hidden;
   touch-action: manipulation;
   transition:
@@ -4040,11 +4046,19 @@ button {
     background 150ms ease;
 }
 
+/* Pull the new-session tab in front of the session tab while interacting with
+   it or expanding it, so its content is never hidden under the overlap. */
+.widgetNewSessionTab:hover,
+.widgetNewSessionTab:focus-visible,
+.widgetNewSessionTab--expanding {
+  z-index: 3;
+}
+
 .widgetNewSessionTab--expanding {
   justify-content: flex-start;
-  width: 112px;
-  max-width: 112px;
-  padding: 0 8px 0 5px;
+  width: 116px;
+  max-width: 116px;
+  padding: 0 8px 0 9px;
 }
 
 .widgetNewSessionTab__icon {
