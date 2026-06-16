@@ -33,14 +33,14 @@ describe("assistant progressive response feed", () => {
     expect(storeSource).toContain("incomingHasFreshAssistantResponse");
   });
 
-  it("keeps the existing assistant writing animation implementation untouched", () => {
+  it("keeps the assistant writing animation from leaking silent rename tags", () => {
     expect(animationSource).toContain("function assistantRenderableText");
     expect(animationSource).toContain("BRAIN_RENAME_SESSION_COMMAND");
-    expect(animationSource).toContain("renamechat");
-    expect(animationSource).toContain("_?renamechat_?");
-    expect(animationSource).toContain(".map((line) => line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND) ? \"\" : line)");
-    expect(animationSource).toContain("“”");
-    expect(animationSource).toContain("\\s*$");
+    expect(animationSource).toContain("RENAME_SESSION_TAG_PATTERN");
+    expect(animationSource).toContain("RENAME_SESSION_TAG_FRAGMENT_PATTERN");
+    expect(animationSource).toContain("trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)");
+    expect(animationSource).toContain("line.replace(RENAME_SESSION_TAG_FRAGMENT_PATTERN");
+    expect(animationSource).not.toContain("rename" + "chat");
     expect(animationSource).toContain("assistantRenderableText(text)");
     expect(animationSource).toContain("function AnimatedAssistantText");
     expect(animationSource).toContain("const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);");
@@ -97,7 +97,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function createAgentRuntimeEventQueue");
     expect(mainSource).toContain("agentEvents: AgentRuntimeEventQueue");
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
-    expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
+    expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), request)");
     expect(mainSource).toContain("function agentLoopNarrationContractManifest");
     expect(mainSource).toContain("LOOP_STREAM_NARRATION_CONTRACT v1");
     expect(mainSource).toContain("ACTION_NARRATION_CONTRACT v1");

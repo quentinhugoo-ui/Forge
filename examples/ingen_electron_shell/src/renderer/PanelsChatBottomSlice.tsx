@@ -1293,12 +1293,12 @@ const SILENT_TRANSCRIPT_CODEACT_COMMANDS = new Set<string>([BRAIN_RENAME_SESSION
 const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS.map((entry) => [entry.command, entry.description])
 );
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/["'`“‘]\s*[^"'`“”‘’\r\n]{1,120}?\s*(?:["'`”’]\s*)?_?renamechat_?/iu;
-const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/["'`“‘]\s*[^"'`“”‘’\r\n]{1,120}?\s*(?:["'`”’]\s*)?_?renamechat_?/giu;
+const RENAME_SESSION_TAG_PATTERN = /^\/rename_session_(?:\*?[^_\r\n]{1,120}\*?)_/i;
+const RENAME_SESSION_TAG_FRAGMENT_PATTERN = /\/rename_session_(?:\*?[^_\r\n]{1,120}\*?)_/giu;
 
 function isSilentTranscriptCodeActLine(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND) || COMPACT_RENAME_CHAT_CODEACT_PATTERN.test(trimmed);
+  return trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND);
 }
 
 const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "registered"] as const;
@@ -1975,10 +1975,14 @@ function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): Assistan
 function assistantRenderableText(text: string): string {
   return text
     .split(/\r?\n/)
-    .map((line) => line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND) ? "" : line)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND) && !RENAME_SESSION_TAG_PATTERN.test(trimmed)) {
+        return "";
+      }
+      return line.replace(RENAME_SESSION_TAG_FRAGMENT_PATTERN, "");
+    })
     .join("\n")
-    .replace(COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL, "")
-    .replace(/(^|\n)\s*\/["'`“‘]\s*[^"'`“”‘’\r\n]{0,120}?(?:(?:["'`”’]\s*)?_?renamechat_?)?\s*$/giu, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
