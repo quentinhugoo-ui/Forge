@@ -9754,6 +9754,36 @@ ol.assistantText__list li::before {
   opacity: 1;
 }
 
+.bangerMapsCesiumViewport--error {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: rgba(235, 241, 245, 0.86);
+  font-family: var(--forge-font);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 1;
+  pointer-events: none;
+}
+
+.bangerMapsCesiumViewport__error {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  left: 24px;
+  z-index: 5;
+  padding: 10px 12px;
+  color: rgba(255, 220, 210, 0.9);
+  background: rgba(18, 8, 8, 0.72);
+  border: 1px solid rgba(255, 130, 110, 0.28);
+  border-radius: 6px;
+  font-family: var(--forge-font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
 .bangerMapsCesiumViewport .cesium-viewer,
 .bangerMapsCesiumViewport .cesium-widget,
 .bangerMapsCesiumViewport .cesium-widget canvas {

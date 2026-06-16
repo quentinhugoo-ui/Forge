@@ -38,12 +38,16 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("Cesium.GoogleMaps.mapTilesApiEndpoint");
     expect(canvasSurfacesSource).toContain("Cesium.createGooglePhotorealistic3DTileset");
     expect(canvasSurfacesSource).toContain("onlyUsingWithGoogleGeocoder");
-    expect(canvasSurfacesSource).toContain("GOOGLE_MAPS_PROXY_KEY_ALIAS");
     expect(canvasSurfacesSource).toContain("resolveCesiumIonAccessToken");
     expect(canvasSurfacesSource).toContain("Cesium.Ion.defaultAccessToken");
     expect(canvasSurfacesSource).toContain("showCreditsOnScreen");
-    expect(canvasSurfacesSource).toContain("Banger Maps Cesium tileset failed; falling back to native sphere.");
+    expect(canvasSurfacesSource).toContain("Banger Maps Cesium tileset failed.");
+    expect(canvasSurfacesSource).toContain("Google Map Tiles direct mode requires GOOGLE_MAP_TILES_API_KEY.");
+    expect(canvasSurfacesSource).not.toContain("GOOGLE_MAPS_PROXY_KEY_ALIAS");
+    expect(canvasSurfacesSource).not.toContain("falling back to native sphere");
     expect(stylesSource).toContain(".bangerMapsCesiumViewport");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport--error");
+    expect(stylesSource).toContain(".bangerMapsCesiumViewport__error");
     expect(stylesSource).toContain(".bangerMapsCesiumViewport .cesium-widget-credits");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
@@ -136,19 +140,24 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("cesium-ion-direct");
     expect(mainSource).toContain("google-map-tiles-direct");
     expect(mainSource).toContain("google-map-tiles-api-key");
-    expect(mainSource).toContain("render-resolver-proxy");
+    expect(mainSource).toContain("none_direct_cesium_required");
+    expect(mainSource).toContain("cesium_or_google_direct_credentials_required");
+    expect(mainSource).not.toContain("render-resolver-proxy");
+    expect(mainSource).not.toContain("render-proxy");
   });
 
-  it("paints Maps from Cesium Google tiles first and falls back to the Banger preview frame", () => {
-    expect(canvasSurfacesSource).toContain("BangerSphereNativeViewport");
-    expect(canvasSurfacesSource).toContain("getBangerPreviewFrame");
+  it("paints Maps from direct Cesium Google tiles and refuses broken visual fallbacks", () => {
+    expect(canvasSurfacesSource).toContain("BangerMapsDirectViewport");
+    expect(canvasSurfacesSource).not.toContain("getBangerPreviewFrame");
     expect(canvasSurfacesSource).toContain("getBangerGoogleTilesConfig");
     expect(canvasSurfacesSource).toContain("BangerMapsCesiumViewport");
     expect(canvasSurfacesSource).toContain("Cesium photorealistic tiles bootstrap");
     expect(canvasSurfacesSource).toContain("Cesium ion direct loading Google photorealistic 3D Tiles");
     expect(canvasSurfacesSource).toContain("config.accessMode !== \"google-map-tiles-api-key\"");
     expect(canvasSurfacesSource).toContain("googleMapsApiKeyFromRootTilesetUrl");
+    expect(canvasSurfacesSource).toContain("Google Map Tiles direct mode requires GOOGLE_MAP_TILES_API_KEY.");
     expect(canvasSurfacesSource).toContain("Cesium Google photorealistic 3D Tiles live");
+    expect(canvasSurfacesSource).toContain("Cesium direct tiles still loading");
     expect(canvasSurfacesSource).toContain("googleMapsEndpointFromRootTilesetUrl");
     expect(canvasSurfacesSource).toContain("data-tileset-provider");
     expect(canvasSurfacesSource).toContain("data-tileset-renderer-model");
@@ -158,9 +167,11 @@ describe("Banger native viewport contract", () => {
     expect(canvasSurfacesSource).toContain("data-native-streamer-status");
     expect(canvasSurfacesSource).toContain("data-native-streamer-blocker");
     expect(canvasSurfacesSource).toContain("redactedTilesetEndpoint");
-    expect(canvasSurfacesSource).toContain("previewFrameDataUrl");
-    expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__preview");
-    expect(canvasSurfacesSource).toContain("bangerSphereNativeFrame__fallback");
+    expect(canvasSurfacesSource).toContain("bangerMapsCesiumViewport--error");
+    expect(canvasSurfacesSource).toContain("bangerMapsCesiumViewport__error");
+    expect(canvasSurfacesSource).not.toContain("previewFrameDataUrl");
+    expect(canvasSurfacesSource).not.toContain("bangerSphereNativeFrame__preview");
+    expect(canvasSurfacesSource).not.toContain("bangerSphereNativeFrame__fallback");
     expect(canvasSurfacesSource).toContain("target?.latitude");
     expect(canvasSurfacesSource).toContain("target?.longitude");
     expect(canvasSurfacesSource).toContain('aria-label={`${label} - ${status}`}');
@@ -207,9 +218,10 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("directRootTilesetEndpoint: \"https://tile.googleapis.com/v1/3dtiles/root.json\"");
     expect(mainSource).toContain("accessMode: \"cesium-ion\"");
     expect(mainSource).toContain("accessMode: \"google-map-tiles-api-key\"");
-    expect(mainSource).toContain("accessMode: \"render-proxy\"");
-    expect(mainSource).toContain("cesiumIonAccessTokenUrl");
-    expect(mainSource).toContain("/api/banger/cesium-ion-token");
+    expect(mainSource).not.toContain("accessMode: \"render-proxy\"");
+    expect(mainSource).not.toContain("cesiumIonAccessTokenUrl");
+    expect(mainSource).not.toContain("/api/banger/cesium-ion-token");
+    expect(mainSource).not.toContain("FORGE_BANGER_GOOGLE_TILES_BACKEND_URL");
     expect(mainSource).toContain("rootRequestTtlHours: 3");
     expect(mainSource).toContain("showCreditsOnScreen: true");
     expect(mainSource).toContain("policy: \"screen_space_error\"");
