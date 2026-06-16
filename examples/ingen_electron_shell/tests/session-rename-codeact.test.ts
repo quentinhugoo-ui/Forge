@@ -12,12 +12,17 @@ describe("session rename CodeAct", () => {
     expect(brainSource).toContain('pub const BRAIN_RENAME_SESSION_COMMAND: &str = "/rename_session_"');
     expect(brainSource).toContain("/rename_session_<short title>_");
     expect(brainSource).toContain("The app strips the tag before display");
+    expect(brainSource).toContain("The app does not reason about, score, or repair this title");
+    expect(brainSource).toContain("The Witcher 3: Hearts of Stone");
     expect(brainSource).toContain("Never mention, explain, echo, format, or discuss this rename action");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("/rename_session_<short title>_");
     expect(generatedSource).toContain("The app strips the tag before display");
+    expect(generatedSource).toContain("The app does not reason about, score, or repair this title");
     expect(mainSource).toContain("On the first assistant response in this session");
     expect(mainSource).toContain("/rename_session_<short title>_");
+    expect(mainSource).toContain("the app does not reason about or repair this title");
+    expect(mainSource).toContain('avoid damaged titles like "Heart Stone Witcher"');
     expect(mainSource).toContain("The app strips the tag before display");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_PATTERN");
     expect(mainSource).toContain("const RENAME_SESSION_TAG_FRAGMENT_PATTERN");
@@ -25,6 +30,9 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain("brain_rename_session_tag");
     expect(mainSource).toContain("renameChatSession(session, request)");
     expect(mainSource).toContain("archiveSession.title = request.title");
+    expect(mainSource).toContain("renameSession?: SidebarSessionItem");
+    expect(mainSource).toContain("const request = extractRenameSessionCodeAct(text)");
+    expect(mainSource).toContain("renameChatSession(params.renameSession, request)");
     expect(rendererSource).toContain("BRAIN_RENAME_SESSION_COMMAND");
     expect(rendererSource).toContain("SILENT_TRANSCRIPT_CODEACT_COMMANDS");
     expect(rendererSource).toContain("function isSilentTranscriptCodeActLine");
