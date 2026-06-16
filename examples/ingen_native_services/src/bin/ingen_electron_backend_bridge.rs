@@ -544,14 +544,14 @@ impl BangerMapsTilesetContract {
             native_streamer: BangerMapsNative3DTilesStreamer {
                 schema: "forge.banger.native_3d_tiles_streamer.v1",
                 authority: "banger_native_engine",
-                status: "contract_ready_direct_tiles_required",
+                status: "native_first_tile_draw_ready_direct_tiles_required",
                 root_ingestion_stage: "3d_tiles_root_json_manifest_ingestion",
                 traversal_stage: "screen_space_error_priority_queue_with_tile_budget",
                 content_decode_stage: "b3dm_glb_gltf_mesh_material_texture_decode",
                 georeference_stage: "wgs84_ecef_to_enu_floating_origin",
-                gpu_submission_stage: "meshlet_or_indexed_mesh_upload_pending",
+                gpu_submission_stage: "first_visible_tile_indexed_mesh_wgpu_draw_ready",
                 visual_fallback: "none_direct_tiles_required",
-                blocker: "tile_content_or_gltf_upload_required_before_visible_maps_draw",
+                blocker: "tileset_transform_material_texture_streaming_required_for_full_cesium_parity",
             },
             georeference: BangerMapsGeoreference {
                 ellipsoid: "WGS84",
@@ -4093,6 +4093,10 @@ fn banger_maps_render_mesh_from_primitive(
     bin_chunk: &[u8],
     primitive: &Value,
 ) -> Result<BangerRenderMeshBytes, String> {
+    let mode = primitive.get("mode").and_then(Value::as_u64).unwrap_or(4);
+    if mode != 4 {
+        return Err(format!("render primitive mode {mode} is not TRIANGLES"));
+    }
     if let Some(draco) = primitive
         .get("extensions")
         .and_then(|extensions| extensions.get("KHR_draco_mesh_compression"))
@@ -4712,6 +4716,47 @@ mod tests {
         assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
+    }
+
+    #[test]
+    fn maps_contract_reports_first_native_indexed_tile_draw_ready() {
+        let contract = BangerMapsTilesetContract::google_photorealistic_default();
+        assert_eq!(
+            contract.native_streamer.status,
+            "native_first_tile_draw_ready_direct_tiles_required"
+        );
+        assert_eq!(
+            contract.native_streamer.gpu_submission_stage,
+            "first_visible_tile_indexed_mesh_wgpu_draw_ready"
+        );
+        assert_eq!(
+            contract.native_streamer.blocker,
+            "tileset_transform_material_texture_streaming_required_for_full_cesium_parity"
+        );
+        assert_eq!(contract.native_streamer.visual_fallback, "none_direct_tiles_required");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn rejects_non_triangle_gltf_primitives_for_first_maps_draw_path() {
+        let json = br#"{
+            "asset": {"version": "2.0"},
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "mode": 1}]}],
+            "accessors": [{"bufferView": 0, "componentType": 5126, "count": 2, "type": "VEC3"}],
+            "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 24}],
+            "buffers": [{"byteLength": 24}]
+        }"#;
+        let mut bin = Vec::new();
+        for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0] {
+            bin.extend_from_slice(&value.to_le_bytes());
+        }
+        let glb = test_glb_with_json_bin(json, &bin);
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let error = match banger_maps_render_mesh_from_gltf(&decoded.gltf_value, decoded.bin_chunk) {
+            Ok(_) => panic!("line primitive unexpectedly entered triangle draw path"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no drawable glTF primitive"));
     }
 
     #[cfg(target_os = "windows")]
