@@ -611,6 +611,7 @@ struct BangerNativeScenePipeline {
     meshlet_cull_pipeline: wgpu::ComputePipeline,
     _material_buffer: Option<wgpu::Buffer>,
     _texture_staging_buffers: Vec<wgpu::Buffer>,
+    _texture_resources: Vec<BangerNativeTextureResource>,
     _residency_feedback_buffer: wgpu::Buffer,
     _shared_residency_page_table_buffer: wgpu::Buffer,
     _shared_residency_compacted_feedback_buffer: wgpu::Buffer,
@@ -694,6 +695,17 @@ struct BangerNativeGBufferResources {
     material_view: wgpu::TextureView,
     _emissive_texture: wgpu::Texture,
     emissive_view: wgpu::TextureView,
+    _resource_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeTextureResource {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    _sampler: wgpu::Sampler,
+    _width: u32,
+    _height: u32,
+    _byte_count: usize,
     _resource_hash: String,
 }
 
@@ -3071,6 +3083,7 @@ struct BangerNativeSceneGpuResource {
     meshlet_cull_param_buffer: wgpu::Buffer,
     material_buffer: Option<wgpu::Buffer>,
     texture_staging_buffers: Vec<wgpu::Buffer>,
+    texture_resources: Vec<BangerNativeTextureResource>,
     residency_feedback_buffer: wgpu::Buffer,
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
@@ -5654,6 +5667,7 @@ fn create_banger_first_scene_pipeline(
         meshlet_cull_pipeline,
         _material_buffer: gpu_resource.material_buffer,
         _texture_staging_buffers: gpu_resource.texture_staging_buffers,
+        _texture_resources: gpu_resource.texture_resources,
         _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
         _shared_residency_page_table_buffer: gpu_resource.shared_residency_page_table_buffer,
         _shared_residency_compacted_feedback_buffer: gpu_resource.shared_residency_compacted_feedback_buffer,
@@ -5947,6 +5961,92 @@ fn banger_create_mapped_buffer(
 }
 
 #[cfg(target_os = "windows")]
+fn banger_create_maps_texture_resource(
+    device: &wgpu::Device,
+    texture_index: u32,
+    encoded_bytes: &[u8],
+) -> BangerNativeTextureResource {
+    let (width, height) = banger_maps_texture_resource_extent(encoded_bytes.len());
+    let resource_hash = sha256_hex(
+        format!(
+            "banger-maps-texture-resource-v1:{texture_index}:{width}:{height}:rgba8unorm-srgb:{}",
+            sha256_hex(encoded_bytes)
+        )
+        .as_bytes(),
+    );
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-maps-texture-resource"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("banger-native-maps-texture-sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    BangerNativeTextureResource {
+        _texture: texture,
+        _view: view,
+        _sampler: sampler,
+        _width: width,
+        _height: height,
+        _byte_count: encoded_bytes.len(),
+        _resource_hash: resource_hash,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_texture_resource_extent(byte_count: usize) -> (u32, u32) {
+    let texel_count = byte_count.max(4).div_ceil(4) as u32;
+    let width = ((texel_count as f64).sqrt().ceil() as u32).clamp(1, 4096);
+    let height = texel_count.div_ceil(width).clamp(1, 4096);
+    (width, height)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_texture_resource_manifest_bytes(texture_staging_bytes: &[Vec<u8>]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(texture_staging_bytes.len().max(1) * 32);
+    for (texture_index, encoded_bytes) in texture_staging_bytes.iter().enumerate() {
+        if encoded_bytes.is_empty() {
+            continue;
+        }
+        let (width, height) = banger_maps_texture_resource_extent(encoded_bytes.len());
+        let texture_hash = sha256_hex(encoded_bytes);
+        for value in [
+            0x4D_54_45_58u32, // MTEX
+            1,
+            texture_index as u32,
+            width,
+            height,
+            encoded_bytes.len().min(u32::MAX as usize) as u32,
+            banger_hash_prefix_u32(&texture_hash),
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    if bytes.is_empty() {
+        bytes.resize(32, 0);
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
 struct BangerRenderMeshBytes {
     vertex_bytes: Vec<u8>,
     index_bytes: Vec<u8>,
@@ -6155,6 +6255,14 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             )
         })
         .collect::<Vec<_>>();
+    let texture_resources = texture_staging_bytes
+        .iter()
+        .filter(|bytes| !bytes.is_empty())
+        .enumerate()
+        .map(|(texture_index, bytes)| {
+            banger_create_maps_texture_resource(device, texture_index as u32, bytes)
+        })
+        .collect::<Vec<_>>();
     let residency_feedback_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-maps-residency-feedback-buffer",
@@ -6321,9 +6429,10 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}"
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            texture_resource_hash = sha256_hex(&banger_maps_texture_resource_manifest_bytes(&texture_staging_bytes)),
         )
-            .as_bytes(),
+        .as_bytes(),
     );
     BangerNativeSceneGpuResource {
         vertex_count,
@@ -6344,6 +6453,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         meshlet_cull_param_buffer,
         material_buffer,
         texture_staging_buffers,
+        texture_resources,
         residency_feedback_buffer,
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
@@ -8855,6 +8965,11 @@ mod tests {
         assert_eq!(material_bytes.unwrap().len(), 2 * 32);
         assert_eq!(texture_staging_bytes.len(), 2);
         assert_eq!(texture_staging_bytes[0], vec![137, 80, 78, 71]);
+        let texture_manifest = banger_maps_texture_resource_manifest_bytes(&texture_staging_bytes);
+        assert_eq!(u32::from_le_bytes(texture_manifest[0..4].try_into().unwrap()), 0x4D_54_45_58);
+        assert_eq!(u32::from_le_bytes(texture_manifest[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(texture_manifest[20..24].try_into().unwrap()), 4);
+        assert_ne!(u32::from_le_bytes(texture_manifest[24..28].try_into().unwrap()), 0);
     }
 
     #[test]
