@@ -3922,8 +3922,9 @@ button {
   transform-origin: bottom left;
   /* The drawer only mounts once the mini-mode entry choreography has fully
      settled (widgetSessionTabVisible gates on !widgetModeTransitioning), so this
-     plays exactly at the end of the transition: the languette pops in. */
-  animation: widgetSessionTabPop 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+     plays exactly at the end of the transition: the languette eases in softly —
+     a slow fade with a barely-there rise, no overshoot, so it never snaps. */
+  animation: widgetSessionTabPop 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
   transition: color 150ms ease, background 150ms ease;
 }
 
@@ -7033,7 +7034,7 @@ ol.assistantText__list li::before {
 @keyframes widgetSessionTabPop {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.9);
+    transform: translateY(4px) scale(0.985);
   }
   to {
     opacity: 1;
