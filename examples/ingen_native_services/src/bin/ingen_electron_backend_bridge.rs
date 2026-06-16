@@ -615,6 +615,14 @@ struct BangerNativeScenePipeline {
     _shared_residency_page_table_buffer: wgpu::Buffer,
     _shared_residency_compacted_feedback_buffer: wgpu::Buffer,
     _shared_residency_budget_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_table_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_flags_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_request_buffer: wgpu::Buffer,
+    virtual_shadow_map_physical_page_metadata_buffer: wgpu::Buffer,
+    virtual_shadow_map_projection_buffer: wgpu::Buffer,
+    virtual_shadow_map_mark_params_buffer: wgpu::Buffer,
+    virtual_shadow_map_mark_bind_group_layout: wgpu::BindGroupLayout,
+    virtual_shadow_map_mark_pipeline: wgpu::ComputePipeline,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -628,6 +636,9 @@ struct BangerNativeScenePipeline {
     _residency_feedback_hash: String,
     _shared_residency_page_table_hash: String,
     _shared_residency_compacted_feedback_hash: String,
+    _virtual_shadow_map_page_table_hash: String,
+    _virtual_shadow_map_page_request_hash: String,
+    _virtual_shadow_map_projection_hash: String,
     scene_mesh_hash: String,
     scene_graph_hash: String,
     instance_buffer_hash: String,
@@ -3003,6 +3014,12 @@ struct BangerNativeSceneGpuResource {
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
     shared_residency_budget_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_table_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_flags_buffer: wgpu::Buffer,
+    virtual_shadow_map_page_request_buffer: wgpu::Buffer,
+    virtual_shadow_map_physical_page_metadata_buffer: wgpu::Buffer,
+    virtual_shadow_map_projection_buffer: wgpu::Buffer,
+    virtual_shadow_map_mark_params_buffer: wgpu::Buffer,
     vertex_byte_count: usize,
     index_byte_count: usize,
     instance_byte_count: usize,
@@ -3019,6 +3036,9 @@ struct BangerNativeSceneGpuResource {
     residency_feedback_hash: String,
     shared_residency_page_table_hash: String,
     shared_residency_compacted_feedback_hash: String,
+    virtual_shadow_map_page_table_hash: String,
+    virtual_shadow_map_page_request_hash: String,
+    virtual_shadow_map_projection_hash: String,
     resource_hash: String,
 }
 
@@ -3739,6 +3759,7 @@ fn render_child_surface_frame(
     }
     dispatch_banger_hzb_build(&mut encoder, &frame_target.hzb);
     dispatch_banger_meshlet_cluster_cull(device, &mut encoder, scene_pipeline, &frame_target.hzb);
+    dispatch_banger_virtual_shadow_map_page_mark(device, &mut encoder, scene_pipeline);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -4145,6 +4166,59 @@ fn dispatch_banger_meshlet_cluster_cull(
         timestamp_writes: None,
     });
     pass.set_pipeline(&scene_pipeline.meshlet_cull_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.dispatch_workgroups(scene_pipeline._meshlet_cluster_count.max(1).div_ceil(64), 1, 1);
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_banger_virtual_shadow_map_page_mark(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+) {
+    encoder.clear_buffer(&scene_pipeline.virtual_shadow_map_page_flags_buffer, 0, None);
+    encoder.clear_buffer(&scene_pipeline.virtual_shadow_map_page_request_buffer, 0, None);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-vsm-page-mark-bind-group"),
+        layout: &scene_pipeline.virtual_shadow_map_mark_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene_pipeline.visible_meshlet_cluster_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: scene_pipeline.virtual_shadow_map_page_table_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: scene_pipeline.virtual_shadow_map_page_flags_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: scene_pipeline.virtual_shadow_map_page_request_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: scene_pipeline
+                    .virtual_shadow_map_physical_page_metadata_buffer
+                    .as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: scene_pipeline.virtual_shadow_map_projection_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: scene_pipeline.virtual_shadow_map_mark_params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("banger-native-vsm-page-mark-compute-pass"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(&scene_pipeline.virtual_shadow_map_mark_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.dispatch_workgroups(scene_pipeline._meshlet_cluster_count.max(1).div_ceil(64), 1, 1);
 }
@@ -4579,11 +4653,106 @@ fn create_banger_first_scene_pipeline(
         compilation_options: Default::default(),
         cache: None,
     });
+    let vsm_mark_shader_source = banger_virtual_shadow_map_mark_compute_wgsl();
+    let vsm_mark_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-vsm-page-mark-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(vsm_mark_shader_source.into()),
+    });
+    let virtual_shadow_map_mark_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-vsm-page-mark-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let vsm_mark_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-vsm-page-mark-pipeline-layout"),
+        bind_group_layouts: &[Some(&virtual_shadow_map_mark_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let virtual_shadow_map_mark_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-vsm-page-mark-pipeline"),
+        layout: Some(&vsm_mark_pipeline_layout),
+        module: &vsm_mark_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
+            sha256_hex(vsm_mark_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
             format,
@@ -4615,6 +4784,14 @@ fn create_banger_first_scene_pipeline(
         _shared_residency_page_table_buffer: gpu_resource.shared_residency_page_table_buffer,
         _shared_residency_compacted_feedback_buffer: gpu_resource.shared_residency_compacted_feedback_buffer,
         _shared_residency_budget_buffer: gpu_resource.shared_residency_budget_buffer,
+        virtual_shadow_map_page_table_buffer: gpu_resource.virtual_shadow_map_page_table_buffer,
+        virtual_shadow_map_page_flags_buffer: gpu_resource.virtual_shadow_map_page_flags_buffer,
+        virtual_shadow_map_page_request_buffer: gpu_resource.virtual_shadow_map_page_request_buffer,
+        virtual_shadow_map_physical_page_metadata_buffer: gpu_resource.virtual_shadow_map_physical_page_metadata_buffer,
+        virtual_shadow_map_projection_buffer: gpu_resource.virtual_shadow_map_projection_buffer,
+        virtual_shadow_map_mark_params_buffer: gpu_resource.virtual_shadow_map_mark_params_buffer,
+        virtual_shadow_map_mark_bind_group_layout,
+        virtual_shadow_map_mark_pipeline,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -4628,6 +4805,9 @@ fn create_banger_first_scene_pipeline(
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         _shared_residency_page_table_hash: gpu_resource.shared_residency_page_table_hash,
         _shared_residency_compacted_feedback_hash: gpu_resource.shared_residency_compacted_feedback_hash,
+        _virtual_shadow_map_page_table_hash: gpu_resource.virtual_shadow_map_page_table_hash,
+        _virtual_shadow_map_page_request_hash: gpu_resource.virtual_shadow_map_page_request_hash,
+        _virtual_shadow_map_projection_hash: gpu_resource.virtual_shadow_map_projection_hash,
         scene_mesh_hash,
         scene_graph_hash,
         instance_buffer_hash,
@@ -4824,6 +5004,16 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             + residency_feedback_bytes.len()
             + meshlet_cluster_cull_feedback_bytes.len(),
     );
+    let vsm_page_table_bytes = banger_virtual_shadow_map_page_table_bytes(meshlet_cluster_count, 1);
+    let vsm_page_flags_bytes = banger_virtual_shadow_map_page_flags_bytes(meshlet_cluster_count);
+    let vsm_page_request_bytes = banger_virtual_shadow_map_page_request_bytes(meshlet_cluster_count);
+    let vsm_physical_page_metadata_bytes =
+        banger_virtual_shadow_map_physical_page_metadata_bytes(meshlet_cluster_count, 1);
+    let vsm_projection_bytes = banger_virtual_shadow_map_projection_bytes(1);
+    let vsm_mark_params_bytes = banger_virtual_shadow_map_mark_params_bytes(meshlet_cluster_count, 1);
+    let virtual_shadow_map_page_table_hash = sha256_hex(&vsm_page_table_bytes);
+    let virtual_shadow_map_page_request_hash = sha256_hex(&vsm_page_request_bytes);
+    let virtual_shadow_map_projection_hash = sha256_hex(&vsm_projection_bytes);
     let vertex_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-scene-vertex-buffer",
@@ -4931,9 +5121,45 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         &shared_residency_budget_bytes,
     );
+    let virtual_shadow_map_page_table_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-page-table-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &vsm_page_table_bytes,
+    );
+    let virtual_shadow_map_page_flags_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-page-flags-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &vsm_page_flags_bytes,
+    );
+    let virtual_shadow_map_page_request_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-page-request-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &vsm_page_request_bytes,
+    );
+    let virtual_shadow_map_physical_page_metadata_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-physical-page-metadata-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &vsm_physical_page_metadata_bytes,
+    );
+    let virtual_shadow_map_projection_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-projection-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &vsm_projection_bytes,
+    );
+    let virtual_shadow_map_mark_params_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-vsm-mark-params-buffer",
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        &vsm_mark_params_bytes,
+    );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}"
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}"
         )
             .as_bytes(),
     );
@@ -4960,6 +5186,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
         shared_residency_budget_buffer,
+        virtual_shadow_map_page_table_buffer,
+        virtual_shadow_map_page_flags_buffer,
+        virtual_shadow_map_page_request_buffer,
+        virtual_shadow_map_physical_page_metadata_buffer,
+        virtual_shadow_map_projection_buffer,
+        virtual_shadow_map_mark_params_buffer,
         mesh_source: source,
         selected_tile_id,
         indirect_args_hash,
@@ -4970,6 +5202,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         residency_feedback_hash,
         shared_residency_page_table_hash,
         shared_residency_compacted_feedback_hash,
+        virtual_shadow_map_page_table_hash,
+        virtual_shadow_map_page_request_hash,
+        virtual_shadow_map_projection_hash,
         resource_hash,
     }
 }
@@ -5085,6 +5320,74 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicStore(&culled_indirect_args[1], max(cull.words1.y, 1u));
         visible_clusters[write_index] = cluster;
     }
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_mark_compute_wgsl() -> &'static str {
+    r#"
+struct MeshletCluster {
+    center_radius: vec4<f32>,
+    cone_lod: vec4<f32>,
+    draw0: vec4<u32>,
+    draw1: vec4<u32>,
+};
+
+struct VsmMarkParams {
+    // x: cluster count, y: page record stride, z: shadow map count, w: page size.
+    words0: vec4<u32>,
+    // x: level0 dim pages, yzw reserved.
+    words1: vec4<u32>,
+};
+
+@group(0) @binding(0) var<storage, read> visible_clusters: array<MeshletCluster>;
+@group(0) @binding(1) var<storage, read_write> page_table: array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> page_flags: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> page_requests: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> physical_pages: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read> projection_data: array<u32>;
+@group(0) @binding(6) var<uniform> params: VsmMarkParams;
+
+fn banger_vsm_page_for_cluster(cluster_index: u32, cluster: MeshletCluster) -> u32 {
+    let center_mix = u32(abs(cluster.center_radius.x) + abs(cluster.center_radius.y) + abs(cluster.center_radius.z));
+    return (cluster_index + center_mix) % max(params.words0.x, 1u);
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let cluster_index = gid.x;
+    if (cluster_index >= params.words0.x) {
+        return;
+    }
+    let cluster = visible_clusters[cluster_index];
+    let page_index = banger_vsm_page_for_cluster(cluster_index, cluster);
+    let page_word = page_index * 8u;
+    let request_word = page_index * 4u;
+    let physical_word = page_index * 8u;
+    let shadow_map_id = page_index % max(params.words0.z, 1u);
+    let mip_level = min(u32(max(cluster.cone_lod.w, 0.0)), 7u);
+    let projected_radius = max(u32(ceil(cluster.center_radius.w * 128.0)), 1u);
+    atomicStore(&page_table[page_word + 0u], 0x56534D54u);
+    atomicStore(&page_table[page_word + 1u], 1u);
+    atomicStore(&page_table[page_word + 2u], page_index);
+    atomicStore(&page_table[page_word + 3u], page_index);
+    atomicStore(&page_table[page_word + 4u], mip_level);
+    atomicStore(&page_table[page_word + 6u], shadow_map_id);
+    atomicStore(&page_flags[request_word + 0u], 0x56534D46u);
+    atomicStore(&page_flags[request_word + 1u], page_index);
+    atomicStore(&page_flags[request_word + 2u], 1u);
+    atomicStore(&page_flags[request_word + 3u], projected_radius);
+    atomicStore(&page_requests[request_word + 0u], 0x56534D52u);
+    atomicStore(&page_requests[request_word + 1u], page_index);
+    atomicStore(&page_requests[request_word + 2u], 1u);
+    atomicStore(&page_requests[request_word + 3u], cluster.draw0.y);
+    atomicStore(&physical_pages[physical_word + 0u], 0x56534D50u);
+    atomicStore(&physical_pages[physical_word + 1u], 1u);
+    atomicStore(&physical_pages[physical_word + 2u], page_index);
+    atomicStore(&physical_pages[physical_word + 3u], shadow_map_id);
+    atomicStore(&physical_pages[physical_word + 4u], mip_level);
+    atomicStore(&physical_pages[physical_word + 6u], projection_data[2]);
 }
 "#
 }
@@ -5454,6 +5757,174 @@ fn banger_align_u64(value: u64, alignment: u64) -> u64 {
         return value;
     }
     value.div_ceil(alignment) * alignment
+}
+
+#[cfg(target_os = "windows")]
+const BANGER_VIRTUAL_SHADOW_MAP_PAGE_RECORD_STRIDE: usize = 32;
+
+#[cfg(target_os = "windows")]
+const BANGER_VIRTUAL_SHADOW_MAP_PHYSICAL_PAGE_RECORD_STRIDE: usize = 32;
+
+#[cfg(target_os = "windows")]
+const BANGER_VIRTUAL_SHADOW_MAP_PROJECTION_STRIDE: usize = 128;
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_page_table_bytes(cluster_count: u32, shadow_map_count: u32) -> Vec<u8> {
+    let page_count = cluster_count.max(1);
+    let mut bytes = Vec::with_capacity(page_count as usize * BANGER_VIRTUAL_SHADOW_MAP_PAGE_RECORD_STRIDE);
+    for page_index in 0..page_count {
+        let physical_page_index = page_index;
+        let mip_level = banger_virtual_shadow_map_mip_for_page(page_index);
+        let page_x = page_index & 127;
+        let page_y = (page_index >> 7) & 127;
+        let shadow_map_id = page_index % shadow_map_count.max(1);
+        let page_hash = sha256_hex(
+            format!("vsm_page:{page_index}:{physical_page_index}:{mip_level}:{page_x}:{page_y}:{shadow_map_id}")
+                .as_bytes(),
+        );
+        for value in [
+            0x56_53_4D_54u32, // VSMT
+            1,
+            page_index,
+            physical_page_index,
+            mip_level,
+            (page_y << 16) | page_x,
+            shadow_map_id,
+            banger_hash_prefix_u32(&page_hash),
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_page_flags_bytes(cluster_count: u32) -> Vec<u8> {
+    let page_count = cluster_count.max(1);
+    let mut bytes = Vec::with_capacity(page_count as usize * 16);
+    for page_index in 0..page_count {
+        for value in [
+            0x56_53_4D_46u32, // VSMF
+            page_index,
+            0,
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_page_request_bytes(cluster_count: u32) -> Vec<u8> {
+    let page_count = cluster_count.max(1);
+    let mut bytes = Vec::with_capacity(page_count as usize * 16);
+    for page_index in 0..page_count {
+        for value in [
+            0x56_53_4D_52u32, // VSMR
+            page_index,
+            0,
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_physical_page_metadata_bytes(cluster_count: u32, shadow_map_count: u32) -> Vec<u8> {
+    let page_count = cluster_count.max(1);
+    let mut bytes = Vec::with_capacity(
+        page_count as usize * BANGER_VIRTUAL_SHADOW_MAP_PHYSICAL_PAGE_RECORD_STRIDE,
+    );
+    for page_index in 0..page_count {
+        let mip_level = banger_virtual_shadow_map_mip_for_page(page_index);
+        let page_x = page_index & 127;
+        let page_y = (page_index >> 7) & 127;
+        for value in [
+            0x56_53_4D_50u32, // VSMP
+            1,
+            page_index,
+            page_index % shadow_map_count.max(1),
+            mip_level,
+            (page_y << 16) | page_x,
+            0, // last requested frame, filled by the page marker.
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_projection_bytes(shadow_map_count: u32) -> Vec<u8> {
+    let projection_count = shadow_map_count.max(1);
+    let mut bytes = Vec::with_capacity(
+        projection_count as usize * BANGER_VIRTUAL_SHADOW_MAP_PROJECTION_STRIDE,
+    );
+    for shadow_map_id in 0..projection_count {
+        for value in [
+            0x56_53_4D_50u32, // VSMP
+            1,
+            shadow_map_id,
+            0, // directional light for the first Banger VSM lane.
+            128, // page size, matching Unreal's common VSM page size.
+            128, // level 0 dimension in pages.
+            2048, // physical page budget seed.
+            0,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in banger_identity_mat4_f32() {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        while bytes.len() % BANGER_VIRTUAL_SHADOW_MAP_PROJECTION_STRIDE != 0 {
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_mark_params_bytes(cluster_count: u32, shadow_map_count: u32) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    for (slot, value) in [
+        cluster_count.max(1),
+        BANGER_VIRTUAL_SHADOW_MAP_PAGE_RECORD_STRIDE as u32,
+        shadow_map_count.max(1),
+        128,
+        128,
+        0,
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_virtual_shadow_map_mip_for_page(page_index: u32) -> u32 {
+    if page_index == 0 {
+        0
+    } else {
+        (31 - page_index.leading_zeros()).min(7)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_identity_mat4_f32() -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
 }
 
 #[cfg(target_os = "windows")]
@@ -7643,6 +8114,40 @@ mod tests {
         assert_eq!(u32::from_le_bytes(budget[0..4].try_into().unwrap()), 0x42_55_44_47);
         assert_eq!(u32::from_le_bytes(budget[8..12].try_into().unwrap()), 3);
         assert_eq!(banger_align_u64(4097, 4096), 8192);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_virtual_shadow_map_page_tables_and_mark_shader() {
+        let page_table = banger_virtual_shadow_map_page_table_bytes(3, 1);
+        assert_eq!(page_table.len(), 3 * BANGER_VIRTUAL_SHADOW_MAP_PAGE_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(page_table[0..4].try_into().unwrap()), 0x56_53_4D_54);
+        assert_eq!(u32::from_le_bytes(page_table[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(page_table[12..16].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(page_table[16..20].try_into().unwrap()), 0);
+
+        let flags = banger_virtual_shadow_map_page_flags_bytes(3);
+        let requests = banger_virtual_shadow_map_page_request_bytes(3);
+        assert_eq!(u32::from_le_bytes(flags[0..4].try_into().unwrap()), 0x56_53_4D_46);
+        assert_eq!(u32::from_le_bytes(requests[0..4].try_into().unwrap()), 0x56_53_4D_52);
+
+        let physical = banger_virtual_shadow_map_physical_page_metadata_bytes(3, 1);
+        assert_eq!(physical.len(), 3 * BANGER_VIRTUAL_SHADOW_MAP_PHYSICAL_PAGE_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(physical[0..4].try_into().unwrap()), 0x56_53_4D_50);
+
+        let projection = banger_virtual_shadow_map_projection_bytes(1);
+        assert_eq!(projection.len(), BANGER_VIRTUAL_SHADOW_MAP_PROJECTION_STRIDE);
+        assert_eq!(u32::from_le_bytes(projection[0..4].try_into().unwrap()), 0x56_53_4D_50);
+        assert_eq!(f32::from_le_bytes(projection[32..36].try_into().unwrap()), 1.0);
+
+        let params = banger_virtual_shadow_map_mark_params_bytes(3, 1);
+        assert_eq!(u32::from_le_bytes(params[0..4].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(params[4..8].try_into().unwrap()), 32);
+
+        let shader = banger_virtual_shadow_map_mark_compute_wgsl();
+        assert!(shader.contains("page_requests"));
+        assert!(shader.contains("physical_pages"));
+        assert!(shader.contains("visible_clusters"));
     }
 
     #[cfg(target_os = "windows")]
