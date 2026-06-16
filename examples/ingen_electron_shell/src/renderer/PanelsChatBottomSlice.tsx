@@ -4420,24 +4420,6 @@ function WidgetTranscriptPanel({
   );
 }
 
-function WidgetTranscriptTab({ label, onOpen }: { label: string; onOpen: () => void }) {
-  return (
-    <button
-      type="button"
-      className="widgetTranscriptTab"
-      aria-label={`Agrandir la conversation : ${label}`}
-      aria-expanded="false"
-      title={label}
-      onClick={onOpen}
-    >
-      <span className="widgetTranscriptTab__name">{label}</span>
-      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <path d="M4 9.5 8 6l4 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </button>
-  );
-}
-
 function WidgetSessionTabs({
   sessions,
   activeSessionId,
@@ -5144,16 +5126,14 @@ export function PanelsChatBottomSlice({
   const activateWidgetSessionFromTab = useCallback((sessionId: string, section: NativeSection) => {
     clearWidgetTranscriptCollapseTimer();
     clearWidgetSessionDockTimer();
-    setWidgetTranscriptCollapsed(true);
+    setWidgetTranscriptCollapsed(false);
     setWidgetTranscriptCollapsing(false);
     setWidgetSessionDocking(true);
     onWidgetSessionOpen?.(sessionId, section);
     widgetSessionDockTimerRef.current = window.setTimeout(() => {
       widgetSessionDockTimerRef.current = null;
-      setWidgetTranscriptCollapsed(false);
-      setWidgetTranscriptCollapsing(false);
       setWidgetSessionDocking(false);
-    }, 180);
+    }, 320);
   }, [clearWidgetSessionDockTimer, clearWidgetTranscriptCollapseTimer, onWidgetSessionOpen]);
   useEffect(() => () => {
     clearWidgetTranscriptCollapseTimer();
@@ -5188,23 +5168,17 @@ export function PanelsChatBottomSlice({
     widgetTranscriptHasConversation &&
     (!widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
     !composerQuestionnaire;
-  const widgetTranscriptTabVisible =
-    widgetMode &&
-    !widgetModeTransitioning &&
-    widgetTranscriptHasConversation &&
-    !widgetSessionDocking &&
-    (widgetTranscriptCollapsed || widgetTranscriptCollapsing) &&
-    !composerQuestionnaire;
   const widgetSessionTabsVisible =
     widgetMode &&
     !widgetModeTransitioning &&
+    !widgetTranscriptPanelVisible &&
+    !composerQuestionnaire &&
     (widgetRecentSessions.length > 0 || Boolean(onWidgetNewSession));
   const widgetPanelExpanded =
     widgetMode && (
       Boolean(composerQuestionnaire) ||
       widgetSessionDocking ||
       widgetTranscriptPanelVisible ||
-      widgetTranscriptTabVisible ||
       widgetSessionTabsVisible ||
       permissionMenuOpen
     );
@@ -5415,7 +5389,6 @@ export function PanelsChatBottomSlice({
         composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
         widgetSessionDocking ? "panelsChatBottom--widgetSessionDocking" : "",
         widgetTranscriptPanelVisible ? "panelsChatBottom--widgetTranscriptOpen" : "",
-        widgetTranscriptTabVisible ? "panelsChatBottom--widgetTranscriptCollapsed" : "",
         permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
       ].filter(Boolean).join(" ")}
       aria-label="Panels chat composer and bottom controls"
@@ -5531,9 +5504,6 @@ export function PanelsChatBottomSlice({
           onReduce={reduceWidgetTranscript}
           collapsing={widgetTranscriptCollapsing}
         />
-      ) : null}
-      {widgetTranscriptTabVisible ? (
-        <WidgetTranscriptTab label={sessionName.trim() || "Conversation"} onOpen={expandWidgetTranscript} />
       ) : null}
       <form
         ref={composerRef}

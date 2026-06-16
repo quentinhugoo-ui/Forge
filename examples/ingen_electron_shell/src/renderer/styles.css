@@ -99,8 +99,7 @@ button {
   border-radius: 6px !important;
 }
 
-.shell .widgetTranscriptPanel__topSessionTab,
-.shell .widgetTranscriptTab {
+.shell .widgetTranscriptPanel__topSessionTab {
   border-radius: 6px 6px 0 0 !important;
 }
 
@@ -3885,8 +3884,7 @@ button {
 
 .panelsChatBottom--questionnaireOpen,
 .panelsChatBottom--widgetSessionDocking,
-.panelsChatBottom--widgetTranscriptOpen,
-.panelsChatBottom--widgetTranscriptCollapsed {
+.panelsChatBottom--widgetTranscriptOpen {
   z-index: 31;
 }
 
@@ -4000,8 +3998,8 @@ button {
   --widget-transcript-panel-tab-height: 18px;
   grid-template-rows: 24px minmax(0, 1fr);
   gap: 0;
-  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) + 18px);
-  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 104px));
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px));
+  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 86px));
   overflow: visible;
   padding: 0;
   background: transparent;
@@ -4021,7 +4019,7 @@ button {
 .widgetTranscriptPanel--collapsing {
   opacity: 0.96;
   pointer-events: none;
-  transform: translate3d(0, calc(100% - var(--widget-transcript-tab-height)), 0);
+  transform: translate3d(0, 100%, 0);
 }
 
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__header,
@@ -4265,11 +4263,11 @@ button {
 
 .widgetSessionTabs {
   position: fixed;
-  left: calc(var(--chat-left) + 16px);
+  left: var(--questionnaire-left);
   right: auto;
   bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px));
   z-index: 31;
-  width: min(394px, calc(var(--chat-width) - 32px));
+  width: min(394px, var(--questionnaire-width));
   height: 18px;
   pointer-events: none;
   transition:
@@ -4278,10 +4276,6 @@ button {
     right var(--sidebar-motion),
     opacity 160ms ease,
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.panelsChatBottom--widgetTranscriptCollapsed .widgetSessionTabs {
-  width: min(318px, calc(var(--chat-width) - 206px));
 }
 
 .widgetSessionTabs--panelAnchored {
@@ -4463,73 +4457,6 @@ button {
   box-shadow:
     0 -2px 8px rgba(0, 0, 0, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.055);
-}
-
-.widgetTranscriptTab {
-  position: fixed;
-  right: calc(100vw - var(--chat-left) - var(--chat-width) + 16px);
-  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px) - 1px);
-  z-index: 31;
-  display: inline-grid;
-  grid-template-columns: minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 6px;
-  width: auto;
-  min-width: 58px;
-  height: 22px;
-  min-height: 22px;
-  padding: 0 6px 0 9px;
-  overflow: hidden;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 12%);
-  background: var(--forge-sidebar-bg);
-  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
-  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 18%);
-  box-shadow:
-    0 -3px 10px rgba(0, 0, 0, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  max-width: min(164px, calc(var(--chat-width) - 32px));
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1;
-  cursor: pointer;
-  pointer-events: auto;
-  transition:
-    color 160ms ease,
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease,
-    transform 180ms ease;
-}
-
-.widgetTranscriptTab svg {
-  width: 13px;
-  height: 13px;
-}
-
-.widgetTranscriptTab__name {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.widgetTranscriptTab:hover,
-.widgetTranscriptTab:focus-visible {
-  color: #ffffff;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 4%);
-  border-color: color-mix(in oklab, var(--forge-line), #ffffff 18%);
-  box-shadow:
-    0 -4px 12px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  transform: translateY(-1px);
-}
-
-.widgetTranscriptTab:focus-visible {
-  outline: 2px solid rgba(125, 190, 255, 0.58);
-  outline-offset: 2px;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire {
@@ -7689,12 +7616,12 @@ ol.assistantText__list li::before {
 
 @keyframes widgetTranscriptPanelEnter {
   from {
-    opacity: 0;
-    transform: translate3d(0, 18px, 0) scaleY(0.88);
+    opacity: 1;
+    transform: translate3d(0, 100%, 0);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scaleY(1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -14100,7 +14027,6 @@ ol.assistantText__list li::before {
   .widgetTranscriptPanel__header,
   .widgetTranscriptPanel__reduce,
   .widgetTranscriptPanel__body,
-  .widgetTranscriptTab,
   .widgetSessionTabs,
   .widgetSessionTabs__tab,
   .widgetSessionTabs__tab::before,
