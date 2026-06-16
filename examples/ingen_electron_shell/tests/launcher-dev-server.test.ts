@@ -9,6 +9,8 @@ const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "
 describe("desktop launcher Vite dev server fast path", () => {
   it("defaults the desktop shortcut to a renderer dev server while keeping stable mode opt-out", () => {
     expect(launcherSource).toContain("setlocal EnableExtensions EnableDelayedExpansion");
+    expect(launcherSource).toContain("set CANONICAL_REPO_ROOT=C:\\Users\\quent\\Documents\\GitHub\\Forge");
+    expect(launcherSource).toContain("Delegating to the canonical master launcher");
     expect(launcherSource).toContain("set FORGE_ELECTRON_VITE_SERVER_SCRIPT=%~dp0scripts\\ensure-vite-dev-server.ps1");
     expect(launcherSource).toContain("set VITE_DEV_SERVER_URL_FILE=C:\\tmp\\ingen-vite-%WORKSPACE_BUILD_ID%.url");
     expect(launcherSource).toContain("set DESKTOP_DEV_SERVER=1");
@@ -38,16 +40,28 @@ describe("desktop launcher Vite dev server fast path", () => {
     expect(launcherSource).toContain('set /p VITE_DEV_SERVER_URL=<"%VITE_DEV_SERVER_URL_FILE%"');
     expect(launcherSource).toContain("Vite renderer dev server ready: !VITE_DEV_SERVER_URL!");
     expect(launcherSource).toContain("Using Vite renderer dev server");
+    expect(launcherSource).toContain("--ingen-live-renderer-url=!VITE_DEV_SERVER_URL!");
+    expect(launcherSource).toContain("Sending live master renderer URL to the running app");
     expect(mainSource).toContain("process.env.VITE_DEV_SERVER_URL");
     expect(mainSource).toContain("await window.loadURL(labWindow ? `${process.env.VITE_DEV_SERVER_URL}/event-text-lab.html` : process.env.VITE_DEV_SERVER_URL)");
+    expect(mainSource).toContain("LIVE_RENDERER_URL_ARG_PREFIX");
+    expect(mainSource).toContain("liveRendererUrlFromCommandLine(commandLine)");
+    expect(mainSource).toContain("loadLiveRendererUrlIntoPrimaryWindow(liveRendererUrl)");
+    expect(mainSource).toContain("primaryWindow.loadURL(url)");
   });
 
-  it("never restarts the active desktop app while preparing fresh build output", () => {
-    expect(launcherSource).toContain("Any build work will prepare the next launch; the active app will not be restarted.");
+  it("updates the active desktop app through Electron single-instance when only the renderer is live", () => {
+    expect(launcherSource).toContain("Build work will prepare the latest master output before the active app is touched.");
+    expect(launcherSource).toContain("Active InGen window detected. Sending live master renderer URL to the running app");
     expect(launcherSource).toContain("Active InGen window preserved. Focusing the existing app instead of restarting it.");
     expect(launcherSource).toContain("[void]$shell.AppActivate([int]$running.ProcessId)");
     expect(launcherSource).not.toContain("Restarting existing InGen Electron process");
-    expect(launcherSource).not.toContain("Stop-Process -Id $_.ProcessId -Force");
+  });
+
+  it("restarts only after fresh master output is ready when main or native code changed", () => {
+    expect(launcherSource).toContain("set RESTART_RUNNING_APP_AFTER_REBUILD=1");
+    expect(launcherSource).toContain("Active InGen window is running old main/native code. Restarting it after the fresh master output is ready.");
+    expect(launcherSource).toContain("Stop-Process -Id $target.ProcessId -Force");
   });
 
   it("continues through Vite freshness checks after waiting for another launcher lock", () => {
