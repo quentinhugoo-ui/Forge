@@ -600,7 +600,9 @@ struct BangerNativeScenePipeline {
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    indirect_draw_buffer: wgpu::Buffer,
+    _indirect_draw_buffer: wgpu::Buffer,
+    meshlet_culled_indirect_draw_buffer: wgpu::Buffer,
+    meshlet_culled_indirect_seed_buffer: wgpu::Buffer,
     meshlet_cluster_buffer: wgpu::Buffer,
     visible_meshlet_cluster_buffer: wgpu::Buffer,
     meshlet_cull_feedback_buffer: wgpu::Buffer,
@@ -2984,6 +2986,8 @@ struct BangerNativeSceneGpuResource {
     instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     indirect_draw_buffer: wgpu::Buffer,
+    meshlet_culled_indirect_draw_buffer: wgpu::Buffer,
+    meshlet_culled_indirect_seed_buffer: wgpu::Buffer,
     meshlet_cluster_buffer: wgpu::Buffer,
     visible_meshlet_cluster_buffer: wgpu::Buffer,
     meshlet_cull_feedback_buffer: wgpu::Buffer,
@@ -3721,7 +3725,7 @@ fn render_child_surface_frame(
         pass.set_vertex_buffer(0, scene_pipeline.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, scene_pipeline.instance_buffer.slice(..));
         pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed_indirect(&scene_pipeline.indirect_draw_buffer, 0);
+        pass.draw_indexed_indirect(&scene_pipeline.meshlet_culled_indirect_draw_buffer, 0);
     }
     dispatch_banger_hzb_build(&mut encoder, &frame_target.hzb);
     dispatch_banger_meshlet_cluster_cull(device, &mut encoder, scene_pipeline, &frame_target.hzb);
@@ -4085,6 +4089,13 @@ fn dispatch_banger_meshlet_cluster_cull(
     hzb: &BangerNativeHzbResources,
 ) {
     encoder.clear_buffer(&scene_pipeline.meshlet_cull_feedback_buffer, 0, None);
+    encoder.copy_buffer_to_buffer(
+        &scene_pipeline.meshlet_culled_indirect_seed_buffer,
+        0,
+        &scene_pipeline.meshlet_culled_indirect_draw_buffer,
+        0,
+        20,
+    );
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("banger-native-meshlet-cluster-cull-bind-group"),
         layout: &scene_pipeline.meshlet_cull_bind_group_layout,
@@ -4112,6 +4123,10 @@ fn dispatch_banger_meshlet_cluster_cull(
             wgpu::BindGroupEntry {
                 binding: 5,
                 resource: scene_pipeline.meshlet_cull_param_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: scene_pipeline.meshlet_culled_indirect_draw_buffer.as_entire_binding(),
             },
         ],
     });
@@ -4529,6 +4544,16 @@ fn create_banger_first_scene_pipeline(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let meshlet_cull_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -4565,7 +4590,9 @@ fn create_banger_first_scene_pipeline(
         vertex_buffer: gpu_resource.vertex_buffer,
         instance_buffer: gpu_resource.instance_buffer,
         index_buffer: gpu_resource.index_buffer,
-        indirect_draw_buffer: gpu_resource.indirect_draw_buffer,
+        _indirect_draw_buffer: gpu_resource.indirect_draw_buffer,
+        meshlet_culled_indirect_draw_buffer: gpu_resource.meshlet_culled_indirect_draw_buffer,
+        meshlet_culled_indirect_seed_buffer: gpu_resource.meshlet_culled_indirect_seed_buffer,
         meshlet_cluster_buffer: gpu_resource.meshlet_cluster_buffer,
         visible_meshlet_cluster_buffer: gpu_resource.visible_meshlet_cluster_buffer,
         meshlet_cull_feedback_buffer: gpu_resource.meshlet_cull_feedback_buffer,
@@ -4732,6 +4759,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let index_count = (index_bytes.len() / 2) as u32;
     let instance_count = (instance_bytes.len() / 80) as u32;
     let indirect_args_bytes = banger_indexed_indirect_args_bytes(index_count, instance_count);
+    let culled_indirect_seed_args_bytes = banger_indexed_indirect_args_bytes(index_count, 0);
     let indirect_args_hash = sha256_hex(&indirect_args_bytes);
     let meshlet_cluster_bytes =
         banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, source);
@@ -4739,7 +4767,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let meshlet_cluster_count =
         (meshlet_cluster_bytes.len() / BANGER_MESHLET_CLUSTER_METADATA_STRIDE) as u32;
     let meshlet_cluster_cull_param_bytes =
-        banger_meshlet_cluster_cull_params_bytes(meshlet_cluster_count, 1);
+        banger_meshlet_cluster_cull_params_bytes(meshlet_cluster_count, 1, index_count, instance_count);
     let meshlet_cluster_cull_param_hash = sha256_hex(&meshlet_cluster_cull_param_bytes);
     let meshlet_cluster_cull_feedback_bytes = banger_meshlet_cluster_cull_feedback_bytes();
     let meshlet_cluster_cull_feedback_hash = sha256_hex(&meshlet_cluster_cull_feedback_bytes);
@@ -4772,6 +4800,21 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         "banger-native-scene-indexed-indirect-draw-args",
         wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
         &indirect_args_bytes,
+    );
+    let meshlet_culled_indirect_draw_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-meshlet-culled-indexed-indirect-draw-args",
+        wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        &indirect_args_bytes,
+    );
+    let meshlet_culled_indirect_seed_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-meshlet-culled-indexed-indirect-seed-args",
+        wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        &culled_indirect_seed_args_bytes,
     );
     let meshlet_cluster_buffer = banger_create_mapped_buffer(
         device,
@@ -4846,6 +4889,8 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         instance_buffer,
         index_buffer,
         indirect_draw_buffer,
+        meshlet_culled_indirect_draw_buffer,
+        meshlet_culled_indirect_seed_buffer,
         meshlet_cluster_buffer,
         visible_meshlet_cluster_buffer,
         meshlet_cull_feedback_buffer,
@@ -4890,13 +4935,29 @@ const BANGER_MESHLET_CLUSTER_METADATA_STRIDE: usize = 64;
 const BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT: usize = 128;
 
 #[cfg(target_os = "windows")]
-fn banger_meshlet_cluster_cull_params_bytes(cluster_count: u32, cull_mode: u32) -> [u8; 16] {
-    banger_u32x4_bytes([
+fn banger_meshlet_cluster_cull_params_bytes(
+    cluster_count: u32,
+    cull_mode: u32,
+    index_count: u32,
+    instance_count: u32,
+) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    for (slot, value) in [
         cluster_count,
         BANGER_MESHLET_CLUSTER_METADATA_STRIDE as u32,
         cull_mode,
         BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT as u32,
-    ])
+        index_count,
+        instance_count,
+        0,
+        0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bytes[slot * 4..slot * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 #[cfg(target_os = "windows")]
@@ -4914,7 +4975,9 @@ struct HzbConsumerUniform {
 
 struct CullParams {
     // x: cluster count, y: cluster stride bytes, z: mode, w: cluster triangle limit.
-    words: vec4<u32>,
+    words0: vec4<u32>,
+    // x: index count, y: initial instance count, z/w reserved.
+    words1: vec4<u32>,
 };
 
 struct MeshletCluster {
@@ -4930,6 +4993,7 @@ struct MeshletCluster {
 @group(0) @binding(3) var<storage, read_write> visible_clusters: array<MeshletCluster>;
 @group(0) @binding(4) var<storage, read_write> feedback: array<atomic<u32>>;
 @group(0) @binding(5) var<uniform> cull: CullParams;
+@group(0) @binding(6) var<storage, read_write> culled_indirect_args: array<atomic<u32>>;
 
 fn banger_hzb_load_for_cluster(cluster: MeshletCluster) -> f32 {
     let radius = max(cluster.center_radius.w, 0.0001);
@@ -4943,17 +5007,18 @@ fn banger_hzb_load_for_cluster(cluster: MeshletCluster) -> f32 {
 @compute @workgroup_size(64, 1, 1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cluster_index = gid.x;
-    if (cluster_index >= cull.words.x) {
+    if (cluster_index >= cull.words0.x) {
         return;
     }
     let cluster = clusters[cluster_index];
     let depth = banger_hzb_load_for_cluster(cluster);
     let frustum_visible = cluster.center_radius.w >= 0.0 && cluster.cone_lod.w >= 0.0;
     let hzb_visible = depth >= 0.0;
-    atomicStore(&feedback[1], cull.words.x);
+    atomicStore(&feedback[1], cull.words0.x);
     atomicStore(&feedback[2], hzb.dims.z);
     if (frustum_visible && hzb_visible) {
         let write_index = atomicAdd(&feedback[0], 1u);
+        atomicStore(&culled_indirect_args[1], max(cull.words1.y, 1u));
         visible_clusters[write_index] = cluster;
     }
 }
@@ -7275,7 +7340,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn packs_meshlet_cluster_cull_params_and_shader_contract() {
-        let params = banger_meshlet_cluster_cull_params_bytes(37, 1);
+        let params = banger_meshlet_cluster_cull_params_bytes(37, 1, 420, 2);
         assert_eq!(u32::from_le_bytes(params[0..4].try_into().unwrap()), 37);
         assert_eq!(
             u32::from_le_bytes(params[4..8].try_into().unwrap()),
@@ -7286,10 +7351,13 @@ mod tests {
             u32::from_le_bytes(params[12..16].try_into().unwrap()),
             BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT as u32
         );
+        assert_eq!(u32::from_le_bytes(params[16..20].try_into().unwrap()), 420);
+        assert_eq!(u32::from_le_bytes(params[20..24].try_into().unwrap()), 2);
         assert_eq!(banger_meshlet_cluster_cull_feedback_bytes(), [0u8; 16]);
         let shader = banger_meshlet_cluster_cull_compute_wgsl();
         assert!(shader.contains("textureLoad(hzb_pyramid"));
         assert!(shader.contains("atomicAdd(&feedback[0]"));
+        assert!(shader.contains("culled_indirect_args"));
         assert!(shader.contains("visible_clusters[write_index] = cluster"));
     }
 
