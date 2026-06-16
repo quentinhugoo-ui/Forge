@@ -1297,6 +1297,7 @@ interface AssistantSearchArchiveHit {
   rank: number;
   sessionId: string;
   sessionTitle: string;
+  turnId: string;
   role: string;
   createdAt: string;
   matchedField: string;
@@ -1343,7 +1344,7 @@ const NEW_BRAIN_EVENT_VERBS = ["created", "added", "prepared", "initialized", "r
 const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", "revised"] as const;
 
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
-  [BRAIN_SEARCHARCHIVE_COMMAND, "Search Archive"],
+  [BRAIN_SEARCHARCHIVE_COMMAND, "Search archive with keywords :"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
   [BRAIN_SCRAPERS_COMMAND, "parallel scraper MCP request prepared"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
@@ -1811,6 +1812,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
         rank: Number(rank[1]),
         sessionId: "",
         sessionTitle: "",
+        turnId: "",
         role: "",
         createdAt: "",
         matchedField: "",
@@ -1824,6 +1826,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
     if (activeHit) {
       const sessionId = searchArchiveValue(trimmed, "session_id");
       const sessionTitle = searchArchiveValue(trimmed, "session_title");
+      const turnId = searchArchiveValue(trimmed, "turn_id");
       const role = searchArchiveValue(trimmed, "role");
       const createdAt = searchArchiveValue(trimmed, "created_at");
       const matchedField = searchArchiveValue(trimmed, "matched_field");
@@ -1832,6 +1835,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
       const openRef = searchArchiveValue(trimmed, "open_ref");
       if (sessionId) activeHit.sessionId = sessionId;
       if (sessionTitle) activeHit.sessionTitle = sessionTitle;
+      if (turnId) activeHit.turnId = turnId;
       if (role) activeHit.role = role;
       if (createdAt) activeHit.createdAt = createdAt;
       if (matchedField) activeHit.matchedField = matchedField;
@@ -3276,6 +3280,41 @@ function SearchArchiveKeywordPill({ term }: { term: string }) {
   return <span className="transcriptPill transcriptPill--user searchArchiveResultCard__keywordPill">{term}</span>;
 }
 
+function SearchArchiveParallelIcon() {
+  return (
+    <span className="searchArchiveResultCard__hitIcon" aria-hidden="true">
+      <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <path transform="translate(4 4)" d="M14 3v2H4v13.385L5.763 17H20v-7h2v8a1 1 0 0 1-1 1H6.455L2 22.5V4a1 1 0 0 1 1-1h11Zm5 0V0h2v3h3v2h-3v3h-2V5h-3V3h3Z" />
+      </svg>
+    </span>
+  );
+}
+
+function searchArchiveTurnIdFromOpenRef(openRef: string): string {
+  if (!openRef.trim()) {
+    return "";
+  }
+  try {
+    return new URL(openRef).searchParams.get("turn") ?? "";
+  } catch {
+    const match = /[?&]turn=([^&]+)/.exec(openRef);
+    return match ? decodeURIComponent(match[1] ?? "") : "";
+  }
+}
+
+function openSearchArchiveHitInParallel(hit: AssistantSearchArchiveHit): void {
+  const sessionId = hit.sessionId.trim();
+  if (!sessionId) {
+    return;
+  }
+  void panelsChatBottomStore.dispatch({
+    kind: "open_archive_parallel",
+    sessionId,
+    turnId: hit.turnId.trim() || searchArchiveTurnIdFromOpenRef(hit.openRef),
+    parallelSessionIndex: 1
+  });
+}
+
 function searchArchiveResultLabel(result: AssistantSearchArchiveResult): string {
   const resultCount = result.returnedCount || String(result.hits.length);
   const resultCountNumber = Number.parseInt(resultCount, 10);
@@ -3329,11 +3368,15 @@ function TranscriptCodeActEventLine({
     return () => window.clearTimeout(timeout);
   }, [event.command, event.line, isGenericCodeActEvent, writing]);
 
-  const eventClassName = isBrainStyled
+  const eventClassNameBase = isBrainStyled
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
     : agentCommand
       ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${fileModification ? " transcriptCodeActEvent--fileModification" : ""}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`
       : `transcriptCodeActEvent transcriptCodeActEvent--codeact transcriptCodeActEvent--codeact-${genericCodeActPhase}`;
+  const eventClassName =
+    event.command === BRAIN_SEARCHARCHIVE_COMMAND
+      ? `${eventClassNameBase} transcriptCodeActEvent--searchArchive`
+      : eventClassNameBase;
   const text = isBrainSegment
     ? brainSegmentEventText(event.command, brainSegmentPhase)
     : isPendingAgentEvent
@@ -3343,6 +3386,10 @@ function TranscriptCodeActEventLine({
     event.command === BRAIN_SEARCHARCHIVE_COMMAND && searchArchiveResult
       ? searchArchiveHighlightTerms(searchArchiveResult.query)
       : [];
+  const searchArchiveMatchLabel =
+    event.command === BRAIN_SEARCHARCHIVE_COMMAND && searchArchiveResult
+      ? searchArchiveResultLabel(searchArchiveResult)
+      : "";
 
   if (fileModification) {
     return (
@@ -3371,6 +3418,9 @@ function TranscriptCodeActEventLine({
         <span className="transcriptCodeActEvent__keywords" aria-label="Search keywords">
           {searchArchiveTerms.map((term) => <SearchArchiveKeywordPill key={`event-search-keyword-${term}`} term={term} />)}
         </span>
+      ) : null}
+      {searchArchiveMatchLabel ? (
+        <span className="transcriptCodeActEvent__resultCount">{searchArchiveMatchLabel}</span>
       ) : null}
     </div>
   );
@@ -3596,13 +3646,10 @@ function SearchArchiveResultCard({
   result: AssistantSearchArchiveResult;
   userName: string;
 }) {
-  const resultLabel = searchArchiveResultLabel(result);
   const groups = groupedSearchArchiveHits(result.hits);
+  const cardClassName = `searchArchiveResultCard${result.hits.length > 3 ? " searchArchiveResultCard--scrollable" : ""}`;
   return (
-    <section className="searchArchiveResultCard" aria-label="Search Archive result matches">
-      <div className="searchArchiveResultCard__summary">
-        <span className="searchArchiveResultCard__meta">{resultLabel}</span>
-      </div>
+    <section className={cardClassName} aria-label="Search Archive result matches">
       <div className="searchArchiveResultCard__groups">
         {groups.map((group, groupIndex) => (
           <section className="searchArchiveResultCard__group" key={`${messageId}-search-group-${blockIndex}-${group.key}`}>
@@ -3611,15 +3658,20 @@ function SearchArchiveResultCard({
             </div>
             <ol className="searchArchiveResultCard__hits">
               {group.hits.map((hit, hitIndex) => (
-                <li
-                  className="searchArchiveResultCard__hit"
-                  key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}
-                >
-                  <div className="searchArchiveResultCard__hitTop">
-                    {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
-                    <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
-                  </div>
-                  <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
+                <li className="searchArchiveResultCard__hitItem" key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}>
+                  <button
+                    aria-label={`Open ${group.title} around this match in a parallel conversation`}
+                    className="searchArchiveResultCard__hit"
+                    onClick={() => openSearchArchiveHitInParallel(hit)}
+                    type="button"
+                  >
+                    <SearchArchiveParallelIcon />
+                    <div className="searchArchiveResultCard__hitTop">
+                      {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
+                      <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+                    </div>
+                    <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
+                  </button>
                 </li>
               ))}
             </ol>
