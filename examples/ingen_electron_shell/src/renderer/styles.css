@@ -4017,15 +4017,19 @@ button {
 }
 
 .widgetTranscriptPanel--collapsing {
-  opacity: 0.96;
   pointer-events: none;
-  transform: translate3d(0, 100%, 0);
+  /* The enter animation runs with fill-mode `both`, so it keeps owning
+     `transform` after it ends. A plain transform here would lose the cascade to
+     that retained value, freezing the panel. A dedicated exit animation cleanly
+     supersedes the enter one and actually slides the panel back down. */
+  animation: widgetTranscriptPanelExit 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__header,
 .widgetTranscriptPanel--collapsing .widgetTranscriptPanel__body {
-  opacity: 0;
-  transition: opacity 140ms ease-out;
+  /* Let the conversation ride the slide-down as one piece (the panel is fully
+     off-screen by the time it unmounts, so no blank-out is needed). */
+  opacity: 1;
 }
 
 .widgetTranscriptPanel__topSessionTab {
@@ -7622,6 +7626,17 @@ ol.assistantText__list li::before {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes widgetTranscriptPanelExit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 100%, 0);
   }
 }
 
