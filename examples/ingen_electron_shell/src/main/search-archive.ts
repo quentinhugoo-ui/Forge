@@ -4,10 +4,15 @@ import type {
   NativeSection,
   SearchArchiveAttachmentRef,
   SearchArchiveContextLine,
+  SearchArchiveContentScope,
+  SearchArchiveCreatedInAppSource,
+  SearchArchiveFileOrigin,
+  SearchArchiveFileType,
   SearchArchiveHit,
   SearchArchiveRequest,
   SearchArchiveResult,
   SearchArchiveScope,
+  SearchArchiveSessionScope,
   TranscriptMessage
 } from "../shared/ipc-contract.js";
 import {
@@ -25,6 +30,27 @@ const MAX_CONTEXT_TURNS = 3;
 const MAX_QUERY_CHARS = 240;
 const MAX_SNIPPET_CHARS = 420;
 const MAX_CONTEXT_CHARS = 520;
+const SEARCHARCHIVE_TEMPLATE_RESULT_SCHEMA = "forge.brain.searcharchive.template_result.v1";
+
+export interface SearchArchiveTemplateResult {
+  schema: typeof SEARCHARCHIVE_TEMPLATE_RESULT_SCHEMA;
+  command: typeof SEARCHARCHIVE_COMMAND;
+  status: "template";
+  reason: "empty_command" | "template_required";
+  template: string;
+  allowedValues: {
+    sessionScope: SearchArchiveSessionScope[];
+    contentScope: SearchArchiveContentScope[];
+    fileOrigin: SearchArchiveFileOrigin[];
+    createdInAppSources: SearchArchiveCreatedInAppSource[];
+    fileTypes: SearchArchiveFileType[];
+  };
+  proofHash: string;
+}
+
+export type SearchArchiveCodeAct =
+  | { kind: "template"; result: SearchArchiveTemplateResult }
+  | { kind: "request"; request: SearchArchiveRequest };
 
 export interface ChatArchiveSessionMeta {
   sessionId: string;
@@ -73,6 +99,33 @@ interface SearchCandidate {
   score: number;
 }
 
+const SEARCHARCHIVE_SESSION_SCOPES: SearchArchiveSessionScope[] = ["current", "recent", "archived", "all"];
+const SEARCHARCHIVE_CONTENT_SCOPES: SearchArchiveContentScope[] = ["messages", "files", "artifacts", "all"];
+const SEARCHARCHIVE_FILE_ORIGINS: SearchArchiveFileOrigin[] = ["uploaded", "created_in_app", "all"];
+const SEARCHARCHIVE_CREATED_IN_APP_SOURCES: SearchArchiveCreatedInAppSource[] = [
+  "agent",
+  "scrapers",
+  "image_generation",
+  "image_edit",
+  "compute",
+  "banger_3d",
+  "other"
+];
+const SEARCHARCHIVE_FILE_TYPES: SearchArchiveFileType[] = [
+  "image",
+  "pdf",
+  "text",
+  "code",
+  "markdown",
+  "csv",
+  "json",
+  "html",
+  "audio",
+  "video",
+  "model3d",
+  "other"
+];
+
 function archiveMessageAttachments(message: { attachments?: ChatArchiveAttachment[] | null }): ChatArchiveAttachment[] {
   return Array.isArray(message.attachments) ? message.attachments : [];
 }
@@ -81,30 +134,113 @@ export function stableSearchArchiveHash(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
+export function searchArchiveTemplateResult(reason: SearchArchiveTemplateResult["reason"] = "empty_command"): SearchArchiveTemplateResult {
+  const templateProofHash = searchArchiveTemplateProofHash();
+  const template = [
+    `${SEARCHARCHIVE_COMMAND}`,
+    `template_proof_hash="sha256:${templateProofHash}"`,
+    'query=""',
+    "keywords=[]",
+    'date_from=""',
+    'date_to=""',
+    'session_scope="current|recent|archived|all"',
+    'content_scope="messages|files|artifacts|all"',
+    'file_origin="uploaded|created_in_app|all"',
+    'created_in_app_sources=["agent","scrapers","image_generation","image_edit","compute","banger_3d","other"]',
+    'file_types=["image","pdf","text","code","markdown","csv","json","html","audio","video","model3d","other"]',
+    "top_k=10",
+    "context_turns=3",
+    "include_file_previews=true",
+    "include_artifact_refs=true"
+  ].join("\n");
+  const result: SearchArchiveTemplateResult = {
+    schema: SEARCHARCHIVE_TEMPLATE_RESULT_SCHEMA,
+    command: SEARCHARCHIVE_COMMAND,
+    status: "template",
+    reason,
+    template,
+    allowedValues: {
+      sessionScope: SEARCHARCHIVE_SESSION_SCOPES,
+      contentScope: SEARCHARCHIVE_CONTENT_SCOPES,
+      fileOrigin: SEARCHARCHIVE_FILE_ORIGINS,
+      createdInAppSources: SEARCHARCHIVE_CREATED_IN_APP_SOURCES,
+      fileTypes: SEARCHARCHIVE_FILE_TYPES
+    },
+    proofHash: ""
+  };
+  result.proofHash = stableSearchArchiveHash({ ...result, proofHash: "" });
+  return result;
+}
+
+export function renderSearchArchiveTemplateResult(result: SearchArchiveTemplateResult): string {
+  return [
+    "SEARCHARCHIVE_TEMPLATE_RESULT",
+    `schema=${result.schema}`,
+    `command=${result.command}`,
+    `status=${result.status}`,
+    `reason=${result.reason}`,
+    `template_proof_hash=sha256:${searchArchiveTemplateProofHash()}`,
+    `allowed_values=${JSON.stringify(result.allowedValues)}`,
+    "template:",
+    indentBlock(result.template, "  "),
+    `proof_hash=sha256:${result.proofHash}`
+  ].join("\n");
+}
+
+export function readSearchArchiveCodeAct(input: string): SearchArchiveCodeAct | undefined {
+  const trimmed = searchArchiveCodeActText(input).trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const body = trimmed.slice(SEARCHARCHIVE_COMMAND.length).trim();
+  if (!body) {
+    return { kind: "template", result: searchArchiveTemplateResult("empty_command") };
+  }
+  const fields = parseTemplateFields(body);
+  if (!templateProofHashAccepted(fields.get("template_proof_hash") ?? fields.get("templateProofHash"))) {
+    return { kind: "template", result: searchArchiveTemplateResult("template_required") };
+  }
+  const request = parseSearchArchiveCodeAct(input);
+  if (!request || !request.query.trim()) {
+    return { kind: "template", result: searchArchiveTemplateResult("template_required") };
+  }
+  return { kind: "request", request };
+}
+
 export function parseSearchArchiveCodeAct(input: string): SearchArchiveRequest | undefined {
-  const trimmed = input.trim();
-  if (!trimmed.startsWith(SEARCHARCHIVE_COMMAND)) {
+  const trimmed = searchArchiveCodeActText(input).trim();
+  if (!trimmed) {
     return undefined;
   }
   const body = trimmed.slice(SEARCHARCHIVE_COMMAND.length).trim();
   const fields = parseTemplateFields(body);
   const freeform = fields.size === 0 ? body : "";
-  const query = clampText((fields.get("query") ?? fields.get("q") ?? fields.get("keyword") ?? freeform).trim(), MAX_QUERY_CHARS);
-  if (!query) {
-    return {
-      query: "",
-      scope: readScope(fields.get("scope")),
-      topK: readBoundedInteger(fields.get("top_k") ?? fields.get("topK"), DEFAULT_TOP_K, 1, MAX_TOP_K),
-      contextTurns: readContextTurns(fields.get("context_window") ?? fields.get("contextTurns"))
-    };
-  }
+  const keywords = readStringList(fields.get("keywords") ?? fields.get("keyword"));
+  const rawQuery = fields.get("query") ?? fields.get("q") ?? (keywords.length > 0 ? keywords.join(" ") : freeform);
+  const query = clampText(rawQuery.trim(), MAX_QUERY_CHARS);
   return {
     query,
-    scope: readScope(fields.get("scope")),
+    keywords,
+    dateFrom: readDateField(fields.get("date_from") ?? fields.get("dateFrom")),
+    dateTo: readDateField(fields.get("date_to") ?? fields.get("dateTo")),
+    scope: readScope(fields.get("session_scope") ?? fields.get("scope")),
+    sessionScope: readScope(fields.get("session_scope") ?? fields.get("scope")),
+    contentScope: readContentScope(fields.get("content_scope") ?? fields.get("contentScope")),
+    fileOrigin: readFileOrigin(fields.get("file_origin") ?? fields.get("fileOrigin")),
+    createdInAppSources: readChoiceList(fields.get("created_in_app_sources") ?? fields.get("createdInAppSources"), SEARCHARCHIVE_CREATED_IN_APP_SOURCES),
+    fileTypes: readChoiceList(fields.get("file_types") ?? fields.get("fileTypes"), SEARCHARCHIVE_FILE_TYPES),
     topK: readBoundedInteger(fields.get("top_k") ?? fields.get("topK"), DEFAULT_TOP_K, 1, MAX_TOP_K),
-    contextTurns: readContextTurns(fields.get("context_window") ?? fields.get("contextTurns")),
-    targets: splitTargets(fields.get("targets"))
+    contextTurns: readContextTurns(fields.get("context_window") ?? fields.get("context_turns") ?? fields.get("contextTurns")),
+    targets: splitTargets(fields.get("targets")),
+    includeFilePreviews: readBoolean(fields.get("include_file_previews") ?? fields.get("includeFilePreviews"), true),
+    includeArtifactRefs: readBoolean(fields.get("include_artifact_refs") ?? fields.get("includeArtifactRefs"), true),
+    templateProofHash: normalizeProofHash(fields.get("template_proof_hash") ?? fields.get("templateProofHash"))
   };
+}
+
+function searchArchiveCodeActText(input: string): string {
+  const commandIndex = input.indexOf(SEARCHARCHIVE_COMMAND);
+  return commandIndex >= 0 ? input.slice(commandIndex) : "";
 }
 
 export function upsertArchiveMessage(
@@ -182,21 +318,28 @@ export function searchArchiveSessions(
   request: SearchArchiveRequest
 ): SearchArchiveResult {
   const query = clampText((request.query ?? "").trim(), MAX_QUERY_CHARS);
-  const scope = readScope(request.scope);
+  const scope = readScope(request.sessionScope ?? request.scope);
+  const contentScope = request.contentScope ?? "all";
+  const fileOrigin = request.fileOrigin ?? "all";
+  const createdInAppSources = new Set(request.createdInAppSources ?? []);
+  const fileTypes = new Set(request.fileTypes ?? []);
   const topK = clampNumber(request.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K);
   const contextTurns = clampNumber(request.contextTurns ?? DEFAULT_CONTEXT_TURNS, 0, MAX_CONTEXT_TURNS);
-  const queryTerms = tokenizeQuery(query);
+  const queryTerms = tokenizeQuery([query, ...(request.keywords ?? [])].join(" "));
   const candidates: SearchCandidate[] = [];
   const searchableSessions = sessions.filter((session) => {
+    if (scope === "current") return Boolean(request.currentSessionId) && session.sessionId === request.currentSessionId;
     if (scope === "recent") return !session.archived;
     if (scope === "archived") return session.archived;
     return true;
-  });
+  }).filter((session) => sessionInDateRange(session, request.dateFrom, request.dateTo));
 
   for (const session of searchableSessions) {
     session.messages.forEach((message, messageIndex) => {
-      const messageScore = scoreText(message.text, query, queryTerms);
-      if (messageScore > 0) {
+      const includeMessages = contentScope === "messages" || contentScope === "all";
+      const includeFiles = contentScope === "files" || contentScope === "artifacts" || contentScope === "all";
+      const messageScore = includeMessages ? scoreText(message.text, query, queryTerms) : 0;
+      if (messageScore > 0 && messageInDateRange(message, request.dateFrom, request.dateTo)) {
         candidates.push({
           session,
           message,
@@ -207,7 +350,13 @@ export function searchArchiveSessions(
           score: messageScore + recencyBonus(message.createdAt)
         });
       }
+      if (!includeFiles || !messageInDateRange(message, request.dateFrom, request.dateTo)) {
+        return;
+      }
       for (const attachment of archiveMessageAttachments(message)) {
+        if (!attachmentMatchesFilters(attachment, fileOrigin, createdInAppSources, fileTypes)) {
+          continue;
+        }
         const attachmentName = attachment.name ?? "";
         const nameScore = scoreText(attachmentName, query, queryTerms);
         if (nameScore > 0) {
@@ -241,7 +390,7 @@ export function searchArchiveSessions(
   const ranked = candidates
     .sort((left, right) => right.score - left.score || right.message.createdAt.localeCompare(left.message.createdAt))
     .slice(0, topK);
-  const hits = ranked.map((candidate, index) => searchHit(candidate, query, contextTurns, index + 1));
+  const hits = ranked.map((candidate, index) => searchHit(candidate, query, contextTurns, index + 1, request));
   const indexSnapshotHash = stableSearchArchiveHash(
     searchableSessions.map((session) => ({
       sessionId: session.sessionId,
@@ -304,7 +453,7 @@ export function renderSearchArchiveResult(result: SearchArchiveResult): string {
     lines.push(`    open_ref: ${JSON.stringify(hit.openRef)}`);
     lines.push(`    fetch_more_ref: ${JSON.stringify(hit.fetchMoreRef)}`);
   }
-  lines.push("next_action=Use the snippets directly, or call search again with a narrower query/context_window if more context is needed.");
+  lines.push("next_action=Use the snippets directly, or call search again with a narrower query/context_turns if more context is needed.");
   return lines.join("\n");
 }
 
@@ -336,7 +485,7 @@ export function archiveSessionProofHash(session: ChatArchiveSession): string {
   });
 }
 
-function searchHit(candidate: SearchCandidate, query: string, contextTurns: number, rank: number): SearchArchiveHit {
+function searchHit(candidate: SearchCandidate, query: string, contextTurns: number, rank: number, request: SearchArchiveRequest): SearchArchiveHit {
   const { session, message, messageIndex } = candidate;
   const contextBefore = session.messages
     .slice(Math.max(0, messageIndex - contextTurns), messageIndex)
@@ -344,7 +493,7 @@ function searchHit(candidate: SearchCandidate, query: string, contextTurns: numb
   const contextAfter = session.messages
     .slice(messageIndex + 1, Math.min(session.messages.length, messageIndex + 1 + contextTurns))
     .map(contextLine);
-  const attachments = archiveMessageAttachments(message).map((attachment) => attachmentRef(session.sessionId, attachment));
+  const attachments = archiveMessageAttachments(message).map((attachment) => attachmentRef(session.sessionId, attachment, request));
   const evidenceHash = stableSearchArchiveHash({
     sessionId: session.sessionId,
     turnId: message.turnId,
@@ -383,20 +532,30 @@ function contextLine(message: ChatArchiveMessage): SearchArchiveContextLine {
   };
 }
 
-function attachmentRef(sessionId: string, attachment: ComposerUploadPreview): SearchArchiveAttachmentRef {
+function attachmentRef(sessionId: string, attachment: ComposerUploadPreview, request: SearchArchiveRequest): SearchArchiveAttachmentRef {
+  const origin = attachmentOrigin(attachment);
+  const createdInAppSource = attachmentCreatedInAppSource(attachment);
+  const fileType = attachmentFileType(attachment);
   return {
     id: attachment.id,
     name: attachment.name ?? "",
     kind: attachment.kind,
-    textPreview: clampText(attachment.textPreview ?? "", MAX_CONTEXT_CHARS),
+    fileType,
+    origin,
+    createdInAppSource,
+    textPreview: request.includeFilePreviews === false ? "" : clampText(attachment.textPreview ?? "", MAX_CONTEXT_CHARS),
+    artifactRefIncluded: request.includeArtifactRefs !== false,
     proofHash: stableSearchArchiveHash({
       id: attachment.id,
       name: attachment.name ?? "",
       kind: attachment.kind,
+      fileType,
+      origin,
+      createdInAppSource,
       textPreview: attachment.textPreview ?? "",
       tablePreview: attachment.tablePreview ?? []
     }),
-    openRef: `forge://archive/file/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachment.id)}`
+    openRef: request.includeArtifactRefs === false ? "" : `forge://archive/file/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachment.id)}`
   };
 }
 
@@ -424,10 +583,56 @@ function renderAttachmentRefs(lines: string[], attachments: SearchArchiveAttachm
     lines.push(`      - id: ${JSON.stringify(attachment.id)}`);
     lines.push(`        name: ${JSON.stringify(attachment.name)}`);
     lines.push(`        kind: ${attachment.kind}`);
+    lines.push(`        file_type: ${attachment.fileType}`);
+    lines.push(`        origin: ${attachment.origin}`);
+    lines.push(`        created_in_app_source: ${attachment.createdInAppSource}`);
     lines.push(`        text_preview: ${JSON.stringify(attachment.textPreview)}`);
+    lines.push(`        artifact_ref_included: ${attachment.artifactRefIncluded}`);
     lines.push(`        proof_hash: sha256:${attachment.proofHash}`);
     lines.push(`        open_ref: ${JSON.stringify(attachment.openRef)}`);
   }
+}
+
+function searchArchiveTemplateProofHash(): string {
+  return stableSearchArchiveHash({
+    command: SEARCHARCHIVE_COMMAND,
+    schema: SEARCHARCHIVE_TEMPLATE_RESULT_SCHEMA,
+    fields: [
+      "template_proof_hash",
+      "query",
+      "keywords",
+      "date_from",
+      "date_to",
+      "session_scope",
+      "content_scope",
+      "file_origin",
+      "created_in_app_sources",
+      "file_types",
+      "top_k",
+      "context_turns",
+      "include_file_previews",
+      "include_artifact_refs"
+    ],
+    allowedValues: {
+      sessionScope: SEARCHARCHIVE_SESSION_SCOPES,
+      contentScope: SEARCHARCHIVE_CONTENT_SCOPES,
+      fileOrigin: SEARCHARCHIVE_FILE_ORIGINS,
+      createdInAppSources: SEARCHARCHIVE_CREATED_IN_APP_SOURCES,
+      fileTypes: SEARCHARCHIVE_FILE_TYPES
+    }
+  });
+}
+
+function templateProofHashAccepted(value: unknown): boolean {
+  return normalizeProofHash(value) === searchArchiveTemplateProofHash();
+}
+
+function normalizeProofHash(value: unknown): string {
+  return String(value ?? "").trim().replace(/^sha256:/i, "");
+}
+
+function indentBlock(value: string, prefix: string): string {
+  return value.split(/\r?\n/).map((line) => `${prefix}${line}`).join("\n");
 }
 
 function parseTemplateFields(body: string): Map<string, string> {
@@ -444,10 +649,54 @@ function parseTemplateFields(body: string): Map<string, string> {
 }
 
 function readScope(value: unknown): SearchArchiveScope {
-  if (value === "recent" || value === "archived" || value === "all") {
+  if (value === "current" || value === "recent" || value === "archived" || value === "all") {
     return value;
   }
   return "all";
+}
+
+function readContentScope(value: unknown): SearchArchiveContentScope {
+  return readChoice(value, SEARCHARCHIVE_CONTENT_SCOPES, "all");
+}
+
+function readFileOrigin(value: unknown): SearchArchiveFileOrigin {
+  return readChoice(value, SEARCHARCHIVE_FILE_ORIGINS, "all");
+}
+
+function readChoice<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  const normalized = String(value ?? "").trim();
+  return (allowed as readonly string[]).includes(normalized) ? normalized as T : fallback;
+}
+
+function readChoiceList<T extends string>(value: unknown, allowed: readonly T[]): T[] {
+  const allowedSet = new Set<string>(allowed);
+  return readStringList(value).filter((item): item is T => allowedSet.has(item));
+}
+
+function readStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).slice(0, 32);
+  }
+  const raw = String(value ?? "").trim();
+  if (!raw) return [];
+  const unbracketed = raw.replace(/^\[/, "").replace(/\]$/, "");
+  return unbracketed
+    .split(/[,|;\n]+/)
+    .map((item) => item.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean)
+    .slice(0, 32);
+}
+
+function readDateField(value: unknown): string | undefined {
+  const raw = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw === "true" || raw === "yes" || raw === "1") return true;
+  if (raw === "false" || raw === "no" || raw === "0") return false;
+  return fallback;
 }
 
 function readBoundedInteger(value: unknown, fallback: number, min: number, max: number): number {
@@ -470,6 +719,42 @@ function splitTargets(value: unknown): string[] {
     .map((item) => item.trim())
     .filter(Boolean)
     .slice(0, 12);
+}
+
+function sessionInDateRange(session: ChatArchiveSession, dateFrom: string | undefined, dateTo: string | undefined): boolean {
+  const day = session.date || session.updatedAt.slice(0, 10) || session.createdAt.slice(0, 10);
+  return dateInRange(day, dateFrom, dateTo);
+}
+
+function messageInDateRange(message: ChatArchiveMessage, dateFrom: string | undefined, dateTo: string | undefined): boolean {
+  return dateInRange(message.createdAt.slice(0, 10), dateFrom, dateTo);
+}
+
+function dateInRange(day: string, dateFrom: string | undefined, dateTo: string | undefined): boolean {
+  if (dateFrom && day < dateFrom) return false;
+  if (dateTo && day > dateTo) return false;
+  return true;
+}
+
+function attachmentMatchesFilters(
+  attachment: ComposerUploadPreview,
+  fileOrigin: SearchArchiveFileOrigin,
+  createdInAppSources: Set<SearchArchiveCreatedInAppSource>,
+  fileTypes: Set<SearchArchiveFileType>
+): boolean {
+  const origin = attachmentOrigin(attachment);
+  if (fileOrigin !== "all" && origin !== fileOrigin) {
+    return false;
+  }
+  const source = attachmentCreatedInAppSource(attachment);
+  if (origin === "created_in_app" && createdInAppSources.size > 0 && !createdInAppSources.has(source)) {
+    return false;
+  }
+  const fileType = attachmentFileType(attachment);
+  if (fileTypes.size > 0 && !fileTypes.has(fileType)) {
+    return false;
+  }
+  return true;
 }
 
 function scoreText(text: string, query: string, queryTerms: string[]): number {
@@ -533,6 +818,46 @@ function attachmentTextForSearch(attachment: ComposerUploadPreview): string {
     attachment.textPreview ?? "",
     tablePreview.map((row) => row.join(" ")).join("\n")
   ].filter(Boolean).join("\n");
+}
+
+function attachmentOrigin(attachment: ComposerUploadPreview): SearchArchiveFileOrigin {
+  const url = String(attachment.url ?? "").toLowerCase();
+  if (url.startsWith("ingen://upload-preview/")) {
+    return "uploaded";
+  }
+  return "created_in_app";
+}
+
+function attachmentCreatedInAppSource(attachment: ComposerUploadPreview): SearchArchiveCreatedInAppSource {
+  if (attachmentOrigin(attachment) === "uploaded") {
+    return "other";
+  }
+  const haystack = `${attachment.id} ${attachment.name ?? ""} ${attachment.url ?? ""}`.toLowerCase();
+  if (haystack.includes("scraper") || haystack.includes("crawl4ai") || haystack.includes("scrapling")) return "scrapers";
+  if (haystack.includes("editimage") || haystack.includes("image_edit")) return "image_edit";
+  if (haystack.includes("newimage") || haystack.includes("image_generation") || haystack.includes("generated-image")) return "image_generation";
+  if (haystack.includes("compute") || haystack.includes("monster")) return "compute";
+  if (attachment.kind === "model3d" || haystack.includes("banger") || haystack.includes("3d")) return "banger_3d";
+  return "agent";
+}
+
+function attachmentFileType(attachment: ComposerUploadPreview): SearchArchiveFileType {
+  const name = String(attachment.name ?? "").toLowerCase();
+  if (attachment.kind === "image") return "image";
+  if (attachment.kind === "video") return "video";
+  if (attachment.kind === "model3d") return "model3d";
+  if (attachment.kind === "pdf") return "pdf";
+  if (attachment.kind === "text") {
+    if (/\.(ts|tsx|js|jsx|rs|py|go|java|c|cpp|h|hpp|cs|swift|kt)$/i.test(name)) return "code";
+    if (/\.mdx?$/i.test(name)) return "markdown";
+    if (/\.csv$/i.test(name)) return "csv";
+    if (/\.json$/i.test(name)) return "json";
+    if (/\.html?$/i.test(name)) return "html";
+    return "text";
+  }
+  if (/\.(mp3|wav|flac|ogg|m4a)$/i.test(name)) return "audio";
+  if (/\.(mp4|mov|mkv|webm|avi)$/i.test(name)) return "video";
+  return "other";
 }
 
 function recencyBonus(createdAt: string): number {

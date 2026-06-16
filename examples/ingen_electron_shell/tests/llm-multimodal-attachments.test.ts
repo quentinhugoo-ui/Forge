@@ -170,8 +170,9 @@ describe("LLM multimodal attachments", () => {
   });
 
   it("executes /searcharchive_ locally as a Brain archive command", () => {
-    expect(mainSource).toContain("parseSearchArchiveCodeAct(draft)");
-    expect(mainSource).toContain("localSearchArchiveStatus(searchArchiveRequest)");
+    expect(mainSource).toContain("readSearchArchiveCodeAct(draft)");
+    expect(mainSource).toContain("localSearchArchiveTemplateStatus");
+    expect(mainSource).toContain("localSearchArchiveStatus(searchArchiveRequest, session)");
     expect(mainSource).toContain("forge:search-archive");
     expect(mainSource).toContain("archiveTranscriptMessage(activeSession, assistantMessage)");
   });
