@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "fcfac4bc267c893c6c74323ce8e5708f0e851539947207642142312dec276a7f"
+    "ipc_manifest_hash": "e8c226d265dc915d1b6374286e49b667c8a7d76afac27008fa69c6d4419c3d91"
   },
   "checks": [
     {
@@ -99,7 +99,6 @@
           "event-text-lab.css",
           "event-text-lab.tsx",
           "forge-api.d.ts",
-          "GlobalTooltip.tsx",
           "header-shadow-store.ts",
           "header-surface-store.ts",
           "HeaderSurfaceRouter.tsx",
@@ -150,5 +149,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "dd02cc01c2166191a6088b7ed3d4c26b492bdafd023fbd89909fd8a9aa6d8547"
+  "proof_hash": "e9dc6805e61c8b8669a8d24ef1a0bfabd759304f34a21a02931a908445a4e1ca"
 }

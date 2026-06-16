@@ -487,7 +487,7 @@ function BrainSessionArchiveList({
             onClick={() => onOpenSession(session)}
           >
             <span className="brainSessionArchiveItem__line">
-              <time className="brainSessionArchiveItem__date" dateTime={session.date} title={session.date}>
+              <time className="brainSessionArchiveItem__date" dateTime={session.date}>
                 {compactSessionAgeLabel(session.date)}
               </time>
               <span className="brainSessionArchiveItem__title">{session.label}</span>
@@ -501,7 +501,7 @@ function BrainSessionArchiveList({
       </div>
       {hiddenCount > 0 ? (
         <button type="button" className="brainSessionArchiveMore" onClick={onShowMore}>
-          Afficher plus
+          Show more
           <span>{hiddenCount}</span>
         </button>
       ) : null}
@@ -512,14 +512,14 @@ function BrainSessionArchiveList({
 function SlotRow({
   glyph,
   icon,
-  title,
+  label,
   text,
   status,
   active = false
 }: {
   glyph?: string;
   icon?: React.ReactNode;
-  title: string;
+  label: string;
   text: string;
   status?: string;
   active?: boolean;
@@ -528,7 +528,7 @@ function SlotRow({
     <div className="brainSlotRow" role="listitem">
       <span className="brainRow__icon">{icon ?? <Glyph kind={glyph ?? "terminal"} size={17} />}</span>
       <span className="brainSlotRow__body">
-        <strong>{title}</strong>
+        <strong>{label}</strong>
         <span>{text}</span>
       </span>
       {status ? (
@@ -768,7 +768,7 @@ export function BrainWorkspaceChrome({
   return (
     <div className="brainWorkspaceChrome">
       <div className="brainWorkspaceChrome__titlebar">
-        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+        <button type="button" className="brainWorkspaceChrome__close" aria-label="Close Brain" onClick={onClose}>
           <span aria-hidden="true" />
         </button>
         <span className="brainCanvas__mark brainWorkspaceChrome__mark"><Glyph kind="brain" size={26} /></span>
@@ -984,7 +984,7 @@ function BrainLearningRegistry() {
               <p>{entry.text}</p>
               <footer>
                 <BrainEntrySourceBadge source={entry.source} />
-                <span title={entry.updatedAt}>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
+                <span>{entry.trust === "agent_candidate" ? "candidate" : "confirmed"}</span>
                 <button type="button" aria-label={`Remove ${category.label.toLowerCase()} entry`} onClick={() => deleteEntry(entry.id)}>
                   <Glyph kind="minus" size={12} />
                 </button>
@@ -1276,7 +1276,7 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     {
       id: "gpu",
       title: hardwareGpuTitle(primaryGpu?.name),
-      detail: "Température / Util.",
+      detail: "Temperature / Util.",
       badge: "GPU",
       temperature: primaryGpu ? { ...primaryGpu.temperature, label: "GPU" } : hardwareFallbackMetric("GPU", null, "C"),
       percent: primaryGpu ? { ...primaryGpu.utilization, label: "GPU" } : hardwareFallbackMetric("GPU", null, "%"),
@@ -1286,7 +1286,7 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     {
       id: "cpu",
       title: snapshot.cpu.model || "CPU",
-      detail: "Température / Util.",
+      detail: "Temperature / Util.",
       badge: "CPU",
       temperature: cpuTemperatureGaugeMetric(snapshot),
       percent: { ...snapshot.cpu.utilization, label: "CPU" },
@@ -1295,10 +1295,10 @@ function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitor
     },
     {
       id: "system",
-      title: "Système",
-      detail: "Température / RAM",
-      badge: "Système",
-      temperature: { ...snapshot.thermal.systemTemperature, label: "Système" },
+      title: "System",
+      detail: "Temperature / RAM",
+      badge: "System",
+      temperature: { ...snapshot.thermal.systemTemperature, label: "System" },
       percent: { ...snapshot.memory.utilization, label: "RAM" },
       min: 25,
       max: 105
@@ -1799,14 +1799,14 @@ function GodelSpace() {
       <div className="brainCanvas__rows" role="list">
         <SlotRow
           glyph="shield-check"
-          title="Semantic verification"
+          label="Semantic verification"
           text="Every CodeAct command is checked against its typed contract before bytecode is emitted."
           status="active"
           active
         />
         <SlotRow
           glyph="terminal"
-          title="Proof hashes"
+          label="Proof hashes"
           text="Monster compute returns verifiable artifacts with content-addressed proofs, not generated answers."
           status="active"
           active
@@ -1826,20 +1826,20 @@ function PersonalitySpace() {
       <div className="brainCanvas__rows" role="list">
         <SlotRow
           glyph="masks"
-          title={memory.preferredFirstName.trim() || "No name set"}
+          label={memory.preferredFirstName.trim() || "No name set"}
           text="Preferred first name, used across welcome messages and session prose."
           status={memory.trust.replaceAll("_", " ")}
           active
         />
         <SlotRow
           glyph="pencil"
-          title="Tone"
+          label="Tone"
           text="Compact, technical, proof-first. Custom tone profiles land here."
           status="soon"
         />
         <SlotRow
           glyph="shield-check"
-          title="Autonomy"
+          label="Autonomy"
           text="Side-effect actions — send, pay, delete — always stay user-confirmed."
           status="soon"
         />

@@ -2628,7 +2628,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
     "action_flow=When local action is needed, write one short progress paragraph first, then emit exactly one AGENT_ACTION_JSON line that starts with AGENT_ACTION_JSON at column 1. After the app returns AGENT_ACTION_RESULT, continue with another short paragraph plus another AGENT_ACTION_JSON if more work remains, or finish with a compact summary.",
     "retry=If AGENT_ACTION_RESULT reports failure, inspect the error and try a different safe route before declaring the task blocked.",
-    "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
+    "loop_style=Use varied, concrete progress notes. Do not start every step with 'I will'. Prefer forms like 'The desktop contains...', 'I am grouping now...', 'Next logical action...', 'This file belongs in...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
     "planned=contained_webexplorer_dom persistent_browser_sessions browser_account_state_changes mcp.tools_call thread_wakeups semantic_screen_targeting bundled_ocr_model",

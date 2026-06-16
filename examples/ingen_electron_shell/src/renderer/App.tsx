@@ -29,7 +29,6 @@ import {
 import { HeaderSurfaceRouter } from "./HeaderSurfaceRouter";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-store";
-import { GlobalTooltip } from "./GlobalTooltip";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
@@ -61,6 +60,36 @@ function iconClass(control: Pick<HeaderControl, "icon" | "id">): string {
     default:
       return "shellIcon--nav-forge";
   }
+}
+
+const TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR = [
+  "button[aria-label]",
+  "a[aria-label]",
+  "[role='button'][aria-label]",
+  "[role='menuitem'][aria-label]",
+  "[role='tab'][aria-label]",
+  "[tabindex][aria-label]"
+].join(",");
+
+function stripTooltipAttributes(root: ParentNode = document): void {
+  const tooltipElements = [
+    ...(root instanceof HTMLElement && root.matches("[title], [data-tooltip], [role='tooltip']") ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>("[title], [data-tooltip], [role='tooltip']"))
+  ];
+  tooltipElements.forEach((element) => {
+    element.removeAttribute("title");
+    element.removeAttribute("data-tooltip");
+    if (element.getAttribute("role") === "tooltip") {
+      element.removeAttribute("role");
+    }
+  });
+  const interactiveElements = [
+    ...(root instanceof HTMLElement && root.matches(TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR) ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>(TOOLTIP_BLOCKED_INTERACTIVE_SELECTOR))
+  ];
+  interactiveElements.forEach((element) => {
+    element.removeAttribute("aria-label");
+  });
 }
 
 function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModuleId | null {
@@ -158,8 +187,7 @@ type WidgetHitPadding = number | { left?: number; right?: number; top?: number; 
 const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: WidgetHitPadding }> = [
   { selector: ".composer", padding: 6 },
   { selector: ".widgetWallpaperShadow", padding: 0 },
-  /* Asymmetric: stretch left so the hover tooltip stays inside the native
-     window shape, and add vertical margin so the icon's delayed translateY
+  /* Asymmetric: stretch left and add vertical margin so the icon's delayed translateY
      entrance never leaves it cropped before the next region sync. */
   { selector: ".widgetWindowsButton", padding: { left: 104, right: 10, top: 14, bottom: 14 } },
   { selector: ".widgetSystemTray", padding: { left: 10, right: 10, top: 10, bottom: 10 } },
@@ -357,6 +385,33 @@ export function App() {
   const widgetModeTransitioningRef = useRef(false);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const mapsOwnerSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    stripTooltipAttributes(document);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "attributes") {
+          const target = mutation.target instanceof HTMLElement ? mutation.target : null;
+          if (target) {
+            stripTooltipAttributes(target.parentElement ?? document);
+          }
+          continue;
+        }
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement) {
+            stripTooltipAttributes(node);
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["title", "data-tooltip", "role", "aria-label"]
+    });
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
@@ -1394,7 +1449,6 @@ export function App() {
 
   return (
     <main className={shellClassName} style={shellStyleWithWidgetLock(widgetLayoutLock)}>
-      <GlobalTooltip />
       <section className="titlebar" aria-label="InGen top controls">
         <div className="titlebar__cluster">
           {topControls.slice(0, 5).map((control) => {
@@ -1402,7 +1456,6 @@ export function App() {
               <button
                 type="button"
                 className={control.selected ? "iconButton iconButton--selected" : "iconButton"}
-                aria-label={control.label}
                 aria-controls={
                   control.command === "toggle_left_panel"
                     ? "left-panel"
@@ -1411,7 +1464,6 @@ export function App() {
                       : undefined
                 }
                 aria-expanded={control.command === "toggle_left_panel" ? snapshot.leftPanelOpen : undefined}
-                title={control.label}
                 key={control.id}
                 onClick={() => void dispatch(control)}
               >
@@ -1427,8 +1479,6 @@ export function App() {
               <button
                 type="button"
                 className={control.id === "window-close" ? "windowButton windowButton--danger" : "windowButton"}
-                aria-label={control.label}
-                title={control.label}
                 key={control.id}
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
@@ -1460,9 +1510,7 @@ export function App() {
       <button
         type="button"
         className="widgetWindowsButton"
-        data-tooltip="Toggle taskbar"
         aria-hidden={!widgetMode}
-        aria-label="Toggle Windows taskbar"
         tabIndex={widgetMode ? 0 : -1}
         onClick={() => {
           setWidgetTaskbarShown((shown) => !shown);
@@ -1487,7 +1535,6 @@ export function App() {
                 type="button"
                 className="workspaceHeader__close"
                 aria-label="Close LLM Provider"
-                title="Close LLM Provider"
                 onPointerDown={(event) => {
                   if (event.button !== 0) {
                     return;
