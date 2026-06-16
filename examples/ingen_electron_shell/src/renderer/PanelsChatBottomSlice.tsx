@@ -88,10 +88,24 @@ import { ModuleLogo } from "./module-logos";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
 const COMPOSER_MAX_INPUT_HEIGHT = 360;
+const COMPOSER_SINGLE_LINE_HEIGHT_TOLERANCE_PX = 8;
 const CHAT_KEY_COLOR_EVENT = "ingen:chat-key-color";
 export const IMAGE_EDIT_STAGED_EVENT = "ingen:image-edit-staged";
 const UPLOAD_PREVIEW_MAX_PDF_PAGES = 3;
 type NativeDroppedFile = File & { path?: string };
+
+function composerCompactInputHeightFor(node: HTMLTextAreaElement): number {
+  const minHeight = Number.parseFloat(getComputedStyle(node).minHeight);
+  return Number.isFinite(minHeight) && minHeight > 0 ? minHeight : 66;
+}
+
+function composerMeasuredInputHeight(node: HTMLTextAreaElement, compactHeight: number): number {
+  const measuredHeight = node.scrollHeight;
+  if (!Number.isFinite(measuredHeight) || measuredHeight <= compactHeight + COMPOSER_SINGLE_LINE_HEIGHT_TOLERANCE_PX) {
+    return compactHeight;
+  }
+  return Math.min(measuredHeight, COMPOSER_MAX_INPUT_HEIGHT);
+}
 
 function hasDraggedFiles(dataTransfer: DataTransfer | null): boolean {
   if (!dataTransfer) {
@@ -4744,8 +4758,7 @@ export function PanelsChatBottomSlice({
     if (!node) {
       return;
     }
-    const minHeight = Number.parseFloat(getComputedStyle(node).minHeight);
-    const compactHeight = Number.isFinite(minHeight) ? minHeight : 66;
+    const compactHeight = composerCompactInputHeightFor(node);
     node.style.height = `${compactHeight}px`;
     composerRef.current?.style.setProperty("--composer-input-height", `${compactHeight}px`);
     requestAnimationFrame(syncComposerLiveHeight);
@@ -4767,8 +4780,9 @@ export function PanelsChatBottomSlice({
       compactComposerInputHeight();
       return;
     }
+    const compactHeight = composerCompactInputHeightFor(node);
     node.style.height = "auto";
-    const inputHeight = Math.min(node.scrollHeight, COMPOSER_MAX_INPUT_HEIGHT);
+    const inputHeight = composerMeasuredInputHeight(node, compactHeight);
     node.style.height = `${inputHeight}px`;
     composerRef.current?.style.setProperty("--composer-input-height", `${inputHeight}px`);
     syncComposerLiveHeight();

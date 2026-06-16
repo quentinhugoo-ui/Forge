@@ -7684,7 +7684,7 @@ ol.assistantText__list li::before {
   min-height: 66px;
   max-height: 360px;
   height: 66px;
-  padding: 14px 12px 34px 8px;
+  padding: 14px 12px 31px 8px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -13447,7 +13447,7 @@ ol.assistantText__list li::before {
 .shell--widget-mode .composer__input {
   min-height: 66px;
   height: 66px;
-  padding: 14px 12px 34px 8px;
+  padding: 14px 12px 31px 8px;
 }
 
 .shell--widget-minimizing .composer__upload,
