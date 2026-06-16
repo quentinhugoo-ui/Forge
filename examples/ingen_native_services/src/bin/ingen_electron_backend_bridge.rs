@@ -481,6 +481,7 @@ struct BangerB3dmHeaderProjection {
     batch_table_binary_byte_length: u32,
     glb_byte_offset: usize,
     glb_byte_count: usize,
+    rtc_center: Option<[f64; 3]>,
     feature_table_hash: String,
     batch_table_hash: String,
 }
@@ -2863,9 +2864,14 @@ fn decode_banger_b3dm(bytes: &[u8]) -> Result<(BangerB3dmHeaderProjection, &[u8]
         return Err("b3dm table lengths exceed declared byte length".to_string());
     }
     let feature_start = 28usize;
-    let feature_end = feature_start + feature_table_json_byte_length as usize + feature_table_binary_byte_length as usize;
+    let feature_json_end = feature_start + feature_table_json_byte_length as usize;
+    let feature_end = feature_json_end + feature_table_binary_byte_length as usize;
     let batch_end = feature_end + batch_table_json_byte_length as usize + batch_table_binary_byte_length as usize;
     let glb = &bytes[glb_byte_offset..byte_length as usize];
+    let rtc_center = banger_b3dm_rtc_center(
+        &bytes[feature_start..feature_json_end],
+        &bytes[feature_json_end..feature_end],
+    );
     Ok((
         BangerB3dmHeaderProjection {
             version,
@@ -2876,11 +2882,61 @@ fn decode_banger_b3dm(bytes: &[u8]) -> Result<(BangerB3dmHeaderProjection, &[u8]
             batch_table_binary_byte_length,
             glb_byte_offset,
             glb_byte_count: glb.len(),
+            rtc_center,
             feature_table_hash: sha256_hex(&bytes[feature_start..feature_end]),
             batch_table_hash: sha256_hex(&bytes[feature_end..batch_end]),
         },
         glb,
     ))
+}
+
+fn banger_b3dm_rtc_center(feature_json: &[u8], feature_binary: &[u8]) -> Option<[f64; 3]> {
+    if feature_json.is_empty() {
+        return None;
+    }
+    let json_text = std::str::from_utf8(feature_json).ok()?.trim_matches(|character| {
+        character == ' '
+            || character == '\0'
+            || character == '\n'
+            || character == '\r'
+            || character == '\t'
+    });
+    if json_text.is_empty() {
+        return None;
+    }
+    let feature_table = serde_json::from_str::<Value>(json_text).ok()?;
+    let rtc_center = feature_table.get("RTC_CENTER")?;
+    if let Some(values) = rtc_center.as_array() {
+        return banger_json_f64_vec3(values);
+    }
+    let byte_offset = rtc_center
+        .as_object()
+        .and_then(|object| object.get("byteOffset"))
+        .and_then(Value::as_u64)? as usize;
+    if byte_offset + 12 > feature_binary.len() {
+        return None;
+    }
+    Some([
+        read_f32_le(feature_binary, byte_offset).ok()? as f64,
+        read_f32_le(feature_binary, byte_offset + 4).ok()? as f64,
+        read_f32_le(feature_binary, byte_offset + 8).ok()? as f64,
+    ])
+}
+
+fn banger_json_f64_vec3(values: &[Value]) -> Option<[f64; 3]> {
+    if values.len() < 3 {
+        return None;
+    }
+    let vector = [
+        values[0].as_f64()?,
+        values[1].as_f64()?,
+        values[2].as_f64()?,
+    ];
+    if vector.iter().all(|value| value.is_finite()) {
+        Some(vector)
+    } else {
+        None
+    }
 }
 
 struct BangerDecodedGlb<'a> {
@@ -3017,6 +3073,14 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
         return Err(format!("u32 read beyond buffer at offset {offset}"));
     }
     Ok(u32::from_le_bytes(bytes[offset..end].try_into().expect("slice length checked")))
+}
+
+fn read_f32_le(bytes: &[u8], offset: usize) -> Result<f32, String> {
+    let end = offset + 4;
+    if end > bytes.len() {
+        return Err(format!("f32 read beyond buffer at offset {offset}"));
+    }
+    Ok(f32::from_le_bytes(bytes[offset..end].try_into().expect("slice length checked")))
 }
 
 #[cfg(test)]
@@ -4073,13 +4137,16 @@ fn banger_maps_first_tile_render_mesh_bytes_from_ingest(
         };
         let candidate = match record.container {
             "b3dm" => decode_banger_b3dm(&bytes)
-                .and_then(|(_, glb_bytes)| {
+                .and_then(|(b3dm, glb_bytes)| {
                     let decoded = decode_banger_glb_full(glb_bytes)?;
                     banger_maps_render_mesh_from_gltf(
                         &decoded.gltf_value,
                         decoded.bin_chunk,
                         maps_render_space_transform,
-                        record.tile_global_transform,
+                        banger_b3dm_tile_content_transform(
+                            record.tile_global_transform,
+                            b3dm.rtc_center,
+                        ),
                     )
                 }),
             "glb" => decode_banger_glb_full(&bytes)
@@ -4399,6 +4466,16 @@ fn banger_maps_render_space_transform() -> [f64; 16] {
         banger_scale_mat4_f64([meters_to_world, meters_to_world, meters_to_world]),
         banger_ecef_to_enu_matrix(&contract.georeference),
     )
+}
+
+fn banger_b3dm_tile_content_transform(
+    tile_global_transform: [f64; 16],
+    rtc_center: Option<[f64; 3]>,
+) -> [f64; 16] {
+    match rtc_center {
+        Some(center) => banger_mat4_mul_f64(tile_global_transform, banger_translation_mat4_f64(center)),
+        None => tile_global_transform,
+    }
 }
 
 fn banger_wgs84_geodetic_to_ecef(
@@ -5552,6 +5629,7 @@ mod tests {
         let b3dm = projection.content_decode.records[0].b3dm.as_ref().unwrap();
         assert_eq!(b3dm.version, 1);
         assert!(b3dm.glb_byte_count > 0);
+        assert_eq!(b3dm.rtc_center, None);
         let glb = projection.content_decode.records[0].glb.as_ref().unwrap();
         assert_eq!(glb.version, 2);
         assert_eq!(glb.bin_chunk_byte_count, 48);
@@ -5583,6 +5661,38 @@ mod tests {
         assert_eq!(stage.material_stages[0].base_color_texture, Some(0));
         assert_eq!(stage.texture_stages[0].source_kind, "embedded_buffer_view");
         assert_eq!(stage.texture_stages[0].wgpu_usage, "TEXTURE_BINDING|COPY_DST");
+    }
+
+    #[test]
+    fn decodes_b3dm_rtc_center_from_json_feature_table() {
+        let bytes = test_b3dm_bytes_with_feature(br#"{"BATCH_LENGTH":0,"RTC_CENTER":[1.25,2.5,3.75]}"#, &[]);
+        let (b3dm, _) = decode_banger_b3dm(&bytes).unwrap();
+        assert_eq!(b3dm.rtc_center, Some([1.25, 2.5, 3.75]));
+    }
+
+    #[test]
+    fn decodes_b3dm_rtc_center_from_binary_feature_table() {
+        let mut feature_binary = Vec::new();
+        for value in [4.0_f32, 5.5, 6.25] {
+            feature_binary.extend_from_slice(&value.to_le_bytes());
+        }
+        let bytes = test_b3dm_bytes_with_feature(
+            br#"{"BATCH_LENGTH":0,"RTC_CENTER":{"byteOffset":0}}"#,
+            &feature_binary,
+        );
+        let (b3dm, _) = decode_banger_b3dm(&bytes).unwrap();
+        assert_eq!(b3dm.rtc_center, Some([4.0, 5.5, 6.25]));
+    }
+
+    #[test]
+    fn composes_b3dm_rtc_center_before_tile_transform() {
+        let tile_transform = banger_translation_mat4_f64([10.0, 0.0, 0.0]);
+        let content_transform =
+            banger_b3dm_tile_content_transform(tile_transform, Some([1.0, 2.0, 3.0]));
+        let transformed = banger_transform_point64_f64(content_transform, [0.0, 0.0, 0.0]);
+        assert!((transformed[0] - 11.0).abs() < 0.000001);
+        assert!((transformed[1] - 2.0).abs() < 0.000001);
+        assert!((transformed[2] - 3.0).abs() < 0.000001);
     }
 
     #[test]
@@ -5758,18 +5868,22 @@ mod tests {
     }
 
     fn test_b3dm_bytes() -> Vec<u8> {
+        test_b3dm_bytes_with_feature(br#"{"BATCH_LENGTH":0}"#, &[])
+    }
+
+    fn test_b3dm_bytes_with_feature(feature_json: &[u8], feature_binary: &[u8]) -> Vec<u8> {
         let glb = test_glb_bytes();
-        let feature_json = br#"{"BATCH_LENGTH":0}"#;
-        let byte_length = 28 + feature_json.len() + glb.len();
+        let byte_length = 28 + feature_json.len() + feature_binary.len() + glb.len();
         let mut b3dm = Vec::with_capacity(byte_length);
         b3dm.extend_from_slice(b"b3dm");
         push_u32_le(&mut b3dm, 1);
         push_u32_le(&mut b3dm, byte_length as u32);
         push_u32_le(&mut b3dm, feature_json.len() as u32);
-        push_u32_le(&mut b3dm, 0);
+        push_u32_le(&mut b3dm, feature_binary.len() as u32);
         push_u32_le(&mut b3dm, 0);
         push_u32_le(&mut b3dm, 0);
         b3dm.extend_from_slice(feature_json);
+        b3dm.extend_from_slice(feature_binary);
         b3dm.extend_from_slice(&glb);
         b3dm
     }
