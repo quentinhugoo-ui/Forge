@@ -17,6 +17,7 @@ const generatedIpcSource = readFileSync(join(process.cwd(), "src", "shared", "ge
 const preloadCjsSource = readFileSync(join(process.cwd(), "preload.cjs"), "utf8");
 const brainSource = readFileSync(join(process.cwd(), "..", "..", "src", "brain.rs"), "utf8");
 const contractSource = readFileSync(join(process.cwd(), "contract", "src", "main.rs"), "utf8");
+const codeActMethodologySource = readFileSync(join(process.cwd(), "..", "..", "docs", "codeact-loop-stream-methodology.md"), "utf8");
 
 describe("LLM multimodal attachments", () => {
   it("normalizes local uploads into provider-native multimodal content", () => {
@@ -175,6 +176,27 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("localSearchArchiveStatus(searchArchiveRequest, session)");
     expect(mainSource).toContain("forge:search-archive");
     expect(mainSource).toContain("archiveTranscriptMessage(activeSession, assistantMessage)");
+  });
+
+  it("renders /searcharchive_ results and exposes a loop-stream demo session", () => {
+    expect(rendererSource).toContain('line === "SEARCHARCHIVE_RESULT"');
+    expect(rendererSource).toContain("function SearchArchiveResultCard");
+    expect(rendererSource).toContain("highlightedSearchArchiveSnippet");
+    expect(rendererSource).toContain("SearchArchiveDemoStartCard");
+    expect(rendererSource).toContain("[[searcharchive_demo_start]]");
+    expect(stylesSource).toContain(".searchArchiveResultCard");
+    expect(stylesSource).toContain(".searchArchiveDemoCard__start");
+    expect(mainSource).toContain("SEARCHARCHIVE_LOOP_DEMO_SESSION_ID");
+    expect(mainSource).toContain("ensureSearchArchiveLoopDemoSession");
+    expect(mainSource).toContain("Loop stream archive test");
+    expect(mainSource).toContain("budget croissant");
+  });
+
+  it("documents the two-round-trip CodeAct loop contract", () => {
+    expect(codeActMethodologySource).toContain("CODEACT_TEMPLATE_RESULT");
+    expect(codeActMethodologySource).toContain("template_required");
+    expect(codeActMethodologySource).toContain("CODEACT_RESULT");
+    expect(codeActMethodologySource).toContain("The LLM owns every decision");
   });
 
   it("boots every LLM session with Brain access before provider execution", () => {
@@ -591,10 +613,14 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
 
-  it("renders Gmail and Airbnb CodeAct events with their module logos", () => {
+  it("renders module CodeAct events with their shared sidebar logos", () => {
     expect(rendererSource).toContain('command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND');
     expect(rendererSource).toContain('<ModuleLogo id="gmail" />');
     expect(rendererSource).toContain('if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />');
+    expect(rendererSource).toContain('if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <ModuleLogo id="searcharchive" />');
+    expect(sidebarSource).toContain('{ id: "searcharchive", label: "Search Archive" }');
+    expect(moduleLogosSource).toContain("export function SearchArchiveIcon");
+    expect(moduleLogosSource).toContain('if (id === "searcharchive") return <SearchArchiveIcon />');
     expect(stylesSource).toContain(".transcriptCodeActEvent__icon .sidebarModule__logo");
   });
 

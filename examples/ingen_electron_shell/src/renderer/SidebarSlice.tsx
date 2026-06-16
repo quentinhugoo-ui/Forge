@@ -1281,6 +1281,7 @@ const SIDEBAR_MODULES = [
   { id: "airbnb", label: "airbnb" },
   { id: "whatsapp", label: "whatsapp" },
   { id: "compute", label: "Compute" },
+  { id: "searcharchive", label: "Search Archive" },
   ...PLACEHOLDER_MODULES.map((index) => ({ id: `module-${index}`, label: "module" }))
 ] as const;
 

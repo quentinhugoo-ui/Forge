@@ -16248,6 +16248,9 @@ function collapseParallelSessionItems(items: SidebarSessionItem[]): SidebarSessi
 }
 
 const ASSISTANT_PATTERN_DEMO_SESSION_ID = "assistant-writing-patterns-gallery-demo";
+const SEARCHARCHIVE_LOOP_DEMO_SESSION_ID = "searcharchive-loop-stream-demo";
+const SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID = "searcharchive-loop-demo-memory";
+const SEARCHARCHIVE_DEMO_START_MARKER = "[[searcharchive_demo_start]]";
 
 function assistantPatternDemoArchiveSession(): ChatArchiveSession {
   const now = "2026-06-13T03:20:00.000Z";
@@ -16302,6 +16305,69 @@ function assistantPatternDemoArchiveSession(): ChatArchiveSession {
   };
 }
 
+function searchArchiveLoopDemoMemoryArchiveSession(): ChatArchiveSession {
+  const messages: ChatArchiveMessage[] = [
+    { turnId: "demo-memory-user-budget", role: "user", text: "Retrouve moi la note budget croissant et la temperature du four pour samedi.", createdAt: "2026-06-15T09:42:55.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-user-budget") },
+    { turnId: "demo-memory-assistant-recipe", role: "assistant", text: "On garde le budget croissant a 24 euros, cuisson au four a 180 degres pendant 17 minutes, puis repos 8 minutes.", createdAt: "2026-06-15T09:43:12.000Z", attachments: [], proofHash: stableSearchArchiveHash("demo-memory-assistant-recipe") }
+  ];
+  return {
+    schema: "forge.brain.chat_session_archive.v1",
+    sessionId: SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID,
+    title: "Archive source - patisserie budget",
+    section: "forge",
+    workspaceLabel: "Forge",
+    date: "2026-06-15",
+    createdAt: "2026-06-15T09:42:55.000Z",
+    updatedAt: "2026-06-15T09:43:12.000Z",
+    archived: true,
+    messages,
+    proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
+  };
+}
+
+function searchArchiveLoopDemoArchiveSession(): ChatArchiveSession {
+  const messages: ChatArchiveMessage[] = [
+    { turnId: "searcharchive-demo-user", role: "user", text: "Retrouve le passage ou on parlait du budget croissant et du four a 180 degres.", createdAt: "2026-06-16T08:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-user") },
+    { turnId: "searcharchive-demo-assistant-start", role: "assistant", text: `Loop stream archive test\n\n${SEARCHARCHIVE_DEMO_START_MARKER}`, createdAt: "2026-06-16T08:30:08.000Z", attachments: [], proofHash: stableSearchArchiveHash("searcharchive-demo-assistant-start") }
+  ];
+  return {
+    schema: "forge.brain.chat_session_archive.v1",
+    sessionId: SEARCHARCHIVE_LOOP_DEMO_SESSION_ID,
+    title: "Loop stream archive test",
+    section: "forge",
+    workspaceLabel: "Forge",
+    date: "2026-06-16",
+    createdAt: "2026-06-16T08:30:00.000Z",
+    updatedAt: "2026-06-16T08:30:08.000Z",
+    archived: false,
+    messages,
+    proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
+  };
+}
+
+function ensureSearchArchiveLoopDemoSession(): void {
+  if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID)) {
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID, searchArchiveLoopDemoMemoryArchiveSession());
+  }
+  if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopDemoArchiveSession());
+  }
+  if (!localChatSessions.some((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
+    localChatSessions.unshift({
+      sessionId: SEARCHARCHIVE_LOOP_DEMO_SESSION_ID,
+      label: "Loop stream archive test",
+      date: "2026-06-16",
+      section: "forge",
+      workspaceLabel: "Forge",
+      rowVisible: true,
+      pinned: false,
+      working: false,
+      automated: false,
+      archived: false
+    });
+  }
+}
+
 function ensureAssistantPatternDemoSession(): void {
   if (!chatArchiveSessions.has(ASSISTANT_PATTERN_DEMO_SESSION_ID)) {
     chatArchiveSessions.set(ASSISTANT_PATTERN_DEMO_SESSION_ID, assistantPatternDemoArchiveSession());
@@ -16324,6 +16390,7 @@ function ensureAssistantPatternDemoSession(): void {
 
 function backendSessionItems(): SidebarSessionItem[] {
   ensureAssistantPatternDemoSession();
+  ensureSearchArchiveLoopDemoSession();
   if (chatArchiveLoaded) {
     syncLocalChatSessionsFromArchive();
   }
@@ -16518,6 +16585,7 @@ async function applySidebarCommand(command: SidebarCommand): Promise<void> {
       closeProfileCanvas();
       await loadChatArchive();
       ensureAssistantPatternDemoSession();
+      ensureSearchArchiveLoopDemoSession();
       headerState.activeSection = command.section;
       headerState.sectionTitle = sectionTitle(command.section);
       if (restoreParallelGroupToCanvas(command.sessionId)) {
