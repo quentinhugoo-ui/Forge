@@ -4633,7 +4633,6 @@ function TranscriptCanvas({
     <div className={className}>
       {sessionTitle.trim() ? (
         <header className="parallelTranscriptHeader">
-          <strong>{sessionTitle.trim()}</strong>
           {parallelSessionIndex > 0 && onParallelClose ? (
             <button
               type="button"
@@ -4649,6 +4648,7 @@ function TranscriptCanvas({
               <span aria-hidden="true" />
             </button>
           ) : null}
+          <strong>{sessionTitle.trim()}</strong>
         </header>
       ) : null}
       {visiblePins.length > 0 ? (

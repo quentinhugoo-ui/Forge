@@ -4603,7 +4603,7 @@ button {
 .parallelTranscriptHeader__close {
   position: static;
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-right: 8px;
 }
 
 .chatCanvas--parallelPane .chatCanvas__messages {
@@ -4612,9 +4612,12 @@ button {
   padding-top: 58px;
   padding-bottom: var(--transcript-bottom-breathing-room);
   overscroll-behavior: contain;
+  scroll-padding-top: 58px;
   scroll-padding-bottom: var(--transcript-bottom-breathing-room);
   user-select: text;
   -webkit-user-select: text;
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 32px, rgba(0, 0, 0, 0.76) 48px, black 64px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 32px, rgba(0, 0, 0, 0.76) 48px, black 64px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
 .chatCanvas::before {
