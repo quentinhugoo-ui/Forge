@@ -15696,6 +15696,54 @@ function archiveMessageToTranscriptMessage(message: ChatArchiveMessage): Transcr
   };
 }
 
+function normalizeArchiveFocusText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function archiveFocusSnippetSegments(focusSnippet: string): string[] {
+  return focusSnippet
+    .split("...")
+    .map((segment) => normalizeArchiveFocusText(segment))
+    .filter((segment) => segment.length >= 8);
+}
+
+function resolveArchiveFocusTurnId(session: ChatArchiveSession, turnId: string, focusSnippet: string): string {
+  const requestedTurnId = turnId.trim();
+  const snippet = focusSnippet.trim();
+  if (!snippet) {
+    return requestedTurnId;
+  }
+  const normalizedSnippet = normalizeArchiveFocusText(snippet.replace(/\.\.\./g, " "));
+  const snippetSegments = archiveFocusSnippetSegments(snippet);
+  let bestTurnId = requestedTurnId;
+  let bestScore = requestedTurnId ? 10 : 0;
+  for (const message of session.messages) {
+    if (isInternalTranscriptMessage(message)) {
+      continue;
+    }
+    const normalizedMessage = normalizeArchiveFocusText(message.text ?? "");
+    let score = message.turnId === requestedTurnId ? 10 : 0;
+    if (normalizedSnippet.length >= 8 && normalizedMessage.includes(normalizedSnippet)) {
+      score += 1000 + normalizedSnippet.length;
+    }
+    for (const segment of snippetSegments) {
+      if (normalizedMessage.includes(segment)) {
+        score += 180 + segment.length;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestTurnId = message.turnId;
+    }
+  }
+  return bestTurnId;
+}
+
 function archiveTranscriptAroundTurn(session: ChatArchiveSession, turnId: string): TranscriptMessage[] {
   const messages = session.messages
     .filter((message) => !isInternalTranscriptMessage(message))
@@ -15760,16 +15808,17 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
   archiveItem.parallelLaneIndex = boundedIndex;
   archiveItem.parallelLaneCount = Math.max(boundedIndex + 1, 2);
   archiveItem.parallelPeerSessionIds = [primarySession.sessionId];
+  const resolvedTurnId = resolveArchiveFocusTurnId(archiveSession, turnId, focusSnippet);
   const transcript = archiveTranscriptWithFocusSnippet(
-    archiveTranscriptAroundTurn(archiveSession, turnId),
-    turnId,
+    archiveTranscriptAroundTurn(archiveSession, resolvedTurnId),
+    resolvedTurnId,
     focusSnippet
   );
   parallelChatLanes.set(boundedIndex, {
     sessionId,
     transcript,
     groupId,
-    focusMessageId: turnId,
+    focusMessageId: resolvedTurnId,
     sessionTitle: sessionTitle.trim() || archiveSession.title
   });
   updateParallelGroupMetadata(groupId);
