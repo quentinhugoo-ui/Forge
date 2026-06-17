@@ -1369,7 +1369,7 @@ const MODIFY_BRAIN_EVENT_VERBS = ["modified", "updated", "refined", "adjusted", 
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "Search archive with keywords :"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
-  [BRAIN_SCRAPERS_COMMAND, "parallel scraper MCP request prepared"],
+  [BRAIN_SCRAPERS_COMMAND, "Collect web sources"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],

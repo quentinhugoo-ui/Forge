@@ -16639,6 +16639,44 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
       createdAt: "2026-06-16T08:30:21.000Z",
       attachments: [],
       proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-assistant-final-real", result: result.proofHash })
+    },
+    {
+      turnId: "searcharchive-demo-scrapers-user",
+      role: "user",
+      text: "Maintenant verifie une source web officielle sur The Witcher 3 pour comparer avec ce que l'on a retrouve dans l'historique.",
+      createdAt: "2026-06-16T08:31:00.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash("searcharchive-demo-scrapers-user")
+    },
+    {
+      turnId: "searcharchive-demo-scrapers-tool",
+      role: "assistant",
+      text: [
+        "Je vais collecter la page source et revenir avec un extrait propre.",
+        "",
+        `${BRAIN_SCRAPERS_COMMAND} urls="https://www.thewitcher.com/us/en/witcher3" goal="Verify official The Witcher 3 context and collect useful Hearts of Stone references" extraction_mode="structured_markdown_media" fetch_mode="auto" wait_until="dom_ready" markdown_query="The Witcher 3 Hearts of Stone official context" content_filter="fit_markdown_bm25_pruning" crawl_depth="single_page" links="internal" media="image_urls_and_metadata" image_policy="urls_only" artifacts="none" limits="pages:1,links:12,images:8,bytes:1048576,timeoutMs:15000,concurrency:2" backends="scrapling,crawl4ai" merge_policy="compare_and_dedupe"`,
+        "",
+        "SCRAPERS_RESULT",
+        "schema=forge.scrapers.mcp.result.v1",
+        `command=${BRAIN_SCRAPERS_COMMAND}`,
+        "status=ok",
+        `request_hash=sha256:${stableSearchArchiveHash("searcharchive-demo-scrapers-request")}`,
+        "duration_ms=842",
+        'providers=[{"backend":"scrapling","status":"ok","transport":"mcp_stdio","duration_ms":391,"counts":{"urls":1,"fields":2,"markdownChars":1180,"links":7,"media":4,"artifacts":0}},{"backend":"crawl4ai","status":"ok","transport":"crawl4ai_http","duration_ms":451,"counts":{"urls":1,"fields":2,"markdownChars":1096,"links":6,"media":4,"artifacts":0}}]',
+        'manifest={"merged":{"urls":["https://www.thewitcher.com/us/en/witcher3"],"fields":[{"name":"source","value":"official The Witcher site"},{"name":"topic","value":"The Witcher 3 official page"}],"markdown":["Official source collected. The archived Hearts of Stone discussion can now be compared with the public Witcher 3 source context."],"links":[],"media":[],"artifacts":[],"warnings":[]}}',
+        `proof_hash=sha256:${stableSearchArchiveHash("searcharchive-demo-scrapers-result")}`
+      ].join("\n"),
+      createdAt: "2026-06-16T08:31:12.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash("searcharchive-demo-scrapers-tool")
+    },
+    {
+      turnId: "searcharchive-demo-scrapers-final",
+      role: "assistant",
+      text: "La source web officielle confirme le cadre general de The Witcher 3. On peut maintenant comparer cette source externe avec les passages retrouves dans l'historique, sans melanger recherche d'archive et collecte web.",
+      createdAt: "2026-06-16T08:31:21.000Z",
+      attachments: [],
+      proofHash: stableSearchArchiveHash("searcharchive-demo-scrapers-final")
     }
   ];
   return {
@@ -16649,7 +16687,7 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
     workspaceLabel,
     date: "2026-06-16",
     createdAt: "2026-06-16T08:30:00.000Z",
-    updatedAt: fileDemo ? "2026-06-16T08:31:21.000Z" : "2026-06-16T08:30:21.000Z",
+    updatedAt: "2026-06-16T08:31:21.000Z",
     archived: false,
     messages,
     proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
