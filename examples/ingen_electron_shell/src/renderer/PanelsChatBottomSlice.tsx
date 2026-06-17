@@ -4280,6 +4280,7 @@ function TranscriptCanvas({
   agentName,
   userName,
   focusMessageId = "",
+  sessionTitle = "",
   parallelSessionIndex = 0,
   className = "chatCanvas",
   assistantBusy = false,
@@ -4293,6 +4294,7 @@ function TranscriptCanvas({
   agentName: string;
   userName: string;
   focusMessageId?: string;
+  sessionTitle?: string;
   parallelSessionIndex?: number;
   className?: string;
   assistantBusy?: boolean;
@@ -4557,6 +4559,11 @@ function TranscriptCanvas({
   // Single-session audit anchor: <div className="chatCanvas">
   return (
     <div className={className}>
+      {sessionTitle.trim() ? (
+        <header className="parallelTranscriptHeader">
+          <strong>{sessionTitle.trim()}</strong>
+        </header>
+      ) : null}
       {visiblePins.length > 0 ? (
         <div className="chatCanvas__chapters" aria-label="Pinned chapters">
           {visiblePins.map((pin) => (
@@ -4764,165 +4771,47 @@ function TranscriptCanvas({
    languette pokes out above the chat bar; the rest is hidden by the wrapper's
    bottom clip (no z-index tricks, nothing leaks below the bar). Clicking the
    languette toggles a pure CSS transform, so the reveal is one smooth slide. */
-const WIDGET_MAX_SESSION_TABS = 3;
-
-/* Widget mini-mode session drawer: a stack of overlapping folder tabs for the
-   most recent sessions (active in front, the others peeking behind). Clicking
-   the active tab toggles the panel; clicking a peeking tab switches to it. A
-   chevron tab opens a menu (over the panel body) with "New session" and the
-   full recent-session list. */
+/* Widget mini-mode session drawer: the active session languette on the left
+   (clicking it toggles the panel) and a "Create new session" languette pinned
+   to the far right that starts a real new app session. */
 function WidgetSessionDrawer({
-  activeSessionId,
   activeLabel,
-  sessions,
   open,
   onToggle,
-  onActivateSession,
   onNewSession,
   children
 }: {
-  activeSessionId: string;
   activeLabel: string;
-  sessions: SidebarSessionItem[];
   open: boolean;
   onToggle: () => void;
-  onActivateSession: (sessionId: string, section: NativeSection) => void;
   onNewSession?: () => void;
   children: ReactNode;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const activeName = activeLabel.trim() || "New session";
-
-  const tabs = useMemo(() => {
-    const seen = new Set<string>();
-    const entries: { sessionId: string; label: string; section: NativeSection; working: boolean; isActive: boolean }[] = [];
-    const activeEntry = sessions.find((session) => session.sessionId !== "" && session.sessionId === activeSessionId);
-    entries.push({
-      sessionId: activeSessionId,
-      label: activeName,
-      section: activeEntry?.section ?? "forge",
-      working: activeEntry?.working ?? false,
-      isActive: true
-    });
-    if (activeSessionId) {
-      seen.add(activeSessionId);
-    }
-    for (const session of sessions) {
-      if (entries.length >= WIDGET_MAX_SESSION_TABS) {
-        break;
-      }
-      if (session.sessionId === "" || seen.has(session.sessionId)) {
-        continue;
-      }
-      seen.add(session.sessionId);
-      entries.push({
-        sessionId: session.sessionId,
-        label: session.label.trim() || "New session",
-        section: session.section,
-        working: session.working,
-        isActive: false
-      });
-    }
-    return entries;
-  }, [sessions, activeSessionId, activeName]);
-
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-  const openMenu = useCallback(() => {
-    if (!open) {
-      onToggle();
-    }
-    setMenuOpen((value) => !value);
-  }, [onToggle, open]);
-  const startNewSession = useCallback(() => {
-    closeMenu();
-    onNewSession?.();
-  }, [closeMenu, onNewSession]);
-  const switchSession = useCallback(
-    (sessionId: string, section: NativeSection) => {
-      closeMenu();
-      if (sessionId !== activeSessionId) {
-        onActivateSession(sessionId, section);
-      }
-    },
-    [activeSessionId, closeMenu, onActivateSession]
-  );
-
-  const hasMenu = Boolean(onNewSession) || sessions.length > 0;
-
+  const label = activeLabel.trim() || "New session";
   return (
-    <div
-      className={[
-        "widgetSessionDrawer",
-        open ? "widgetSessionDrawer--open" : "",
-        menuOpen ? "widgetSessionDrawer--menuOpen" : ""
-      ].filter(Boolean).join(" ")}
-    >
-      <section className="widgetSessionDrawer__panel" aria-label={`Session ${activeName}`}>
-        <div className="widgetSessionTabsRail" role="tablist" aria-label="Recent sessions">
-          {tabs.map((entry, index) => (
-            <button
-              key={entry.sessionId || `active-${index}`}
-              type="button"
-              className={[
-                "widgetSessionTab",
-                entry.isActive ? "widgetSessionTab--active" : "",
-                entry.working ? "widgetSessionTab--working" : ""
-              ].filter(Boolean).join(" ")}
-              style={{ zIndex: 30 - index * 4 }}
-              role="tab"
-              aria-selected={entry.isActive}
-              aria-expanded={entry.isActive ? open : undefined}
-              title={entry.label}
-              onClick={() => (entry.isActive ? onToggle() : switchSession(entry.sessionId, entry.section))}
-            >
-              <span className="widgetSessionTab__label">{entry.label}</span>
-            </button>
-          ))}
-          {hasMenu ? (
+    <div className={["widgetSessionDrawer", open ? "widgetSessionDrawer--open" : ""].filter(Boolean).join(" ")}>
+      <section className="widgetSessionDrawer__panel" aria-label={`Session ${label}`}>
+        <div className="widgetSessionTabsRail">
+          <button
+            type="button"
+            className="widgetSessionTab"
+            aria-expanded={open}
+            title={label}
+            onClick={onToggle}
+          >
+            <span className="widgetSessionTab__label">{label}</span>
+          </button>
+          {onNewSession ? (
             <button
               type="button"
-              className="widgetSessionMenuTab"
-              aria-label="Sessions menu"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              title="Sessions"
-              onClick={openMenu}
+              className="widgetNewSessionTab"
+              title="Create new session"
+              onClick={onNewSession}
             >
-              <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">
-                <path d="M4 6.5 8 10l4-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <span className="widgetNewSessionTab__label">Create new session</span>
             </button>
           ) : null}
         </div>
-        {menuOpen ? (
-          <>
-            <div className="widgetSessionMenuScrim" aria-hidden="true" onClick={closeMenu} />
-            <div className="widgetSessionMenu" role="menu" aria-label="Sessions">
-              {onNewSession ? (
-                <button type="button" className="widgetSessionMenu__item widgetSessionMenu__item--new" role="menuitem" onClick={startNewSession}>
-                  <span className="widgetSessionMenu__plus" aria-hidden="true">+</span>
-                  <span className="widgetSessionMenu__label">Nouvelle session</span>
-                </button>
-              ) : null}
-              {sessions.map((session) => (
-                <button
-                  key={session.sessionId}
-                  type="button"
-                  className={[
-                    "widgetSessionMenu__item",
-                    session.sessionId === activeSessionId ? "widgetSessionMenu__item--active" : ""
-                  ].filter(Boolean).join(" ")}
-                  role="menuitem"
-                  title={session.label.trim() || "New session"}
-                  onClick={() => switchSession(session.sessionId, session.section)}
-                >
-                  <span className="widgetSessionMenu__label">{session.label.trim() || "New session"}</span>
-                  {session.working ? <span className="widgetSessionMenu__working" aria-hidden="true" /> : null}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : null}
         <div className="widgetSessionDrawer__body" aria-hidden={!open}>
           {open ? children : null}
         </div>
@@ -5571,13 +5460,6 @@ export function PanelsChatBottomSlice({
     setWidgetPanelOpen(false);
     onWidgetNewSession?.();
   }, [onWidgetNewSession]);
-  const activateWidgetSession = useCallback(
-    (sessionId: string, section: NativeSection) => {
-      onWidgetSessionOpen?.(sessionId, section);
-      setWidgetPanelOpen(true);
-    },
-    [onWidgetSessionOpen]
-  );
   const useMathInCompute = useCallback((formula: string) => {
     const math = formula.trim();
     if (!math || parallelMode) {
@@ -5826,6 +5708,7 @@ export function PanelsChatBottomSlice({
             {parallelPrompts.map((_prompt, index) => {
               const lane = snapshot.parallelLanes.find((candidate) => candidate.index === index);
               const laneMessages = index === 0 ? canvasMessages : lane?.transcript.filter((message) => message.role !== "system") ?? [];
+              const laneTitle = index === 0 ? sessionName : lane?.sessionTitle ?? "";
               return (
                 <TranscriptCanvas
                   activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
@@ -5833,6 +5716,7 @@ export function PanelsChatBottomSlice({
                   agentName={brainAgentName}
                   userName={brainUserName}
                   focusMessageId={index === 0 ? "" : lane?.focusMessageId}
+                  sessionTitle={laneTitle}
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
                   assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}
@@ -5874,12 +5758,9 @@ export function PanelsChatBottomSlice({
       ) : null}
       {widgetSessionTabVisible ? (
         <WidgetSessionDrawer
-          activeSessionId={snapshot.activeSessionId}
           activeLabel={sessionName}
-          sessions={widgetRecentSessions}
           open={widgetPanelOpen}
           onToggle={() => setWidgetPanelOpen((value) => !value)}
-          onActivateSession={activateWidgetSession}
           onNewSession={onWidgetNewSession ? startWidgetNewSessionFromTab : undefined}
         >
           <TranscriptCanvas

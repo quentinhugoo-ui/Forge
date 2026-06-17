@@ -110,12 +110,8 @@ button {
 }
 
 .shell .widgetSessionTab,
-.shell .widgetSessionMenuTab {
+.shell .widgetNewSessionTab {
   border-radius: 6px 6px 0 0 !important;
-}
-
-.shell .widgetSessionMenu__working {
-  border-radius: 999px !important;
 }
 
 .shell .sessionRow {
@@ -3972,24 +3968,26 @@ button {
   display: flex;
   align-items: flex-end;
   gap: 0;
-  max-width: calc(var(--questionnaire-width) - 10px);
+  width: calc(var(--questionnaire-width) - 2px);
+  max-width: calc(var(--questionnaire-width) - 2px);
   height: var(--widget-languette-h);
   pointer-events: none;
   transform-origin: bottom left;
   /* The drawer only mounts once the mini-mode entry choreography has fully
      settled (widgetSessionTabVisible gates on !widgetModeTransitioning), so this
-     plays exactly at the end of the transition: the languette eases in softly —
-     a slow fade with a barely-there rise, no overshoot, so it never snaps. */
+     plays exactly at the end of the transition: the languettes ease in softly —
+     a slow fade with a barely-there rise, no overshoot, so they never snap. */
   animation: widgetSessionTabPop 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .widgetSessionTab,
-.widgetSessionMenuTab {
+.widgetNewSessionTab {
   position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   height: var(--widget-languette-h);
+  padding: 0 9px;
   color: color-mix(in oklab, var(--forge-chat-text), #ffffff 6%);
   font-size: 9px;
   font-weight: 600;
@@ -4003,151 +4001,34 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   cursor: pointer;
   pointer-events: auto;
-  transition:
-    color 150ms ease,
-    background 150ms ease,
-    max-width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: color 150ms ease, background 150ms ease;
 }
 
-/* Active session tab: full and readable, frontmost (inline z-index from JS). */
+/* Active session languette on the left. */
 .widgetSessionTab {
-  max-width: min(172px, calc(var(--questionnaire-width) - 70px));
-  padding: 0 9px;
+  max-width: min(200px, calc(var(--questionnaire-width) - 150px));
 }
 
-/* Folder stack: every tab after the active one tucks behind it and shrinks to
-   a peeking sliver, dimmed. */
-.widgetSessionTab + .widgetSessionTab {
-  margin-left: -10px;
-  max-width: 72px;
-  color: color-mix(in oklab, var(--forge-chat-text), transparent 28%);
+/* "Create new session" languette pinned to the far right of the rail. */
+.widgetNewSessionTab {
+  margin-left: auto;
 }
 
 .widgetSessionTab:hover,
 .widgetSessionTab:focus-visible,
-.widgetSessionMenuTab:hover,
-.widgetSessionMenuTab:focus-visible {
+.widgetNewSessionTab:hover,
+.widgetNewSessionTab:focus-visible {
   color: #ffffff;
   background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
   outline: none;
 }
 
-/* A peeking tab pulls forward and widens when hovered. */
-.widgetSessionTab + .widgetSessionTab:hover,
-.widgetSessionTab + .widgetSessionTab:focus-visible {
-  z-index: 35 !important;
-  max-width: 132px;
-}
-
-.widgetSessionTab__label {
+.widgetSessionTab__label,
+.widgetNewSessionTab__label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Chevron tab at the end of the stack: opens the sessions menu. On top so it
-   is always clickable; tucked a touch into the stack to read as one piece. */
-.widgetSessionMenuTab {
-  z-index: 36;
-  justify-content: center;
-  width: 22px;
-  min-width: 22px;
-  margin-left: -8px;
-  padding: 0;
-  touch-action: manipulation;
-}
-
-.widgetSessionMenuTab svg {
-  display: block;
-}
-
-.widgetSessionDrawer--menuOpen .widgetSessionMenuTab {
-  color: #ffffff;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
-}
-
-/* Sessions menu: a compact popover over the (forced-open) panel body. */
-.widgetSessionMenuScrim {
-  position: absolute;
-  inset: 0;
-  z-index: 39;
-}
-
-.widgetSessionMenu {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  width: min(224px, calc(100% - 12px));
-  max-height: calc(100% - 14px);
-  overflow-y: auto;
-  padding: 4px;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 5%);
-  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 14%);
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.36);
-  animation: widgetSessionMenuReveal 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.widgetSessionMenu__item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  height: 26px;
-  padding: 0 8px;
-  color: color-mix(in oklab, var(--forge-chat-text), #ffffff 4%);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  transition: background 130ms ease, color 130ms ease;
-}
-
-.widgetSessionMenu__item:hover,
-.widgetSessionMenu__item:focus-visible {
-  color: #ffffff;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 11%);
-  outline: none;
-}
-
-.widgetSessionMenu__item--active {
-  color: #ffffff;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #ffffff 7%);
-}
-
-.widgetSessionMenu__item--new {
-  color: color-mix(in oklab, #ffffff, #7dbeff 34%);
-}
-
-.widgetSessionMenu__plus {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1;
-}
-
-.widgetSessionMenu__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.widgetSessionMenu__working {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  margin-left: auto;
-  background: #7dbeff;
 }
 
 .panelsChatBottom--selfDirected .composerQuestionnaire {
@@ -4694,10 +4575,35 @@ button {
   pointer-events: auto;
 }
 
+.parallelTranscriptHeader {
+  position: absolute;
+  top: 0;
+  right: 24px;
+  left: 24px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 38px;
+  padding: 0 0 8px;
+  pointer-events: none;
+}
+
+.parallelTranscriptHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forge-text);
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chatCanvas--parallelPane .chatCanvas__messages {
   height: 100%;
   min-height: 0;
-  padding-top: 46px;
+  padding-top: 58px;
   padding-bottom: var(--transcript-bottom-breathing-room);
   overscroll-behavior: contain;
   scroll-padding-bottom: var(--transcript-bottom-breathing-room);
@@ -7561,16 +7467,6 @@ ol.assistantText__list li::before {
   }
 }
 
-@keyframes widgetSessionMenuReveal {
-  from {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
 @keyframes transcriptBrainSegmentPulse {
   0% {
@@ -14133,9 +14029,8 @@ ol.assistantText__list li::before {
   .sidebarModule,
   .sidebarModule__logo,
   .widgetSessionTab,
-  .widgetSessionMenuTab,
+  .widgetNewSessionTab,
   .widgetSessionTabsRail,
-  .widgetSessionMenu,
   .widgetSessionDrawer,
   .widgetSessionDrawer__panel {
     animation: none;
