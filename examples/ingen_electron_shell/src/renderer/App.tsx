@@ -186,6 +186,10 @@ type WidgetHitPadding = number | { left?: number; right?: number; top?: number; 
 
 const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: WidgetHitPadding }> = [
   { selector: ".composer", padding: 6 },
+  /* High priority: the open panel body is the main surface and must never be
+     dropped by the region cap, so it sits right after the composer. Collapsed,
+     its rect just overlaps the already-interactive chat-bar area (harmless). */
+  { selector: ".widgetSessionDrawer__panel", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
   { selector: ".widgetWallpaperShadow", padding: 0 },
   /* Asymmetric: stretch left and add vertical margin so the icon's delayed translateY
      entrance never leaves it cropped before the next region sync. */
@@ -198,10 +202,6 @@ const WIDGET_HIT_REGION_TARGETS: ReadonlyArray<{ selector: string; padding: Widg
   { selector: ".composerQuestionnaire", padding: 1 },
   { selector: ".widgetSessionTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
   { selector: ".widgetSessionMenuTab", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
-  /* Ungated on --open: the panel keeps sliding for ~340ms after it is toggled
-     shut, so its region must track it the whole way down. Collapsed, its rect
-     just overlaps the (already-interactive) chat-bar area, which is harmless. */
-  { selector: ".widgetSessionDrawer__panel", padding: { left: 6, right: 6, top: 6, bottom: 0 } },
   /* Generous top margin: the menu opens upward and its frame/shadow can sit
      above the region computed mid open-animation, which clipped its top edge. */
   { selector: ".permissionModeMenu", padding: { left: 12, right: 12, top: 30, bottom: 10 } }
