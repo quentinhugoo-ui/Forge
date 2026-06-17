@@ -4639,10 +4639,11 @@ function TranscriptCanvas({
               className="parallelTranscriptHeader__close"
               aria-label={`Close ${sessionTitle.trim() || "parallel session"}`}
               onClick={() => {
+                onParallelClose(parallelSessionIndex);
                 void panelsChatBottomStore.dispatch({
                   kind: "close_parallel_lane",
                   parallelSessionIndex
-                }).finally(() => onParallelClose(parallelSessionIndex));
+                });
               }}
             >
               <span aria-hidden="true" />

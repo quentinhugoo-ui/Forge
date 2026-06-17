@@ -372,6 +372,7 @@ export function App() {
     setComposerModuleId(id);
   }, []);
   const [parallelPrompts, setParallelPrompts] = useState<string[]>([""]);
+  const [closingParallelIndexes, setClosingParallelIndexes] = useState<Set<number>>(() => new Set());
   const [brainUserMemory] = useState(() => readBrainUserMemory());
   const [brainAgentMemory] = useState(() => readBrainAgentMemory());
   const [welcomeMessage, setWelcomeMessage] = useState(() => selectWelcomeMessage(brainUserMemory.preferredFirstName));
@@ -516,13 +517,31 @@ export function App() {
     [panelsChatSnapshot.transcript]
   );
   const restoredParallelPromptCount = useMemo(() => {
-    const secondaryLanes = panelsChatSnapshot.parallelLanes.filter((lane) => lane.index > 0);
+    const secondaryLanes = panelsChatSnapshot.parallelLanes.filter((lane) => lane.index > 0 && !closingParallelIndexes.has(lane.index));
     if (secondaryLanes.length === 0) {
       return 1;
     }
     const maxLaneIndex = secondaryLanes.reduce((max, lane) => Math.max(max, lane.index), 0);
     return Math.min(4, Math.max(2, maxLaneIndex + 1));
-  }, [panelsChatSnapshot.parallelLanes]);
+  }, [closingParallelIndexes, panelsChatSnapshot.parallelLanes]);
+  useEffect(() => {
+    if (closingParallelIndexes.size === 0) {
+      return;
+    }
+    const openIndexes = new Set(panelsChatSnapshot.parallelLanes.map((lane) => lane.index));
+    setClosingParallelIndexes((current) => {
+      let changed = false;
+      const next = new Set<number>();
+      for (const index of current) {
+        if (openIndexes.has(index)) {
+          next.add(index);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [closingParallelIndexes, panelsChatSnapshot.parallelLanes]);
   useEffect(() => {
     const previousActiveSessionId = previousActiveSessionIdRef.current;
     const activeSessionChanged = previousActiveSessionId !== panelsChatSnapshot.activeSessionId;
@@ -1035,6 +1054,17 @@ export function App() {
   }, [mapsParallelIndex, panelsChatSnapshot.parallelLanes, webExplorerParallelIndex]);
 
   const closeParallelCanvas = useCallback((index: number) => {
+    if (index <= 0) {
+      return;
+    }
+    setClosingParallelIndexes((current) => {
+      if (current.has(index)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(index);
+      return next;
+    });
     removeParallelCanvas(index, true);
   }, [removeParallelCanvas]);
 
