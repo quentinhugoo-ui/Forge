@@ -16615,6 +16615,7 @@ const SEARCHARCHIVE_FILE_DEMO_STOPWORDS = new Set([
   "une",
   "user"
 ]);
+const SEARCHARCHIVE_FILE_DEMO_SESSION_TITLES = new Set(["seap", "seap1"]);
 
 function searchArchiveLoopDemoSessionAttachments(session: ChatArchiveSession): ChatArchiveAttachment[] {
   return session.messages.flatMap((message) => message.attachments ?? []);
@@ -16686,7 +16687,22 @@ function searchArchiveLoopDemoFileRequestForSessions(sessions: ChatArchiveSessio
   };
 }
 
+function searchArchiveLoopDemoPreferredFileSessions(sessions: ChatArchiveSession[]): ChatArchiveSession[] {
+  return sessions
+    .filter((session) => SEARCHARCHIVE_FILE_DEMO_SESSION_TITLES.has(session.title.trim().toLocaleLowerCase()))
+    .filter((session) => searchArchiveLoopDemoSessionAttachments(session).length > 0)
+    .sort((left, right) => left.title.localeCompare(right.title, undefined, { numeric: true, sensitivity: "base" }));
+}
+
 function searchArchiveLoopDemoFileResultForSessions(sessions: ChatArchiveSession[]): { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null {
+  const preferredFileSessions = searchArchiveLoopDemoPreferredFileSessions(sessions);
+  if (preferredFileSessions.length > 0) {
+    const request = searchArchiveLoopDemoFileRequestForSessions(preferredFileSessions);
+    const result = searchArchiveSessions(preferredFileSessions, request);
+    if (result.hits.some((hit) => hit.sourceType === "attachment")) {
+      return { session: preferredFileSessions[0], request, result };
+    }
+  }
   let fallback: { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null = null;
   const fileSessions = sessions
     .filter((session) => searchArchiveLoopDemoSessionAttachments(session).length > 0)
@@ -16720,7 +16736,11 @@ function searchArchiveLoopDemoFileResultForSessions(sessions: ChatArchiveSession
 function searchArchiveLoopDemoFileSummary(session: ChatArchiveSession, result: SearchArchiveResult): string {
   const attachments = searchArchiveLoopDemoSessionAttachments(session);
   const sessionTitles = Array.from(new Set(result.hits.map((hit) => hit.sessionTitle))).slice(0, 4);
+  const preferredSessionTitles = sessionTitles.filter((title) => SEARCHARCHIVE_FILE_DEMO_SESSION_TITLES.has(title.trim().toLocaleLowerCase()));
   const suffix = result.hits.length > 1 ? "resultats fichiers" : "resultat fichier";
+  if (preferredSessionTitles.length > 0) {
+    return `J'ai retrouve ${result.hits.length} ${suffix} dans les sessions ${preferredSessionTitles.join(", ")}. La card utilise les fichiers reels de ces sessions et les regroupe sous leurs noms exacts.`;
+  }
   if (attachments.length >= 2 && result.hits.every((hit) => hit.sessionId === session.sessionId)) {
     return `J'ai retrouve ${result.hits.length} ${suffix} dans la session ${session.title}. Cette session contient ${attachments.length} fichiers, donc la card les regroupe sous le nom exact de la session.`;
   }
