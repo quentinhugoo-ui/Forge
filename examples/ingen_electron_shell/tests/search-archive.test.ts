@@ -161,6 +161,50 @@ include_artifact_refs=false`);
     expect(renderSearchArchiveResult(result)).not.toContain("personne sur scooter");
   });
 
+  it("returns only the matched file for attachment hits on multi-file turns", () => {
+    const sessions = new Map<string, ChatArchiveSession>();
+    upsertArchiveMessage(
+      sessions,
+      sessionMeta({ sessionId: "chat-seap", title: "SEAP" }),
+      {
+        ...message("turn-files", "user", "Voici les fichiers de la session."),
+        attachments: [
+          {
+            id: "file-unrelated",
+            name: "notes-generales.txt",
+            kind: "text",
+            url: "ingen://attachment/file-unrelated",
+            textPreview: "notes sans rapport",
+            tablePreview: []
+          },
+          {
+            id: "file-target",
+            name: "seap-inspection.pdf",
+            kind: "pdf",
+            url: "ingen://attachment/file-target",
+            textPreview: "rapport seap analyse inspection",
+            tablePreview: []
+          }
+        ]
+      },
+      "2026-06-10T11:20:00Z"
+    );
+
+    const result = searchArchiveSessions(Array.from(sessions.values()), {
+      query: "inspection",
+      scope: "all",
+      contentScope: "files",
+      topK: 1,
+      contextTurns: 0,
+      includeFilePreviews: true
+    });
+
+    expect(result.hits[0]?.sourceType).toBe("attachment");
+    expect(result.hits[0]?.attachments).toHaveLength(1);
+    expect(result.hits[0]?.attachments[0]?.name).toBe("seap-inspection.pdf");
+    expect(renderSearchArchiveResult(result)).not.toContain("notes-generales.txt");
+  });
+
   it("centers long snippets on matching query terms when the full query phrase is absent", () => {
     const sessions = new Map<string, ChatArchiveSession>();
     const distantIntro = Array.from({ length: 42 }, (_, index) => `detail neutre ${index}`).join(" ");

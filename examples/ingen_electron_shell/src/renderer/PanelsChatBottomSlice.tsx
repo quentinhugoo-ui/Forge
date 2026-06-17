@@ -3721,24 +3721,13 @@ function searchArchiveHitIsFile(hit: AssistantSearchArchiveHit): boolean {
   return hit.sourceType === "attachment" || hit.matchedField.startsWith("attachment_");
 }
 
-function searchArchiveAttachmentMatchesQuery(attachment: AssistantSearchArchiveAttachment, query: string): boolean {
-  const terms = searchArchiveHighlightTerms(query).map((term) => term.toLocaleLowerCase());
-  if (terms.length === 0) {
-    return false;
-  }
-  const haystack = `${attachment.name} ${attachment.textPreview}`.toLocaleLowerCase();
-  return terms.some((term) => haystack.includes(term));
+function searchArchiveHitFileAttachment(hit: AssistantSearchArchiveHit): AssistantSearchArchiveAttachment | undefined {
+  return hit.attachments[0];
 }
 
-function searchArchiveHitFileLabel(hit: AssistantSearchArchiveHit, query: string): string {
-  const matchingAttachment = hit.attachments.find((attachment) => searchArchiveAttachmentMatchesQuery(attachment, query));
-  const attachment = matchingAttachment ?? hit.attachments[0];
+function searchArchiveHitFileLabel(hit: AssistantSearchArchiveHit): string {
+  const attachment = searchArchiveHitFileAttachment(hit);
   return attachment?.name?.trim() || "File";
-}
-
-function searchArchiveHitFileAttachment(hit: AssistantSearchArchiveHit, query: string): AssistantSearchArchiveAttachment | undefined {
-  const matchingAttachment = hit.attachments.find((attachment) => searchArchiveAttachmentMatchesQuery(attachment, query));
-  return matchingAttachment ?? hit.attachments[0];
 }
 
 function searchArchiveAttachmentPreviewUrl(attachment: AssistantSearchArchiveAttachment): string {
@@ -3853,7 +3842,7 @@ function SearchArchiveResultCard({
             <ol className="searchArchiveResultCard__hits">
               {group.hits.map((hit, hitIndex) => {
                 const fileHit = searchArchiveHitIsFile(hit);
-                const fileAttachment = fileHit ? searchArchiveHitFileAttachment(hit, result.query) : undefined;
+                const fileAttachment = fileHit ? searchArchiveHitFileAttachment(hit) : undefined;
                 return (
                   <li className="searchArchiveResultCard__hitItem" key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}>
                     <button
@@ -3870,7 +3859,7 @@ function SearchArchiveResultCard({
                             <div className="searchArchiveResultCard__hitTop">
                               {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
                               <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
-                              <strong>{highlightedSearchArchiveSnippet(searchArchiveHitFileLabel(hit, result.query), result.query, `${messageId}-search-file-${blockIndex}-${groupIndex}-${hitIndex}`)}</strong>
+                              <strong>{highlightedSearchArchiveSnippet(searchArchiveHitFileLabel(hit), result.query, `${messageId}-search-file-${blockIndex}-${groupIndex}-${hitIndex}`)}</strong>
                             </div>
                             <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
                           </div>

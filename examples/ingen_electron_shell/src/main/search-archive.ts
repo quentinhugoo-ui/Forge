@@ -97,6 +97,7 @@ interface SearchCandidate {
   matchedField: SearchArchiveHit["matchedField"];
   matchedText: string;
   score: number;
+  attachment?: ChatArchiveAttachment;
 }
 
 const SEARCHARCHIVE_SESSION_SCOPES: SearchArchiveSessionScope[] = ["current", "recent", "archived", "all"];
@@ -392,7 +393,8 @@ export function searchArchiveSessions(
             sourceType: "attachment",
             matchedField: "attachment_name",
             matchedText: attachmentName,
-            score: nameScore + 8 + recencyBonus(message.createdAt)
+            score: nameScore + 8 + recencyBonus(message.createdAt),
+            attachment
           });
         }
         const attachmentText = attachmentTextForSearch(attachment);
@@ -405,7 +407,8 @@ export function searchArchiveSessions(
             sourceType: "attachment",
             matchedField: "attachment_text",
             matchedText: attachmentText,
-            score: attachmentTextScore + 4 + recencyBonus(message.createdAt)
+            score: attachmentTextScore + 4 + recencyBonus(message.createdAt),
+            attachment
           });
         }
       }
@@ -524,7 +527,8 @@ function searchHit(candidate: SearchCandidate, query: string, contextTurns: numb
         .slice(messageIndex + 1, Math.min(session.messages.length, messageIndex + 1 + contextTurns))
         .map(contextLine)
     : [];
-  const attachments = archiveMessageAttachments(message).map((attachment) => attachmentRef(session.sessionId, attachment, request));
+  const hitAttachments = candidate.attachment ? [candidate.attachment] : archiveMessageAttachments(message);
+  const attachments = hitAttachments.map((attachment) => attachmentRef(session.sessionId, attachment, request));
   const evidenceHash = stableSearchArchiveHash({
     sessionId: session.sessionId,
     turnId: message.turnId,

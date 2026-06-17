@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "cutover_complete",
   "inputs": {
-    "ipc_manifest_hash": "8232d5b16fa89143400c11e11a8d695cb5e6e2eb2a66e4e634dcc8d67f1d4fe4"
+    "ipc_manifest_hash": "23f02326ce1dd5d938584f28b94e31c5e7251d989f9e51ca1cd04abd02d0a1de"
   },
   "checks": [
     {
@@ -138,5 +138,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "ef2b3792d4c4aa07288491956e8ac0af68d18a7fbc1531020d24b8462a31e4d2"
+  "proof_hash": "40a51d191eb9f6944ee619f8dc6a74392449dd99b5acb23f55444d95767f0965"
 }
