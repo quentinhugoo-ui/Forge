@@ -647,6 +647,7 @@ struct BangerNativeScenePipeline {
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
+    index_format: BangerRenderIndexFormat,
     mesh_source: &'static str,
     _selected_tile_id: Option<String>,
     _indirect_args_hash: String,
@@ -3116,6 +3117,7 @@ struct BangerNativeSceneGpuResource {
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
+    index_format: BangerRenderIndexFormat,
     mesh_source: &'static str,
     selected_tile_id: Option<String>,
     indirect_args_hash: String,
@@ -3878,7 +3880,7 @@ fn render_child_surface_frame(
         pass.set_bind_group(0, &scene_pipeline.bind_group, &[]);
         pass.set_vertex_buffer(0, scene_pipeline.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, scene_pipeline.instance_buffer.slice(..));
-        pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), scene_pipeline.index_format.wgpu());
         pass.draw_indexed_indirect(&scene_pipeline.meshlet_culled_indirect_draw_buffer, 0);
     }
     dispatch_banger_hzb_build(&mut encoder, &frame_target.hzb);
@@ -5143,6 +5145,7 @@ fn create_banger_first_scene_pipeline(
         banger_native_scene_gpu_resource_from_mesh_bytes(device, BangerRenderMeshBytes {
             vertex_bytes: banger_cube_vertex_bytes(),
             index_bytes: banger_cube_index_bytes(),
+            index_format: BangerRenderIndexFormat::Uint16,
             instance_bytes: banger_scene_instance_bytes(),
             source: "banger_dense_cube_field_fallback",
         }, None, Vec::new(), None)
@@ -5711,6 +5714,7 @@ fn create_banger_first_scene_pipeline(
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
+        index_format: gpu_resource.index_format,
         mesh_source: gpu_resource.mesh_source,
         _selected_tile_id: gpu_resource.selected_tile_id,
         _indirect_args_hash: gpu_resource.indirect_args_hash,
@@ -6059,9 +6063,41 @@ fn banger_maps_texture_resource_manifest_bytes(texture_staging_bytes: &[Vec<u8>]
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BangerRenderIndexFormat {
+    Uint16,
+    Uint32,
+}
+
+#[cfg(target_os = "windows")]
+impl BangerRenderIndexFormat {
+    fn stride_bytes(self) -> usize {
+        match self {
+            BangerRenderIndexFormat::Uint16 => 2,
+            BangerRenderIndexFormat::Uint32 => 4,
+        }
+    }
+
+    fn wgpu(self) -> wgpu::IndexFormat {
+        match self {
+            BangerRenderIndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
+            BangerRenderIndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            BangerRenderIndexFormat::Uint16 => "uint16",
+            BangerRenderIndexFormat::Uint32 => "uint32",
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 struct BangerRenderMeshBytes {
     vertex_bytes: Vec<u8>,
     index_bytes: Vec<u8>,
+    index_format: BangerRenderIndexFormat,
     instance_bytes: Vec<u8>,
     source: &'static str,
 }
@@ -6077,6 +6113,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let BangerRenderMeshBytes {
         vertex_bytes,
         index_bytes,
+        index_format,
         instance_bytes,
         source,
     } = mesh;
@@ -6097,13 +6134,13 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             .as_bytes(),
     );
     let vertex_count = (vertex_bytes.len() / 24) as u32;
-    let index_count = (index_bytes.len() / 2) as u32;
+    let index_count = (index_bytes.len() / index_format.stride_bytes()) as u32;
     let instance_count = (instance_bytes.len() / 80) as u32;
     let indirect_args_bytes = banger_indexed_indirect_args_bytes(index_count, instance_count);
     let culled_indirect_seed_args_bytes = banger_indexed_indirect_args_bytes(index_count, 0);
     let indirect_args_hash = sha256_hex(&indirect_args_bytes);
     let meshlet_cluster_bytes =
-        banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, source);
+        banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, index_format, source);
     let meshlet_cluster_hash = sha256_hex(&meshlet_cluster_bytes);
     let meshlet_cluster_count =
         (meshlet_cluster_bytes.len() / BANGER_MESHLET_CLUSTER_METADATA_STRIDE) as u32;
@@ -6463,7 +6500,8 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            "{source}:{index_format_label}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            index_format_label = index_format.label(),
             texture_resource_hash = sha256_hex(&texture_resource_manifest_bytes),
             material_bin_hash = material_bin_hash,
         )
@@ -6473,6 +6511,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         vertex_count,
         index_count,
         instance_count,
+        index_format,
         vertex_byte_count: vertex_bytes.len(),
         index_byte_count: index_bytes.len(),
         instance_byte_count: instance_bytes.len(),
@@ -6809,12 +6848,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn banger_meshlet_cluster_metadata_bytes(
     vertex_bytes: &[u8],
     index_bytes: &[u8],
+    index_format: BangerRenderIndexFormat,
     source: &str,
 ) -> Vec<u8> {
-    let indices = index_bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes(chunk.try_into().expect("u16 index chunk")) as u32)
-        .collect::<Vec<_>>();
+    let indices = banger_render_indices_to_u32(index_bytes, index_format);
     let triangle_count = indices.len() / 3;
     if vertex_bytes.len() < 24 || triangle_count == 0 {
         return banger_empty_meshlet_cluster_metadata_bytes(source);
@@ -6838,6 +6875,20 @@ fn banger_meshlet_cluster_metadata_bytes(
         ));
     }
     bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_render_indices_to_u32(index_bytes: &[u8], index_format: BangerRenderIndexFormat) -> Vec<u32> {
+    match index_format {
+        BangerRenderIndexFormat::Uint16 => index_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().expect("u16 index chunk")) as u32)
+            .collect(),
+        BangerRenderIndexFormat::Uint32 => index_bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("u32 index chunk")))
+            .collect(),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -7656,7 +7707,7 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
     let (drawable_mesh_ready, draw_source, vertex_buffer_byte_count, index_buffer_byte_count, instance_buffer_byte_count, draw_index_count, draw_instance_count, blocker) =
         match mesh_result {
             Ok(mesh) => {
-                let draw_index_count = (mesh.index_bytes.len() / 2) as u32;
+                let draw_index_count = (mesh.index_bytes.len() / mesh.index_format.stride_bytes()) as u32;
                 let draw_instance_count = (mesh.instance_bytes.len() / 80) as u32;
                 (
                     true,
@@ -7910,25 +7961,36 @@ fn banger_maps_concat_visible_tile_meshes(
 ) -> Result<BangerRenderMeshBytes, String> {
     let mut vertex_bytes = Vec::new();
     let mut index_bytes = Vec::new();
+    let total_vertex_count = meshes.iter().map(|mesh| mesh.vertex_bytes.len() / 24).sum::<usize>();
+    let target_index_format = if total_vertex_count > u16::MAX as usize + 1
+        || meshes.iter().any(|mesh| mesh.index_format == BangerRenderIndexFormat::Uint32)
+    {
+        BangerRenderIndexFormat::Uint32
+    } else {
+        BangerRenderIndexFormat::Uint16
+    };
     for mesh in meshes {
         let vertex_base = vertex_bytes.len() / 24;
-        let vertex_count = mesh.vertex_bytes.len() / 24;
-        if vertex_base + vertex_count > u16::MAX as usize + 1 {
-            return Err(format!(
-                "visible tile batch exceeds uint16 index range: {} vertices",
-                vertex_base + vertex_count
-            ));
-        }
         vertex_bytes.extend_from_slice(&mesh.vertex_bytes);
-        for index in mesh.index_bytes.chunks_exact(2) {
-            let local_index = u16::from_le_bytes(index.try_into().expect("u16 index chunk"));
+        for local_index in banger_render_indices_to_u32(&mesh.index_bytes, mesh.index_format) {
             let global_index = local_index as usize + vertex_base;
-            index_bytes.extend_from_slice(&(global_index as u16).to_le_bytes());
+            match target_index_format {
+                BangerRenderIndexFormat::Uint16 => {
+                    if global_index > u16::MAX as usize {
+                        return Err(format!("visible tile batch u16 index overflow at vertex {global_index}"));
+                    }
+                    index_bytes.extend_from_slice(&(global_index as u16).to_le_bytes());
+                }
+                BangerRenderIndexFormat::Uint32 => {
+                    index_bytes.extend_from_slice(&(global_index as u32).to_le_bytes());
+                }
+            }
         }
     }
     Ok(BangerRenderMeshBytes {
         vertex_bytes,
         index_bytes,
+        index_format: target_index_format,
         instance_bytes: banger_maps_tile_instance_bytes(),
         source: "banger_maps_3d_tiles_visible_tile_batch",
     })
@@ -8173,22 +8235,20 @@ fn banger_maps_render_mesh_from_primitive(
         .ok_or_else(|| "primitive missing POSITION accessor".to_string())? as usize;
     let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
     banger_maps_float_vec3_accessor_values(&position, "POSITION")?;
-    if position.count > u16::MAX as usize {
-        return Err(format!("render primitive has {} vertices; current first draw path is u16", position.count));
-    }
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(&position, material_color, render_transform)?;
-    let index_bytes = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
-        Some(index_accessor) => banger_maps_u16_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
-        None => banger_maps_generated_u16_index_bytes(position.count)?,
+    let (index_bytes, index_format) = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
+        Some(index_accessor) => banger_maps_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
+        None => banger_maps_generated_index_bytes(position.count),
     };
     Ok(BangerRenderMeshBytes {
         vertex_bytes,
         index_bytes,
+        index_format,
         instance_bytes: banger_maps_tile_instance_bytes(),
         source: "banger_maps_3d_tiles_gltf_first_primitive",
     })
@@ -8208,19 +8268,17 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .get("POSITION")
         .ok_or_else(|| "Draco render primitive missing POSITION".to_string())?;
     banger_maps_float_vec3_accessor_values(position, "POSITION")?;
-    if position.count > u16::MAX as usize {
-        return Err(format!("render Draco primitive has {} vertices; current first draw path is u16", position.count));
-    }
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(position, material_color, render_transform)?;
-    let index_bytes = banger_maps_u16_index_bytes_from_draco(&decoded)?;
+    let (index_bytes, index_format) = banger_maps_index_bytes_from_draco(&decoded)?;
     Ok(BangerRenderMeshBytes {
         vertex_bytes,
         index_bytes,
+        index_format,
         instance_bytes: banger_maps_tile_instance_bytes(),
         source: "banger_maps_3d_tiles_draco_first_primitive",
     })
@@ -8260,30 +8318,22 @@ fn banger_maps_position_accessor_to_render_vertices(
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_u16_index_bytes_from_draco(decoded: &BangerDecodedDracoPrimitive) -> Result<Vec<u8>, String> {
+fn banger_maps_index_bytes_from_draco(
+    decoded: &BangerDecodedDracoPrimitive,
+) -> Result<(Vec<u8>, BangerRenderIndexFormat), String> {
     match decoded.index_format {
-        "uint16" => Ok(decoded.index_bytes.clone()),
-        "uint32" => {
-            let mut bytes = Vec::with_capacity(decoded.index_count * 2);
-            for chunk in decoded.index_bytes.chunks_exact(4) {
-                let index = u32::from_le_bytes(chunk.try_into().expect("u32 Draco index bytes"));
-                if index > u16::MAX as u32 {
-                    return Err(format!("Draco u32 index {index} exceeds current u16 draw path"));
-                }
-                bytes.extend_from_slice(&(index as u16).to_le_bytes());
-            }
-            Ok(bytes)
-        }
+        "uint16" => Ok((decoded.index_bytes.clone(), BangerRenderIndexFormat::Uint16)),
+        "uint32" => Ok((decoded.index_bytes.clone(), BangerRenderIndexFormat::Uint32)),
         other => Err(format!("unsupported Draco render index format {other}")),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_u16_index_bytes_from_accessor(
+fn banger_maps_index_bytes_from_accessor(
     gltf: &Value,
     bin_chunk: &[u8],
     accessor_index: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, BangerRenderIndexFormat), String> {
     let indices = banger_gltf_accessor_stage(gltf, bin_chunk, accessor_index)?;
     if indices.accessor_type != "SCALAR" {
         return Err(format!("render indices must be SCALAR, got {}", indices.accessor_type));
@@ -8294,34 +8344,28 @@ fn banger_maps_u16_index_bytes_from_accessor(
             for index in indices.bytes {
                 bytes.extend_from_slice(&(index as u16).to_le_bytes());
             }
-            Ok(bytes)
+            Ok((bytes, BangerRenderIndexFormat::Uint16))
         }
-        5123 => Ok(indices.bytes),
-        5125 => {
-            let mut bytes = Vec::with_capacity(indices.count * 2);
-            for chunk in indices.bytes.chunks_exact(4) {
-                let index = u32::from_le_bytes(chunk.try_into().expect("u32 index bytes"));
-                if index > u16::MAX as u32 {
-                    return Err(format!("u32 index {index} exceeds current u16 draw path"));
-                }
-                bytes.extend_from_slice(&(index as u16).to_le_bytes());
-            }
-            Ok(bytes)
-        }
+        5123 => Ok((indices.bytes, BangerRenderIndexFormat::Uint16)),
+        5125 => Ok((indices.bytes, BangerRenderIndexFormat::Uint32)),
         other => Err(format!("unsupported render index component type {other}")),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn banger_maps_generated_u16_index_bytes(vertex_count: usize) -> Result<Vec<u8>, String> {
-    if vertex_count > u16::MAX as usize {
-        return Err(format!("cannot generate u16 indices for {vertex_count} vertices"));
+fn banger_maps_generated_index_bytes(vertex_count: usize) -> (Vec<u8>, BangerRenderIndexFormat) {
+    if vertex_count <= u16::MAX as usize + 1 {
+        let mut bytes = Vec::with_capacity(vertex_count * 2);
+        for index in 0..vertex_count {
+            bytes.extend_from_slice(&(index as u16).to_le_bytes());
+        }
+        return (bytes, BangerRenderIndexFormat::Uint16);
     }
-    let mut bytes = Vec::with_capacity(vertex_count * 2);
+    let mut bytes = Vec::with_capacity(vertex_count * 4);
     for index in 0..vertex_count {
-        bytes.extend_from_slice(&(index as u16).to_le_bytes());
+        bytes.extend_from_slice(&(index as u32).to_le_bytes());
     }
-    Ok(bytes)
+    (bytes, BangerRenderIndexFormat::Uint32)
 }
 
 fn banger_gltf_material_base_color(gltf: &Value, material_index: usize) -> Option<[f32; 4]> {
@@ -8990,6 +9034,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
+        assert_eq!(mesh.index_format, BangerRenderIndexFormat::Uint16);
         assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
@@ -9022,11 +9067,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_visible_tile_batch");
+        assert_eq!(mesh.index_format, BangerRenderIndexFormat::Uint16);
         assert_eq!(mesh.vertex_bytes.len(), 6 * 24);
         assert_eq!(mesh.index_bytes.len(), 6 * 2);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[10..12].try_into().unwrap()), 5);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn keeps_uint32_tile_indices_for_native_draw_and_meshlets() {
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0]}}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":12,"target":34963}],"buffers":[{"byteLength":48}]}"#;
+        let mut bin_chunk = Vec::new();
+        for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            bin_chunk.extend_from_slice(&value.to_le_bytes());
+        }
+        for index in [0u32, 1, 2] {
+            bin_chunk.extend_from_slice(&index.to_le_bytes());
+        }
+        let glb = test_glb_with_json_bin(json, &bin_chunk);
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let mesh = banger_maps_render_mesh_from_gltf(
+            &decoded.gltf_value,
+            decoded.bin_chunk,
+            banger_identity_mat4_f64(),
+            banger_identity_mat4_f64(),
+        )
+        .unwrap();
+        assert_eq!(mesh.index_format, BangerRenderIndexFormat::Uint32);
+        assert_eq!(mesh.index_bytes.len(), 3 * 4);
+        assert_eq!(u32::from_le_bytes(mesh.index_bytes[8..12].try_into().unwrap()), 2);
+        let clusters = banger_meshlet_cluster_metadata_bytes(
+            &mesh.vertex_bytes,
+            &mesh.index_bytes,
+            mesh.index_format,
+            mesh.source,
+        );
+        assert_eq!(u32::from_le_bytes(clusters[36..40].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(clusters[44..48].try_into().unwrap()), 3);
     }
 
     #[cfg(target_os = "windows")]
@@ -9773,6 +9852,7 @@ mod tests {
         let clusters = banger_meshlet_cluster_metadata_bytes(
             &vertex_bytes,
             &index_bytes,
+            BangerRenderIndexFormat::Uint16,
             "banger_maps_3d_tiles_visible_tile_batch",
         );
         assert_eq!(clusters.len(), BANGER_MESHLET_CLUSTER_METADATA_STRIDE);
@@ -9801,7 +9881,12 @@ mod tests {
         for index in [0u16, 1, 2] {
             index_bytes.extend_from_slice(&index.to_le_bytes());
         }
-        let clusters = banger_meshlet_cluster_metadata_bytes(&vertex_bytes, &index_bytes, "material_bin_test");
+        let clusters = banger_meshlet_cluster_metadata_bytes(
+            &vertex_bytes,
+            &index_bytes,
+            BangerRenderIndexFormat::Uint16,
+            "material_bin_test",
+        );
         let material_bytes = vec![7u8; 64];
         let texture_manifest = banger_maps_texture_resource_manifest_bytes(&[vec![1, 2, 3, 4]]);
         let bins = banger_material_bin_bytes(&clusters, Some(&material_bytes), &texture_manifest);
@@ -9929,6 +10014,7 @@ mod tests {
         let clusters = banger_meshlet_cluster_metadata_bytes(
             &banger_cube_vertex_bytes(),
             &banger_cube_index_bytes(),
+            BangerRenderIndexFormat::Uint16,
             "banger_cube_test_mesh",
         );
         let cards = banger_lumen_surface_card_bytes(&clusters);
