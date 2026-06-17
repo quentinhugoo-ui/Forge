@@ -616,6 +616,7 @@ struct BangerNativeScenePipeline {
     _residency_feedback_buffer: wgpu::Buffer,
     _shared_residency_page_table_buffer: wgpu::Buffer,
     _shared_residency_compacted_feedback_buffer: wgpu::Buffer,
+    _shared_residency_eviction_plan_buffer: wgpu::Buffer,
     _shared_residency_budget_buffer: wgpu::Buffer,
     _lumen_surface_card_buffer: wgpu::Buffer,
     _lumen_surface_cache_feedback_buffer: wgpu::Buffer,
@@ -657,6 +658,7 @@ struct BangerNativeScenePipeline {
     _residency_feedback_hash: String,
     _shared_residency_page_table_hash: String,
     _shared_residency_compacted_feedback_hash: String,
+    _shared_residency_eviction_plan_hash: String,
     _lumen_surface_card_hash: String,
     _lumen_surface_cache_feedback_hash: String,
     _lumen_screen_probe_hash: String,
@@ -3090,6 +3092,7 @@ struct BangerNativeSceneGpuResource {
     residency_feedback_buffer: wgpu::Buffer,
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
+    shared_residency_eviction_plan_buffer: wgpu::Buffer,
     shared_residency_budget_buffer: wgpu::Buffer,
     lumen_surface_card_buffer: wgpu::Buffer,
     lumen_surface_cache_feedback_buffer: wgpu::Buffer,
@@ -3124,6 +3127,7 @@ struct BangerNativeSceneGpuResource {
     residency_feedback_hash: String,
     shared_residency_page_table_hash: String,
     shared_residency_compacted_feedback_hash: String,
+    shared_residency_eviction_plan_hash: String,
     lumen_surface_card_hash: String,
     lumen_surface_cache_feedback_hash: String,
     lumen_screen_probe_hash: String,
@@ -5676,6 +5680,7 @@ fn create_banger_first_scene_pipeline(
         _residency_feedback_buffer: gpu_resource.residency_feedback_buffer,
         _shared_residency_page_table_buffer: gpu_resource.shared_residency_page_table_buffer,
         _shared_residency_compacted_feedback_buffer: gpu_resource.shared_residency_compacted_feedback_buffer,
+        _shared_residency_eviction_plan_buffer: gpu_resource.shared_residency_eviction_plan_buffer,
         _shared_residency_budget_buffer: gpu_resource.shared_residency_budget_buffer,
         _lumen_surface_card_buffer: gpu_resource.lumen_surface_card_buffer,
         _lumen_surface_cache_feedback_buffer: gpu_resource.lumen_surface_cache_feedback_buffer,
@@ -5717,6 +5722,7 @@ fn create_banger_first_scene_pipeline(
         _residency_feedback_hash: gpu_resource.residency_feedback_hash,
         _shared_residency_page_table_hash: gpu_resource.shared_residency_page_table_hash,
         _shared_residency_compacted_feedback_hash: gpu_resource.shared_residency_compacted_feedback_hash,
+        _shared_residency_eviction_plan_hash: gpu_resource.shared_residency_eviction_plan_hash,
         _lumen_surface_card_hash: gpu_resource.lumen_surface_card_hash,
         _lumen_surface_cache_feedback_hash: gpu_resource.lumen_surface_cache_feedback_hash,
         _lumen_screen_probe_hash: gpu_resource.lumen_screen_probe_hash,
@@ -6138,6 +6144,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         banger_shared_residency_compacted_feedback_bytes(&shared_residency_page_table_bytes);
     let shared_residency_compacted_feedback_hash =
         sha256_hex(&shared_residency_compacted_feedback_bytes);
+    let shared_residency_eviction_plan_bytes =
+        banger_shared_residency_eviction_plan_bytes(&shared_residency_page_table_bytes, 512 * 1024 * 1024);
+    let shared_residency_eviction_plan_hash = sha256_hex(&shared_residency_eviction_plan_bytes);
     let shared_residency_budget_bytes = banger_shared_residency_budget_bytes(
         shared_residency_page_table_bytes.len() / BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE,
         512 * 1024 * 1024,
@@ -6300,6 +6309,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         &shared_residency_compacted_feedback_bytes,
     );
+    let shared_residency_eviction_plan_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-shared-residency-eviction-plan-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        &shared_residency_eviction_plan_bytes,
+    );
     let shared_residency_budget_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-shared-residency-budget-buffer",
@@ -6448,7 +6463,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            "{source}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
             texture_resource_hash = sha256_hex(&texture_resource_manifest_bytes),
             material_bin_hash = material_bin_hash,
         )
@@ -6478,6 +6493,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         residency_feedback_buffer,
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
+        shared_residency_eviction_plan_buffer,
         shared_residency_budget_buffer,
         lumen_surface_card_buffer,
         lumen_surface_cache_feedback_buffer,
@@ -6506,6 +6522,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         residency_feedback_hash,
         shared_residency_page_table_hash,
         shared_residency_compacted_feedback_hash,
+        shared_residency_eviction_plan_hash,
         lumen_surface_card_hash,
         lumen_surface_cache_feedback_hash,
         lumen_screen_probe_hash,
@@ -7055,6 +7072,9 @@ const BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE: usize = 64;
 const BANGER_SHARED_RESIDENCY_COMPACTED_FEEDBACK_STRIDE: usize = 32;
 
 #[cfg(target_os = "windows")]
+const BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE: usize = 32;
+
+#[cfg(target_os = "windows")]
 fn banger_shared_residency_page_table_bytes(
     source: &str,
     selected_tile_id: Option<&str>,
@@ -7077,7 +7097,7 @@ fn banger_shared_residency_page_table_bytes(
         }
         records.extend_from_slice(&banger_shared_residency_page_record_bytes(
             kind,
-            records.len() as u32,
+            (records.len() / BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE) as u32,
             byte_count as u64,
             physical_offset,
             priority,
@@ -7170,6 +7190,55 @@ fn banger_shared_residency_compacted_feedback_bytes(page_table_bytes: &[u8]) -> 
         }
     }
     compacted
+}
+
+#[cfg(target_os = "windows")]
+fn banger_shared_residency_eviction_plan_bytes(
+    page_table_bytes: &[u8],
+    budget_bytes: u64,
+) -> Vec<u8> {
+    let mut resident_total = 0u64;
+    let mut pages = Vec::new();
+    for record in page_table_bytes.chunks_exact(BANGER_SHARED_RESIDENCY_PAGE_RECORD_STRIDE) {
+        let page_index = u32::from_le_bytes(record[12..16].try_into().expect("page index"));
+        let byte_count_low = u32::from_le_bytes(record[16..20].try_into().expect("byte count low"));
+        let byte_count_high = u32::from_le_bytes(record[20..24].try_into().expect("byte count high"));
+        let byte_count = byte_count_low as u64 | ((byte_count_high as u64) << 32);
+        let priority = u32::from_le_bytes(record[32..36].try_into().expect("priority"));
+        let lru_frame = u32::from_le_bytes(record[36..40].try_into().expect("lru frame"));
+        let resident = u32::from_le_bytes(record[40..44].try_into().expect("resident flag"));
+        if resident != 0 {
+            resident_total = resident_total.saturating_add(byte_count);
+            pages.push((priority, lru_frame, page_index, byte_count));
+        }
+    }
+
+    pages.sort_by_key(|(priority, lru_frame, page_index, _)| (*priority, *lru_frame, *page_index));
+    let mut reclaim_bytes = resident_total.saturating_sub(budget_bytes);
+    let mut eviction_plan =
+        Vec::with_capacity(pages.len().max(1) * BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE);
+    for (priority, lru_frame, page_index, byte_count) in pages {
+        let evict = u32::from(reclaim_bytes > 0);
+        if evict != 0 {
+            reclaim_bytes = reclaim_bytes.saturating_sub(byte_count);
+        }
+        for value in [
+            0x45_56_43_54u32, // EVCT
+            1,
+            page_index,
+            byte_count.min(u32::MAX as u64) as u32,
+            (byte_count >> 32) as u32,
+            priority,
+            lru_frame,
+            evict,
+        ] {
+            eviction_plan.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    if eviction_plan.is_empty() {
+        eviction_plan.resize(BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE, 0);
+    }
+    eviction_plan
 }
 
 #[cfg(target_os = "windows")]
@@ -9790,6 +9859,30 @@ mod tests {
         let budget = banger_shared_residency_budget_bytes(3, 512 * 1024 * 1024, 12 * 1024 * 1024);
         assert_eq!(u32::from_le_bytes(budget[0..4].try_into().unwrap()), 0x42_55_44_47);
         assert_eq!(u32::from_le_bytes(budget[8..12].try_into().unwrap()), 3);
+        let eviction_plan = banger_shared_residency_eviction_plan_bytes(&table, 8192);
+        assert_eq!(eviction_plan.len(), 3 * BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE);
+        assert_eq!(u32::from_le_bytes(eviction_plan[0..4].try_into().unwrap()), 0x45_56_43_54);
+        assert_eq!(u32::from_le_bytes(eviction_plan[8..12].try_into().unwrap()), 2);
+        assert_eq!(u32::from_le_bytes(eviction_plan[20..24].try_into().unwrap()), 600);
+        assert_eq!(u32::from_le_bytes(eviction_plan[28..32].try_into().unwrap()), 1);
+        let material_record_offset = BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE;
+        assert_eq!(
+            u32::from_le_bytes(eviction_plan[material_record_offset + 8..material_record_offset + 12].try_into().unwrap()),
+            1
+        );
+        assert_eq!(
+            u32::from_le_bytes(eviction_plan[material_record_offset + 28..material_record_offset + 32].try_into().unwrap()),
+            1
+        );
+        let geometry_record_offset = BANGER_SHARED_RESIDENCY_EVICTION_RECORD_STRIDE * 2;
+        assert_eq!(
+            u32::from_le_bytes(eviction_plan[geometry_record_offset + 8..geometry_record_offset + 12].try_into().unwrap()),
+            0
+        );
+        assert_eq!(
+            u32::from_le_bytes(eviction_plan[geometry_record_offset + 28..geometry_record_offset + 32].try_into().unwrap()),
+            0
+        );
         assert_eq!(banger_align_u64(4097, 4096), 8192);
     }
 
