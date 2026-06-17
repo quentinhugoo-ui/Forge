@@ -3589,15 +3589,22 @@ function searchArchiveHighlightTerms(query: string): string[] {
   return [...new Set(query.split(/[\s,;]+/).map((term) => term.trim()).filter((term) => term.length >= 2))];
 }
 
-function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix: string): ReactNode[] {
+function searchArchiveHighlightPattern(query: string): RegExp | undefined {
   const terms = searchArchiveHighlightTerms(query);
   if (terms.length === 0) {
+    return undefined;
+  }
+  return new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+}
+
+function highlightedSearchArchiveText(text: string, pattern: RegExp | undefined, keyPrefix: string): ReactNode[] {
+  if (!pattern) {
     return [text];
   }
-  const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
   const nodes: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
+  pattern.lastIndex = 0;
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > cursor) {
       nodes.push(text.slice(cursor, match.index));
@@ -3611,6 +3618,38 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
   }
   if (cursor < text.length) {
     nodes.push(text.slice(cursor));
+  }
+  return nodes;
+}
+
+function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix: string): ReactNode[] {
+  const highlightPattern = searchArchiveHighlightPattern(query);
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  ASSISTANT_INLINE_ATOMIC_PATTERN.lastIndex = 0;
+  while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(...highlightedSearchArchiveText(text.slice(cursor, match.index), highlightPattern, `${keyPrefix}-plain-${cursor}`));
+    }
+    const token = match[0];
+    const tokenKey = `${keyPrefix}-inline-${match.index}`;
+    if (token.startsWith("\\[") || token.startsWith("\\(")) {
+      const formula = token.slice(2, -2).trim();
+      nodes.push(assistantMathTokenNode(formula, `${tokenKey}-math`));
+    } else if (token.startsWith("@{") || token.startsWith("#{")) {
+      nodes.push(assistantGeoEntityNode(token, `${tokenKey}-geo`));
+    } else if (token.startsWith("**") || token.startsWith("__")) {
+      nodes.push(<strong key={`${tokenKey}-strong`}>{highlightedSearchArchiveText(token.slice(2, -2), highlightPattern, `${tokenKey}-strong-text`)}</strong>);
+    } else if (token.startsWith("*") || token.startsWith("_")) {
+      nodes.push(<em key={`${tokenKey}-em`}>{highlightedSearchArchiveText(token.slice(1, -1), highlightPattern, `${tokenKey}-em-text`)}</em>);
+    } else {
+      nodes.push(<code key={`${tokenKey}-code`}>{highlightedSearchArchiveText(token.slice(1, -1), highlightPattern, `${tokenKey}-code-text`)}</code>);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) {
+    nodes.push(...highlightedSearchArchiveText(text.slice(cursor), highlightPattern, `${keyPrefix}-plain-${cursor}`));
   }
   return nodes;
 }
