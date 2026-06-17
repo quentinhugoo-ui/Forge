@@ -998,7 +998,7 @@ export function App() {
     });
   }, [panelsChatSnapshot.parallelLanes, panelsChatSnapshot.transcript, parallelPrompts]);
 
-  const removeParallelCanvas = useCallback((index: number) => {
+  const removeParallelCanvas = useCallback((index: number, force = false) => {
     if (index <= 0) {
       return;
     }
@@ -1012,9 +1012,11 @@ export function App() {
       if (index >= prompts.length) {
         return prompts;
       }
-      for (let cursor = index; cursor < prompts.length; cursor += 1) {
-        if ((prompts[cursor] ?? "").trim() || (laneHasStarted(cursor) && !removedLaneIsArchiveReference)) {
-          return prompts;
+      if (!force) {
+        for (let cursor = index; cursor < prompts.length; cursor += 1) {
+          if ((prompts[cursor] ?? "").trim() || (laneHasStarted(cursor) && !removedLaneIsArchiveReference)) {
+            return prompts;
+          }
         }
       }
       const nextPrompts = prompts.filter((_prompt, promptIndex) => promptIndex !== index);
@@ -1030,6 +1032,10 @@ export function App() {
       setCanvasMapsOpen(false);
     }
   }, [mapsParallelIndex, panelsChatSnapshot.parallelLanes, webExplorerParallelIndex]);
+
+  const closeParallelCanvas = useCallback((index: number) => {
+    removeParallelCanvas(index, true);
+  }, [removeParallelCanvas]);
 
   const openCanvasFiles = useCallback(() => {
     setCanvasSplitOpen(false);
@@ -1762,7 +1768,7 @@ export function App() {
           onComposerModuleChange={setComposerModuleId}
           sessionName={activeSessionName}
           activeSessionId={sidebarSnapshot.recentSessionId}
-          onParallelClose={removeParallelCanvas}
+          onParallelClose={closeParallelCanvas}
           widgetRecentSessions={widgetRecentSessions}
           widgetMode={widgetMode || widgetMinimizingPhase !== ""}
           widgetModeTransitioning={widgetModeTransitioning}
