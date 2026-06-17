@@ -161,6 +161,32 @@ include_artifact_refs=false`);
     expect(renderSearchArchiveResult(result)).not.toContain("personne sur scooter");
   });
 
+  it("centers long snippets on matching query terms when the full query phrase is absent", () => {
+    const sessions = new Map<string, ChatArchiveSession>();
+    const distantIntro = Array.from({ length: 42 }, (_, index) => `detail neutre ${index}`).join(" ");
+    upsertArchiveMessage(
+      sessions,
+      sessionMeta({ sessionId: "chat-witcher", title: "Heart Stone Witcher" }),
+      message(
+        "turn-witcher",
+        "assistant",
+        `${distantIntro}. Le passage important parle de The Witcher 3 et de Hearts of Stone, avec Geralt et Olgierd au centre du recit.`
+      ),
+      "2026-06-10T12:00:00Z"
+    );
+
+    const result = searchArchiveSessions(Array.from(sessions.values()), {
+      query: "witcher heart stone",
+      scope: "all",
+      topK: 1,
+      contextTurns: 0
+    });
+
+    expect(result.returnedCount).toBe(1);
+    expect(result.hits[0]?.snippet.toLowerCase()).toContain("witcher");
+    expect(result.hits[0]?.snippet.toLowerCase()).toContain("stone");
+  });
+
   it("keeps legacy archived sessions without attachments searchable", () => {
     const legacySession = {
       schema: "forge.brain.chat_session_archive.v1",

@@ -512,6 +512,8 @@ export function archiveSessionProofHash(session: ChatArchiveSession): string {
 
 function searchHit(candidate: SearchCandidate, query: string, contextTurns: number, rank: number, request: SearchArchiveRequest): SearchArchiveHit {
   const { session, message, messageIndex } = candidate;
+  const snippetNeedle = [query, ...(request.keywords ?? [])].join(" ");
+  const snippet = snippetAround(candidate.matchedText, snippetNeedle);
   const contextBefore = messageIndex >= 0
     ? session.messages
         .slice(Math.max(0, messageIndex - contextTurns), messageIndex)
@@ -527,7 +529,7 @@ function searchHit(candidate: SearchCandidate, query: string, contextTurns: numb
     sessionId: session.sessionId,
     turnId: message.turnId,
     matchedField: candidate.matchedField,
-    snippet: snippetAround(candidate.matchedText, query),
+    snippet,
     contextBefore,
     contextAfter,
     attachments: attachments.map((attachment) => attachment.proofHash)
@@ -541,7 +543,7 @@ function searchHit(candidate: SearchCandidate, query: string, contextTurns: numb
     role: message.role,
     createdAt: message.createdAt,
     matchedField: candidate.matchedField,
-    snippet: snippetAround(candidate.matchedText, query),
+    snippet,
     contextBefore,
     contextAfter,
     attachments,
@@ -827,14 +829,62 @@ function normalizeSearchText(text: string | undefined | null): string {
     .trim();
 }
 
+function foldSnippetSearchText(text: string): { folded: string; indexMap: number[] } {
+  const foldedParts: string[] = [];
+  const indexMap: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const folded = text[index]
+      ?.normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .toLocaleLowerCase() ?? "";
+    for (const char of folded) {
+      foldedParts.push(char);
+      indexMap.push(index);
+    }
+  }
+  return { folded: foldedParts.join(""), indexMap };
+}
+
+function snippetAnchorIndex(clean: string, query: string): number {
+  const { folded, indexMap } = foldSnippetSearchText(clean);
+  const foldedQuery = foldSnippetSearchText(query).folded.replace(/\s+/g, " ").trim();
+  if (foldedQuery) {
+    const exactIndex = folded.indexOf(foldedQuery);
+    if (exactIndex >= 0) {
+      return indexMap[exactIndex] ?? exactIndex;
+    }
+  }
+
+  const terms = tokenizeQuery(query);
+  let bestFoldedIndex = -1;
+  let bestScore = -1;
+  const halfWindow = Math.floor(MAX_SNIPPET_CHARS / 2);
+  for (const term of terms) {
+    let index = folded.indexOf(term);
+    while (index >= 0) {
+      const windowStart = Math.max(0, index - halfWindow);
+      const windowEnd = Math.min(folded.length, index + halfWindow);
+      const score = terms.reduce((count, candidate) => {
+        const candidateIndex = folded.indexOf(candidate, windowStart);
+        return candidateIndex >= 0 && candidateIndex <= windowEnd ? count + 1 : count;
+      }, 0);
+      if (score > bestScore || (score === bestScore && (bestFoldedIndex < 0 || index < bestFoldedIndex))) {
+        bestScore = score;
+        bestFoldedIndex = index;
+      }
+      index = folded.indexOf(term, index + Math.max(1, term.length));
+    }
+  }
+
+  return bestFoldedIndex >= 0 ? indexMap[bestFoldedIndex] ?? bestFoldedIndex : -1;
+}
+
 function snippetAround(text: string | undefined | null, query: string): string {
   const clean = String(text ?? "").replace(/\s+/g, " ").trim();
   if (clean.length <= MAX_SNIPPET_CHARS) return clean;
-  const lowerClean = clean.toLocaleLowerCase();
-  const lowerQuery = query.toLocaleLowerCase();
-  const index = lowerQuery ? lowerClean.indexOf(lowerQuery) : -1;
+  const index = snippetAnchorIndex(clean, query);
   const anchor = index >= 0 ? index : Math.floor(clean.length / 2);
-  const start = Math.max(0, anchor - Math.floor(MAX_SNIPPET_CHARS / 2));
+  const start = Math.min(Math.max(0, anchor - Math.floor(MAX_SNIPPET_CHARS / 2)), Math.max(0, clean.length - MAX_SNIPPET_CHARS));
   const end = Math.min(clean.length, start + MAX_SNIPPET_CHARS);
   return `${start > 0 ? "..." : ""}${clean.slice(start, end).trim()}${end < clean.length ? "..." : ""}`;
 }

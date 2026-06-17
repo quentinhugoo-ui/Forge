@@ -4583,6 +4583,7 @@ button {
   z-index: 5;
   display: flex;
   align-items: center;
+  gap: 8px;
   min-width: 0;
   height: 38px;
   padding: 0 0 8px;
@@ -4590,6 +4591,7 @@ button {
 }
 
 .parallelTranscriptHeader strong {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--forge-text);
@@ -4601,9 +4603,19 @@ button {
 }
 
 .parallelTranscriptHeader__close {
-  position: static;
+  position: relative;
+  top: auto;
+  left: auto;
   flex: 0 0 auto;
-  margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  align-self: center;
+}
+
+.parallelTranscriptHeader__close span {
+  width: 9px;
+  height: 9px;
 }
 
 .chatCanvas--parallelPane .chatCanvas__messages {
