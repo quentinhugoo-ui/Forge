@@ -516,10 +516,11 @@ export function App() {
     [panelsChatSnapshot.transcript]
   );
   const restoredParallelPromptCount = useMemo(() => {
-    if (panelsChatSnapshot.parallelLanes.length === 0) {
+    const secondaryLanes = panelsChatSnapshot.parallelLanes.filter((lane) => lane.index > 0);
+    if (secondaryLanes.length === 0) {
       return 1;
     }
-    const maxLaneIndex = panelsChatSnapshot.parallelLanes.reduce((max, lane) => Math.max(max, lane.index), 0);
+    const maxLaneIndex = secondaryLanes.reduce((max, lane) => Math.max(max, lane.index), 0);
     return Math.min(4, Math.max(2, maxLaneIndex + 1));
   }, [panelsChatSnapshot.parallelLanes]);
   useEffect(() => {
