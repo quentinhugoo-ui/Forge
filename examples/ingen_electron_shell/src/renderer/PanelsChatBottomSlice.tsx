@@ -3736,6 +3736,74 @@ function searchArchiveHitFileLabel(hit: AssistantSearchArchiveHit, query: string
   return attachment?.name?.trim() || "File";
 }
 
+function searchArchiveHitFileAttachment(hit: AssistantSearchArchiveHit, query: string): AssistantSearchArchiveAttachment | undefined {
+  const matchingAttachment = hit.attachments.find((attachment) => searchArchiveAttachmentMatchesQuery(attachment, query));
+  return matchingAttachment ?? hit.attachments[0];
+}
+
+function searchArchiveAttachmentPreviewUrl(attachment: AssistantSearchArchiveAttachment): string {
+  const openRef = attachment.openRef.trim();
+  return /^(blob:|data:|file:|https?:)/i.test(openRef) ? openRef : "";
+}
+
+function searchArchiveAttachmentPreviewKind(attachment: AssistantSearchArchiveAttachment): ComposerUploadPreview["kind"] {
+  const fileType = attachment.fileType.trim().toLocaleLowerCase();
+  const kind = attachment.kind.trim().toLocaleLowerCase();
+  const name = attachment.name.trim().toLocaleLowerCase();
+  const previewUrl = searchArchiveAttachmentPreviewUrl(attachment);
+  if (previewUrl && (kind === "image" || fileType === "image" || /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(name))) {
+    return "image";
+  }
+  if (previewUrl && (kind === "video" || fileType === "video" || /\.(mp4|webm|mov|m4v)$/i.test(name))) {
+    return "video";
+  }
+  if (previewUrl && (kind === "model3d" || fileType === "model3d" || /\.(glb|gltf|obj|fbx|stl)$/i.test(name))) {
+    return "model3d";
+  }
+  if (previewUrl && (fileType === "pdf" || /\.pdf$/i.test(name))) {
+    return "pdf";
+  }
+  if (
+    attachment.textPreview.trim() &&
+    (kind === "text" ||
+      fileType === "text" ||
+      fileType === "code" ||
+      fileType === "markdown" ||
+      fileType === "json" ||
+      fileType === "html" ||
+      fileType === "csv" ||
+      /\.(txt|md|json|csv|html?|tsx?|jsx?|rs|py|css)$/i.test(name))
+  ) {
+    return "text";
+  }
+  return "file";
+}
+
+function searchArchiveAttachmentPreview(attachment: AssistantSearchArchiveAttachment): ComposerUploadPreview {
+  const name = attachment.name.trim() || "File";
+  return {
+    id: attachment.id.trim() || attachment.openRef.trim() || name,
+    name,
+    kind: searchArchiveAttachmentPreviewKind(attachment),
+    url: searchArchiveAttachmentPreviewUrl(attachment),
+    textPreview: attachment.textPreview.trim() || name,
+    tablePreview: []
+  };
+}
+
+function SearchArchiveFilePreview({ attachment }: { attachment?: AssistantSearchArchiveAttachment }) {
+  if (!attachment) {
+    return null;
+  }
+  return (
+    <div className="searchArchiveResultCard__filePreview" aria-hidden="true">
+      <div className="composerUploadPreview">
+        <UploadPreview preview={searchArchiveAttachmentPreview(attachment)} />
+      </div>
+    </div>
+  );
+}
+
 interface SearchArchiveHitGroup {
   key: string;
   title: string;
@@ -3783,26 +3851,43 @@ function SearchArchiveResultCard({
               <strong>{group.title}</strong>
             </div>
             <ol className="searchArchiveResultCard__hits">
-              {group.hits.map((hit, hitIndex) => (
-                <li className="searchArchiveResultCard__hitItem" key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}>
-                  <button
-                    aria-label={`Open ${group.title} around this match in a parallel conversation`}
-                    className="searchArchiveResultCard__hit"
-                    onClick={() => openSearchArchiveHitInParallel(hit)}
-                    type="button"
-                  >
-                    <SearchArchiveParallelIcon />
-                    <div className="searchArchiveResultCard__hitTop">
-                      {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
-                      <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
-                      {searchArchiveHitIsFile(hit) ? (
-                        <strong>{highlightedSearchArchiveSnippet(searchArchiveHitFileLabel(hit, result.query), result.query, `${messageId}-search-file-${blockIndex}-${groupIndex}-${hitIndex}`)}</strong>
-                      ) : null}
-                    </div>
-                    <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
-                  </button>
-                </li>
-              ))}
+              {group.hits.map((hit, hitIndex) => {
+                const fileHit = searchArchiveHitIsFile(hit);
+                const fileAttachment = fileHit ? searchArchiveHitFileAttachment(hit, result.query) : undefined;
+                return (
+                  <li className="searchArchiveResultCard__hitItem" key={`${messageId}-search-hit-${blockIndex}-${groupIndex}-${hit.rank}-${hitIndex}`}>
+                    <button
+                      aria-label={`Open ${group.title} around this match in a parallel conversation`}
+                      className={["searchArchiveResultCard__hit", fileHit ? "searchArchiveResultCard__hit--file" : ""].filter(Boolean).join(" ")}
+                      onClick={() => openSearchArchiveHitInParallel(hit)}
+                      type="button"
+                    >
+                      <SearchArchiveParallelIcon />
+                      {fileHit ? (
+                        <div className="searchArchiveResultCard__fileBody">
+                          <SearchArchiveFilePreview attachment={fileAttachment} />
+                          <div className="searchArchiveResultCard__fileText">
+                            <div className="searchArchiveResultCard__hitTop">
+                              {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
+                              <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+                              <strong>{highlightedSearchArchiveSnippet(searchArchiveHitFileLabel(hit, result.query), result.query, `${messageId}-search-file-${blockIndex}-${groupIndex}-${hitIndex}`)}</strong>
+                            </div>
+                            <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="searchArchiveResultCard__hitTop">
+                            {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
+                            <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+                          </div>
+                          <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
+                        </>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ol>
           </section>
         ))}
