@@ -3310,6 +3310,7 @@ function openSearchArchiveHitInParallel(hit: AssistantSearchArchiveHit): void {
   void panelsChatBottomStore.dispatch({
     kind: "open_archive_parallel",
     sessionId,
+    sessionTitle: hit.sessionTitle,
     turnId: hit.turnId.trim() || searchArchiveTurnIdFromOpenRef(hit.openRef),
     focusSnippet: hit.snippet,
     parallelSessionIndex: 1

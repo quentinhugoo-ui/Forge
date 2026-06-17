@@ -15727,7 +15727,7 @@ function archiveTranscriptWithFocusSnippet(
   );
 }
 
-function openArchiveSessionInParallel(sessionId: string, turnId: string, parallelSessionIndex: number, focusSnippet = ""): boolean {
+function openArchiveSessionInParallel(sessionId: string, turnId: string, parallelSessionIndex: number, focusSnippet = "", sessionTitle = ""): boolean {
   const boundedIndex = Math.max(1, Math.min(3, parallelSessionIndex));
   if (sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID || sessionId === SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID) {
     ensureSearchArchiveLoopDemoSession();
@@ -15770,7 +15770,7 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
     transcript,
     groupId,
     focusMessageId: turnId,
-    sessionTitle: archiveSession.title
+    sessionTitle: sessionTitle.trim() || archiveSession.title
   });
   updateParallelGroupMetadata(groupId);
   sidebarState.recentSessionId = groupId;
@@ -18135,6 +18135,7 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
     case "open_archive_parallel": {
       await loadChatArchive();
       const sessionId = typeof command.sessionId === "string" ? command.sessionId.trim() : "";
+      const sessionTitle = typeof command.sessionTitle === "string" ? command.sessionTitle.trim() : "";
       const turnId = typeof command.turnId === "string" ? command.turnId.trim() : "";
       const focusSnippet = typeof command.focusSnippet === "string" ? command.focusSnippet : "";
       const parallelSessionIndex =
@@ -18142,7 +18143,7 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
           ? command.parallelSessionIndex
           : 1;
       if (sessionId) {
-        openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex, focusSnippet);
+        openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex, focusSnippet, sessionTitle);
       }
       break;
     }

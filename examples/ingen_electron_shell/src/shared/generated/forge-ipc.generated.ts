@@ -778,6 +778,7 @@ export type PanelsChatBottomCommand = PanelsChatBottomCommandBase & {
   filePaths?: string[];
   moduleId?: string;
   sessionId?: string;
+  sessionTitle?: string;
   turnId?: string;
   focusSnippet?: string;
   parallelSessionIndex?: number;
