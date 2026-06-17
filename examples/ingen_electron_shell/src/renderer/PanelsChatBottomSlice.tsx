@@ -4285,6 +4285,7 @@ function TranscriptCanvas({
   className = "chatCanvas",
   assistantBusy = false,
   onAssistantWritingChange,
+  onParallelClose,
   onEditImage,
   onUseMathInCompute,
   stopAnimationSignal = 0
@@ -4299,6 +4300,7 @@ function TranscriptCanvas({
   className?: string;
   assistantBusy?: boolean;
   onAssistantWritingChange?: (active: boolean) => void;
+  onParallelClose?: (index: number) => void;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   stopAnimationSignal?: number;
@@ -4562,6 +4564,21 @@ function TranscriptCanvas({
       {sessionTitle.trim() ? (
         <header className="parallelTranscriptHeader">
           <strong>{sessionTitle.trim()}</strong>
+          {parallelSessionIndex > 0 && onParallelClose ? (
+            <button
+              type="button"
+              className="parallelCanvasClose parallelTranscriptHeader__close"
+              aria-label={`Close ${sessionTitle.trim() || "parallel session"}`}
+              onClick={() => {
+                void panelsChatBottomStore.dispatch({
+                  kind: "close_parallel_lane",
+                  parallelSessionIndex
+                }).finally(() => onParallelClose(parallelSessionIndex));
+              }}
+            >
+              <span aria-hidden="true" />
+            </button>
+          ) : null}
         </header>
       ) : null}
       {visiblePins.length > 0 ? (
@@ -4824,6 +4841,7 @@ interface PanelsChatBottomSliceProps {
   composerOnly?: boolean;
   parallelPrompts?: string[];
   onParallelPromptChange?: (index: number, value: string) => void;
+  onParallelClose?: (index: number) => void;
   webExplorerOpen?: boolean;
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
@@ -5019,6 +5037,7 @@ export function PanelsChatBottomSlice({
   composerOnly = false,
   parallelPrompts,
   onParallelPromptChange,
+  onParallelClose,
   webExplorerOpen = false,
   composerModule = null,
   onComposerModuleChange,
@@ -5717,6 +5736,7 @@ export function PanelsChatBottomSlice({
                   userName={brainUserName}
                   focusMessageId={index === 0 ? "" : lane?.focusMessageId}
                   sessionTitle={laneTitle}
+                  onParallelClose={onParallelClose}
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
                   assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}

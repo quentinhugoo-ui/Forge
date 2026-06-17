@@ -261,6 +261,7 @@ const PANELS_CHAT_BOTTOM_COMMAND_KIND: EnumSpec = EnumSpec {
         "send_chat",
         "send_parallel_chat_batch",
         "open_archive_parallel",
+        "close_parallel_lane",
         "stop_assistant",
         "assistant_write_complete",
         "update_brain_identity",
@@ -604,6 +605,7 @@ const PARALLEL_CHAT_LANE: InterfaceSpec = InterfaceSpec {
     fields: &[
         FieldSpec { name: "index", ts_type: "number", optional: false },
         FieldSpec { name: "sessionId", ts_type: "string", optional: false },
+        FieldSpec { name: "sessionTitle", ts_type: "string", optional: false },
         FieldSpec { name: "transcript", ts_type: "TranscriptMessage[]", optional: false },
         FieldSpec { name: "focusMessageId", ts_type: "string", optional: true },
         FieldSpec { name: "proofHash", ts_type: "string", optional: false },

@@ -220,7 +220,7 @@ export const SIDEBAR_COMMAND_KIND = [
   "cancel_archive",
 ] as const;
 
-export type PanelsChatBottomCommandKind = "refresh_probes" | "activate_control" | "attach_files" | "attach_dropped_files" | "chat_text_edited" | "send_chat" | "send_parallel_chat_batch" | "open_archive_parallel" | "stop_assistant" | "assistant_write_complete" | "update_brain_identity" | "new_session" | "select_llm" | "open_llm_providers" | "cycle_llm_model" | "cycle_llm_reasoning" | "permission_mode_selected" | "stage_attachment_for_edit" | "upload_preview_scroll";
+export type PanelsChatBottomCommandKind = "refresh_probes" | "activate_control" | "attach_files" | "attach_dropped_files" | "chat_text_edited" | "send_chat" | "send_parallel_chat_batch" | "open_archive_parallel" | "close_parallel_lane" | "stop_assistant" | "assistant_write_complete" | "update_brain_identity" | "new_session" | "select_llm" | "open_llm_providers" | "cycle_llm_model" | "cycle_llm_reasoning" | "permission_mode_selected" | "stage_attachment_for_edit" | "upload_preview_scroll";
 export const PANELS_CHAT_BOTTOM_COMMAND_KIND = [
   "refresh_probes",
   "activate_control",
@@ -230,6 +230,7 @@ export const PANELS_CHAT_BOTTOM_COMMAND_KIND = [
   "send_chat",
   "send_parallel_chat_batch",
   "open_archive_parallel",
+  "close_parallel_lane",
   "stop_assistant",
   "assistant_write_complete",
   "update_brain_identity",
@@ -550,6 +551,7 @@ export interface TranscriptMessage {
 export interface ParallelChatLane {
   index: number;
   sessionId: string;
+  sessionTitle: string;
   transcript: TranscriptMessage[];
   focusMessageId?: string;
   proofHash: string;

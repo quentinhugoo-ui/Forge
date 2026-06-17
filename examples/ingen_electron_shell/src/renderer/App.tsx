@@ -1002,6 +1002,8 @@ export function App() {
     if (index <= 0) {
       return;
     }
+    const removedLane = panelsChatSnapshot.parallelLanes.find((lane) => lane.index === index);
+    const removedLaneIsArchiveReference = Boolean(removedLane?.focusMessageId);
     const laneHasStarted = (laneIndex: number) => {
       const messages = panelsChatSnapshot.parallelLanes.find((lane) => lane.index === laneIndex)?.transcript ?? [];
       return messages.some((message) => message.role === "user" || message.role === "assistant");
@@ -1011,7 +1013,7 @@ export function App() {
         return prompts;
       }
       for (let cursor = index; cursor < prompts.length; cursor += 1) {
-        if ((prompts[cursor] ?? "").trim() || laneHasStarted(cursor)) {
+        if ((prompts[cursor] ?? "").trim() || (laneHasStarted(cursor) && !removedLaneIsArchiveReference)) {
           return prompts;
         }
       }
@@ -1760,6 +1762,7 @@ export function App() {
           onComposerModuleChange={setComposerModuleId}
           sessionName={activeSessionName}
           activeSessionId={sidebarSnapshot.recentSessionId}
+          onParallelClose={removeParallelCanvas}
           widgetRecentSessions={widgetRecentSessions}
           widgetMode={widgetMode || widgetMinimizingPhase !== ""}
           widgetModeTransitioning={widgetModeTransitioning}

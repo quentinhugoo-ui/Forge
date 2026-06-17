@@ -4600,6 +4600,12 @@ button {
   white-space: nowrap;
 }
 
+.parallelTranscriptHeader__close {
+  position: static;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .chatCanvas--parallelPane .chatCanvas__messages {
   height: 100%;
   min-height: 0;

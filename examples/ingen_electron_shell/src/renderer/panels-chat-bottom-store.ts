@@ -111,7 +111,9 @@ function withParallelLaneMessages(
   const nextLane = {
     index,
     sessionId: currentLane?.sessionId ?? "",
+    sessionTitle: currentLane?.sessionTitle ?? "Parallel session",
     transcript: messages,
+    focusMessageId: currentLane?.focusMessageId,
     proofHash: "optimistic-parallel-render"
   };
   const lanes = snapshot.parallelLanes.filter((lane) => lane.index !== index);

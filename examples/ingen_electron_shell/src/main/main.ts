@@ -14702,15 +14702,28 @@ function publicTranscript(messages: TranscriptMessage[]): TranscriptMessage[] {
   );
 }
 
+function parallelChatLaneSessionTitle(sessionId: string): string {
+  const item = sessionById(sessionId);
+  const archiveSession = chatArchiveSessions.get(sessionId);
+  return item?.label || archiveSession?.title || "Parallel session";
+}
+
 function parallelChatLaneSnapshots(): PanelsChatBottomSnapshot["parallelLanes"] {
   return Array.from(parallelChatLanes.entries())
     .sort(([left], [right]) => left - right)
     .map(([index, lane]) => ({
       index,
       sessionId: lane.sessionId,
+      sessionTitle: parallelChatLaneSessionTitle(lane.sessionId),
       transcript: publicTranscript(lane.transcript),
       focusMessageId: lane.focusMessageId,
-      proofHash: hashJson({ index, sessionId: lane.sessionId, transcript: publicTranscript(lane.transcript), focusMessageId: lane.focusMessageId ?? "" })
+      proofHash: hashJson({
+        index,
+        sessionId: lane.sessionId,
+        sessionTitle: parallelChatLaneSessionTitle(lane.sessionId),
+        transcript: publicTranscript(lane.transcript),
+        focusMessageId: lane.focusMessageId ?? ""
+      })
     }));
 }
 
@@ -15753,6 +15766,26 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
   });
   updateParallelGroupMetadata(groupId);
   sidebarState.recentSessionId = groupId;
+  return true;
+}
+
+function closeParallelChatLane(parallelSessionIndex: number): boolean {
+  const index = Math.max(1, Math.min(3, parallelSessionIndex));
+  if (!parallelChatLanes.has(index)) {
+    return false;
+  }
+  const groupId = parallelChatLanes.get(index)?.groupId ?? "";
+  parallelChatLanes.delete(index);
+  const shifted = Array.from(parallelChatLanes.entries())
+    .filter(([laneIndex]) => laneIndex > index)
+    .sort(([left], [right]) => left - right);
+  for (const [laneIndex, lane] of shifted) {
+    parallelChatLanes.delete(laneIndex);
+    parallelChatLanes.set(laneIndex - 1, lane);
+  }
+  if (groupId) {
+    updateParallelGroupMetadata(groupId);
+  }
   return true;
 }
 
@@ -18103,6 +18136,14 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       if (sessionId) {
         openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex, focusSnippet);
       }
+      break;
+    }
+    case "close_parallel_lane": {
+      const parallelSessionIndex =
+        typeof command.parallelSessionIndex === "number" && Number.isInteger(command.parallelSessionIndex)
+          ? command.parallelSessionIndex
+          : 1;
+      closeParallelChatLane(parallelSessionIndex);
       break;
     }
     case "stop_assistant":
