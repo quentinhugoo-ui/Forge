@@ -7043,8 +7043,8 @@ ol.assistantText__list li::before {
   position: absolute;
   inset: 2px 0;
   z-index: -1;
-  background: var(--forge-chat-bg);
-  border: 1px solid color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 12%);
+  background: var(--forge-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-bg), var(--forge-text) 12%);
   border-radius: 6px !important;
   opacity: 0;
   pointer-events: none;
