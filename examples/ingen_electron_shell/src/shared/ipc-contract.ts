@@ -1805,7 +1805,7 @@ export interface BangerPresentLoopBootstrapResult {
     schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1";
     provider: "google_photorealistic_3d_tiles";
     rendererContract: "Cesium3DTileset_style_native_streamer";
-    rootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
+    rootTilesetEndpoint: "ion://google-photorealistic-3d-tiles";
     rootRequestTtlHours: 3;
     nativeStreamer?: {
       schema: "forge.banger.native_3d_tiles_streamer.v1";
@@ -1849,8 +1849,8 @@ export interface BangerGoogleTilesConfigResult {
   schema: "forge.banger.google_photorealistic_tiles_config.v1";
   provider: "google_photorealistic_3d_tiles";
   rendererModel: "cesium_for_unreal_style_3d_tileset";
-  source: "cesium-ion-direct" | "cesium-ion-token-broker" | "google-map-tiles-direct";
-  accessMode?: "cesium-ion" | "google-map-tiles-api-key";
+  source: "cesium-ion-direct" | "cesium-ion-token-broker";
+  accessMode?: "cesium-ion";
   rootTilesetUrl: string;
   cesiumIonAccessTokenUrl?: string;
   cesiumIonAccessToken?: string;
@@ -1866,7 +1866,7 @@ export interface BangerGoogleTilesConfigResult {
     visualFallback: string;
     blocker: string;
   };
-  directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
+  directRootTilesetEndpoint: "ion://google-photorealistic-3d-tiles";
   requestBudget: number;
   rootRequestTtlHours: 3;
   showCreditsOnScreen: true;

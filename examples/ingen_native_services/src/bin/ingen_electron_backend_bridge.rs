@@ -543,7 +543,7 @@ impl BangerMapsTilesetContract {
             schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1",
             provider: "google_photorealistic_3d_tiles",
             renderer_contract: "Cesium3DTileset_style_native_streamer",
-            root_tileset_endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
+            root_tileset_endpoint: "ion://google-photorealistic-3d-tiles",
             root_request_ttl_hours: 3,
             native_streamer: BangerMapsNative3DTilesStreamer {
                 schema: "forge.banger.native_3d_tiles_streamer.v1",
@@ -1042,17 +1042,19 @@ fn banger_maps_root_ingest(
     force_content_decode: Option<bool>,
     force_gpu_staging: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
-    let Some(url) = banger_maps_resolved_root_url() else {
-        let cache_dir = banger_maps_cache_dir();
-        let message = "Set FORGE_BANGER_MAPS_ROOT_URL to a direct 3D Tiles root URL, or set GOOGLE_MAP_TILES_API_KEY/GOOGLE_API_KEY so Banger can build the Google Photorealistic 3D Tiles root URL locally.".to_string();
-        return failed_banger_maps_root_ingest(
-            "",
-            &cache_dir,
-            &cache_dir.join("missing-root-url.root.json"),
-            "missing_direct_maps_root_url",
-            message,
-            false,
-        );
+    let url = match banger_maps_resolved_root_url() {
+        Ok(url) => url,
+        Err(message) => {
+            let cache_dir = banger_maps_cache_dir();
+            return failed_banger_maps_root_ingest(
+                "",
+                &cache_dir,
+                &cache_dir.join("missing-root-url.root.json"),
+                "missing_cesium_ion_endpoint",
+                message,
+                false,
+            );
+        }
     };
     let cache_dir = banger_maps_cache_dir();
     let url_hash = sha256_hex(url.as_bytes());
@@ -1092,30 +1094,155 @@ fn banger_maps_root_ingest(
     )
 }
 
-fn banger_maps_resolved_root_url() -> Option<String> {
+fn banger_maps_resolved_root_url() -> Result<String, String> {
+    let direct_root_url = env::var("FORGE_BANGER_MAPS_ROOT_URL").ok();
+    let cesium_token_broker_url = banger_maps_cesium_token_broker_url();
+    let cesium_access_token = env::var("CESIUM_ACCESS_TOKEN")
+        .or_else(|_| env::var("VITE_CESIUM_ACCESS_TOKEN"))
+        .ok();
+    let cesium_asset_id = banger_maps_cesium_ion_asset_id();
     banger_maps_root_url_from_values(
-        env::var("FORGE_BANGER_MAPS_ROOT_URL").ok().as_deref(),
-        env::var("GOOGLE_MAP_TILES_API_KEY").ok().as_deref(),
-        env::var("GOOGLE_API_KEY").ok().as_deref(),
+        direct_root_url.as_deref(),
+        cesium_token_broker_url.as_deref(),
+        cesium_access_token.as_deref(),
+        &cesium_asset_id,
     )
+}
+
+fn banger_maps_cesium_token_broker_url() -> Option<String> {
+    [
+        env::var("FORGE_BANGER_CESIUM_ION_TOKEN_URL").ok(),
+        env::var("FORGE_CESIUM_ION_TOKEN_URL").ok(),
+        env::var("FORGE_REAL_ESTATE_BACKEND_URL")
+            .ok()
+            .map(|base| {
+                format!(
+                    "{}/api/banger/cesium-ion-token",
+                    base.trim().trim_end_matches('/')
+                )
+            }),
+        env::var("FORGE_RENDER_BACKEND_URL")
+            .ok()
+            .map(|base| {
+                format!(
+                    "{}/api/banger/cesium-ion-token",
+                    base.trim().trim_end_matches('/')
+                )
+            }),
+        Some("https://forge-6cai.onrender.com/api/banger/cesium-ion-token".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|value| value.trim().to_string())
+    .find(|value| !value.is_empty())
+}
+
+fn banger_maps_cesium_ion_asset_id() -> String {
+    env::var("FORGE_BANGER_CESIUM_ION_ASSET_ID")
+        .or_else(|_| env::var("CESIUM_ION_GOOGLE_PHOTOREALISTIC_3D_TILES_ASSET_ID"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "2275207".to_string())
 }
 
 fn banger_maps_root_url_from_values(
     direct_root_url: Option<&str>,
-    google_map_tiles_api_key: Option<&str>,
-    google_api_key: Option<&str>,
-) -> Option<String> {
-    direct_root_url
+    cesium_token_broker_url: Option<&str>,
+    cesium_access_token: Option<&str>,
+    cesium_asset_id: &str,
+) -> Result<String, String> {
+    if let Some(url) = direct_root_url.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(url.to_string());
+    }
+    if let Some(broker_url) = cesium_token_broker_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    {
+        return banger_maps_cesium_root_url_from_broker(broker_url, cesium_asset_id);
+    }
+    if let Some(token) = cesium_access_token.map(str::trim).filter(|value| !value.is_empty()) {
+        return banger_maps_cesium_root_url_from_token(token, cesium_asset_id);
+    }
+    Err("Set FORGE_BANGER_CESIUM_ION_TOKEN_URL or CESIUM_ACCESS_TOKEN. Banger Maps uses Cesium ion for Photorealistic 3D Tiles, not Google Map Tiles API keys.".to_string())
+}
+
+fn banger_maps_cesium_root_url_from_broker(
+    broker_url: &str,
+    cesium_asset_id: &str,
+) -> Result<String, String> {
+    let bytes = fetch_banger_maps_root(broker_url)?;
+    let value = serde_json::from_slice::<Value>(&bytes)
+        .map_err(|error| format!("cesium broker json: {error}"))?;
+    banger_maps_cesium_root_url_from_endpoint_value(&value, cesium_asset_id)
         .or_else(|| {
-            google_map_tiles_api_key
-                .or(google_api_key)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|key| format!("https://tile.googleapis.com/v1/3dtiles/root.json?key={key}"))
+            banger_maps_json_string(&value, &["cesiumIonAccessToken", "accessToken", "token"])
+                .and_then(|token| banger_maps_cesium_root_url_from_token(&token, cesium_asset_id).ok())
         })
+        .ok_or_else(|| {
+            "Cesium broker did not return an endpoint URL or Cesium ion access token.".to_string()
+        })
+}
+
+fn banger_maps_cesium_root_url_from_token(
+    token: &str,
+    cesium_asset_id: &str,
+) -> Result<String, String> {
+    let endpoint_url = banger_cesium_ion_asset_endpoint_url(cesium_asset_id, token);
+    let bytes = fetch_banger_maps_root(&endpoint_url)?;
+    let value = serde_json::from_slice::<Value>(&bytes)
+        .map_err(|error| format!("cesium endpoint json: {error}"))?;
+    banger_maps_cesium_root_url_from_endpoint_value(&value, cesium_asset_id)
+        .ok_or_else(|| "Cesium ion endpoint did not return a 3D Tiles URL.".to_string())
+}
+
+fn banger_cesium_ion_asset_endpoint_url(asset_id: &str, token: &str) -> String {
+    format!(
+        "https://api.cesium.com/v1/assets/{}/endpoint?access_token={}",
+        asset_id.trim(),
+        token.trim()
+    )
+}
+
+fn banger_maps_cesium_root_url_from_endpoint_value(
+    value: &Value,
+    cesium_asset_id: &str,
+) -> Option<String> {
+    let endpoint = value.get("endpoint").unwrap_or(value);
+    let url = banger_maps_json_string(
+        endpoint,
+        &["url", "rootTilesetUrl", "tilesetUrl", "endpointUrl"],
+    )?;
+    if url.starts_with("ion://") {
+        let token = banger_maps_json_string(value, &["cesiumIonAccessToken", "accessToken", "token"])?;
+        return banger_maps_cesium_root_url_from_token(&token, cesium_asset_id).ok();
+    }
+    let token = banger_maps_json_string(endpoint, &["accessToken", "cesiumIonAccessToken", "token"])
+        .or_else(|| banger_maps_json_string(value, &["accessToken", "cesiumIonAccessToken", "token"]));
+    Some(match token {
+        Some(token) => banger_append_query_param(&url, "access_token", &token),
+        None => url,
+    })
+}
+
+fn banger_maps_json_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn banger_append_query_param(url: &str, key: &str, value: &str) -> String {
+    let mut parsed = match reqwest::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return url.to_string(),
+    };
+    if parsed.query_pairs().any(|(existing, _)| existing.eq_ignore_ascii_case(key)) {
+        return parsed.to_string();
+    }
+    parsed.query_pairs_mut().append_pair(key, value);
+    parsed.to_string()
 }
 
 fn failed_banger_maps_root_ingest(
@@ -9133,23 +9260,38 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn resolves_maps_root_url_from_direct_url_or_google_key() {
+    fn resolves_maps_root_url_from_direct_url_or_cesium_ion_endpoint() {
         let direct = banger_maps_root_url_from_values(
             Some(" https://example.test/tileset.json "),
-            Some("google-map-key"),
+            Some("https://broker.example.test/api/banger/cesium-ion-token"),
             None,
+            "2275207",
         )
         .unwrap();
         assert_eq!(direct, "https://example.test/tileset.json");
 
-        let google = banger_maps_root_url_from_values(None, Some(" google-map-key "), None).unwrap();
+        let cesium_endpoint = banger_cesium_ion_asset_endpoint_url(" 2275207 ", " cesium-token ");
         assert_eq!(
-            google,
-            "https://tile.googleapis.com/v1/3dtiles/root.json?key=google-map-key"
+            cesium_endpoint,
+            "https://api.cesium.com/v1/assets/2275207/endpoint?access_token=cesium-token"
         );
         assert_eq!(
-            redact_url_secret(&google),
-            "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted"
+            redact_url_secret(&cesium_endpoint),
+            "https://api.cesium.com/v1/assets/2275207/endpoint?access_token=redacted"
+        );
+
+        let endpoint = serde_json::json!({
+            "url": "https://assets.cesium.com/2275207/root.json?v=1",
+            "accessToken": "tileset-session-token"
+        });
+        let root = banger_maps_cesium_root_url_from_endpoint_value(&endpoint, "2275207").unwrap();
+        assert_eq!(
+            root,
+            "https://assets.cesium.com/2275207/root.json?v=1&access_token=tileset-session-token"
+        );
+        assert_eq!(
+            redact_url_secret(&root),
+            "https://assets.cesium.com/2275207/root.json?v=1&access_token=redacted"
         );
     }
 
@@ -9170,7 +9312,7 @@ mod tests {
         ));
         fs::create_dir_all(&cache_dir).unwrap();
         let projection = summarize_banger_maps_root(
-            "https://tile.googleapis.com/v1/3dtiles/root.json?key=secret",
+            "https://assets.cesium.com/2275207/root.json?access_token=secret",
             &cache_dir,
             &cache_dir.join("root.json"),
             &bytes,
@@ -9395,7 +9537,7 @@ mod tests {
         assert_eq!(count_banger_tile_content_uris(root_tile), 3);
         let bytes = serde_json::to_vec(&root).unwrap();
         let projection = summarize_banger_maps_root(
-            "https://tile.googleapis.com/v1/3dtiles/root.json?key=secret&foo=bar",
+            "https://assets.cesium.com/2275207/root.json?access_token=secret&foo=bar",
             std::path::Path::new("cache"),
             std::path::Path::new("cache/root.json"),
             &bytes,
@@ -9436,7 +9578,7 @@ mod tests {
         );
         assert_eq!(
             projection.root_tileset_url,
-            "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted&foo=bar"
+            "https://assets.cesium.com/2275207/root.json?access_token=redacted&foo=bar"
         );
         assert!(!projection.content_cache.enabled);
         assert_eq!(projection.content_cache.requested_content_count, 3);

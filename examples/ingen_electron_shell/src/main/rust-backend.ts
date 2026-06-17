@@ -118,7 +118,7 @@ export interface RustBangerPresentLoopBootstrap {
     schema: "forge.banger.maps_photorealistic_3d_tiles_contract.v1";
     provider: "google_photorealistic_3d_tiles";
     rendererContract: "Cesium3DTileset_style_native_streamer";
-    rootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json";
+    rootTilesetEndpoint: "ion://google-photorealistic-3d-tiles";
     rootRequestTtlHours: 3;
     nativeStreamer?: {
       schema: "forge.banger.native_3d_tiles_streamer.v1";
