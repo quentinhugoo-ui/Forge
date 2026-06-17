@@ -4843,6 +4843,25 @@ button {
   animation: transcriptArchiveFocusFlash 1600ms ease-out 1;
 }
 
+.transcriptArchiveFocusSnippet {
+  width: min(720px, calc(100% - 36px));
+  margin: 0 0 10px 34px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), var(--self-directed-cyan) 18%);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
+  color: var(--forge-text);
+  scroll-margin-block: 88px;
+}
+
+.transcriptArchiveFocusSnippet p {
+  margin: 0;
+  color: color-mix(in oklab, var(--forge-text), var(--self-directed-cyan) 8%);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 @keyframes transcriptArchiveFocusFlash {
   0%,
   42% {

@@ -543,6 +543,7 @@ export interface TranscriptMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ComposerUploadPreview[];
+  archiveFocusSnippet?: string;
   proofHash: string;
 }
 
@@ -776,6 +777,7 @@ export type PanelsChatBottomCommand = PanelsChatBottomCommandBase & {
   moduleId?: string;
   sessionId?: string;
   turnId?: string;
+  focusSnippet?: string;
   parallelSessionIndex?: number;
   parallelDrafts?: ParallelChatDraft[];
   internalPrompt?: boolean;

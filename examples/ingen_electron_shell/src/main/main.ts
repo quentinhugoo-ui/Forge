@@ -15691,7 +15691,23 @@ function archiveTranscriptAroundTurn(session: ChatArchiveSession, turnId: string
   return messages.slice(start, start + 48);
 }
 
-function openArchiveSessionInParallel(sessionId: string, turnId: string, parallelSessionIndex: number): boolean {
+function archiveTranscriptWithFocusSnippet(
+  messages: TranscriptMessage[],
+  turnId: string,
+  focusSnippet: string
+): TranscriptMessage[] {
+  const snippet = focusSnippet.trim();
+  if (!turnId || !snippet) {
+    return messages;
+  }
+  return messages.map((message) =>
+    message.id === turnId
+      ? { ...message, archiveFocusSnippet: snippet }
+      : message
+  );
+}
+
+function openArchiveSessionInParallel(sessionId: string, turnId: string, parallelSessionIndex: number, focusSnippet = ""): boolean {
   const boundedIndex = Math.max(1, Math.min(3, parallelSessionIndex));
   if (sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID || sessionId === SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID) {
     ensureSearchArchiveLoopDemoSession();
@@ -15724,9 +15740,14 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
   archiveItem.parallelLaneIndex = boundedIndex;
   archiveItem.parallelLaneCount = Math.max(boundedIndex + 1, 2);
   archiveItem.parallelPeerSessionIds = [primarySession.sessionId];
+  const transcript = archiveTranscriptWithFocusSnippet(
+    archiveTranscriptAroundTurn(archiveSession, turnId),
+    turnId,
+    focusSnippet
+  );
   parallelChatLanes.set(boundedIndex, {
     sessionId,
-    transcript: archiveTranscriptAroundTurn(archiveSession, turnId),
+    transcript,
     groupId,
     focusMessageId: turnId
   });
@@ -18074,12 +18095,13 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       await loadChatArchive();
       const sessionId = typeof command.sessionId === "string" ? command.sessionId.trim() : "";
       const turnId = typeof command.turnId === "string" ? command.turnId.trim() : "";
+      const focusSnippet = typeof command.focusSnippet === "string" ? command.focusSnippet : "";
       const parallelSessionIndex =
         typeof command.parallelSessionIndex === "number" && Number.isInteger(command.parallelSessionIndex)
           ? command.parallelSessionIndex
           : 1;
       if (sessionId) {
-        openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex);
+        openArchiveSessionInParallel(sessionId, turnId, parallelSessionIndex, focusSnippet);
       }
       break;
     }

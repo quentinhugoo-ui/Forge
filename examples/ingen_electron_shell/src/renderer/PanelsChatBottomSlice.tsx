@@ -3311,6 +3311,7 @@ function openSearchArchiveHitInParallel(hit: AssistantSearchArchiveHit): void {
     kind: "open_archive_parallel",
     sessionId,
     turnId: hit.turnId.trim() || searchArchiveTurnIdFromOpenRef(hit.openRef),
+    focusSnippet: hit.snippet,
     parallelSessionIndex: 1
   });
 }
@@ -4434,7 +4435,10 @@ function TranscriptCanvas({
     }
     focusedMessageScrollRef.current = scrollKey;
     const frame = globalThis.requestAnimationFrame(() => {
-      const item = messagesRef.current?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(normalizedFocusMessageId)}"]`);
+      const escapedId = CSS.escape(normalizedFocusMessageId);
+      const item =
+        messagesRef.current?.querySelector<HTMLElement>(`[data-archive-focus-for="${escapedId}"]`) ??
+        messagesRef.current?.querySelector<HTMLElement>(`[data-msg-id="${escapedId}"]`);
       item?.scrollIntoView({ block: "center", behavior: "smooth" });
       item?.classList.add("transcriptItem--archiveFocusFlash");
       globalThis.setTimeout(() => item?.classList.remove("transcriptItem--archiveFocusFlash"), 1600);
@@ -4602,6 +4606,7 @@ function TranscriptCanvas({
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
           const isArchiveFocusMessage = normalizedFocusMessageId === message.id;
+          const archiveFocusSnippet = isArchiveFocusMessage ? (message.archiveFocusSnippet ?? "").trim() : "";
           const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
@@ -4662,6 +4667,11 @@ function TranscriptCanvas({
               data-msg-id={message.id}
               key={message.id}
             >
+              {archiveFocusSnippet ? (
+                <div className="transcriptArchiveFocusSnippet" data-archive-focus-for={message.id}>
+                  <p>{archiveFocusSnippet}</p>
+                </div>
+              ) : null}
               {role === "assistant" ? (
                 <>
                   {visualAttachments.length > 0 ? (
