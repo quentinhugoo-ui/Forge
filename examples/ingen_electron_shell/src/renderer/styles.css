@@ -6982,11 +6982,25 @@ ol.assistantText__list li::before {
 }
 
 .searchArchiveResultCard__hitTop span,
-.searchArchiveResultCard__hitTop time {
+.searchArchiveResultCard__hitTop time,
+.searchArchiveResultCard__hitTop strong {
   color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 6%);
   font-size: 10px;
   font-weight: 560;
   line-height: 1.25;
+}
+
+.searchArchiveResultCard__hitTop strong {
+  overflow: hidden;
+  max-width: 240px;
+  color: color-mix(in oklab, var(--forge-text), transparent 10%);
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchArchiveResultCard__hitTop strong .searchArchiveResultCard__keywordPill {
+  vertical-align: middle;
 }
 
 .searchArchiveResultCard__keywordPill.transcriptPill {

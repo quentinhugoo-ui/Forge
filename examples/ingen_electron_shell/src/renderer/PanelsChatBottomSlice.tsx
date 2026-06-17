@@ -1305,6 +1305,7 @@ interface AssistantMacroListItem {
 
 interface AssistantSearchArchiveHit {
   rank: number;
+  sourceType: string;
   sessionId: string;
   sessionTitle: string;
   turnId: string;
@@ -1313,6 +1314,18 @@ interface AssistantSearchArchiveHit {
   matchedField: string;
   score: string;
   snippet: string;
+  openRef: string;
+  attachments: AssistantSearchArchiveAttachment[];
+}
+
+interface AssistantSearchArchiveAttachment {
+  id: string;
+  name: string;
+  kind: string;
+  fileType: string;
+  origin: string;
+  createdInAppSource: string;
+  textPreview: string;
   openRef: string;
 }
 
@@ -1799,6 +1812,12 @@ function searchArchiveValue(line: string, key: string): string {
   return match ? unquoteSearchArchiveValue(match[1] ?? "") : "";
 }
 
+function searchArchiveListValue(line: string, key: string): string {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^\\s*-\\s+${escapedKey}\\s*[:=]\\s*(.*)$`).exec(line);
+  return match ? unquoteSearchArchiveValue(match[1] ?? "") : "";
+}
+
 function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveResult {
   const result: AssistantSearchArchiveResult = {
     query: "",
@@ -1810,6 +1829,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
     hits: []
   };
   let activeHit: AssistantSearchArchiveHit | null = null;
+  let activeAttachment: AssistantSearchArchiveAttachment | null = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -1820,6 +1840,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
     if (rank) {
       activeHit = {
         rank: Number(rank[1]),
+        sourceType: "",
         sessionId: "",
         sessionTitle: "",
         turnId: "",
@@ -1828,12 +1849,46 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
         matchedField: "",
         score: "",
         snippet: "",
-        openRef: ""
+        openRef: "",
+        attachments: []
       };
+      activeAttachment = null;
       result.hits.push(activeHit);
       continue;
     }
     if (activeHit) {
+      const attachmentId = searchArchiveListValue(line, "id");
+      if (attachmentId) {
+        activeAttachment = {
+          id: attachmentId,
+          name: "",
+          kind: "",
+          fileType: "",
+          origin: "",
+          createdInAppSource: "",
+          textPreview: "",
+          openRef: ""
+        };
+        activeHit.attachments.push(activeAttachment);
+        continue;
+      }
+      if (activeAttachment && /^\s{8,}\S/.test(line)) {
+        const attachmentName = searchArchiveValue(trimmed, "name");
+        const attachmentKind = searchArchiveValue(trimmed, "kind");
+        const attachmentFileType = searchArchiveValue(trimmed, "file_type");
+        const attachmentOrigin = searchArchiveValue(trimmed, "origin");
+        const attachmentCreatedInAppSource = searchArchiveValue(trimmed, "created_in_app_source");
+        const attachmentTextPreview = searchArchiveValue(trimmed, "text_preview");
+        const attachmentOpenRef = searchArchiveValue(trimmed, "open_ref");
+        if (attachmentName) activeAttachment.name = attachmentName;
+        if (attachmentKind) activeAttachment.kind = attachmentKind;
+        if (attachmentFileType) activeAttachment.fileType = attachmentFileType;
+        if (attachmentOrigin) activeAttachment.origin = attachmentOrigin;
+        if (attachmentCreatedInAppSource) activeAttachment.createdInAppSource = attachmentCreatedInAppSource;
+        if (attachmentTextPreview) activeAttachment.textPreview = attachmentTextPreview;
+        if (attachmentOpenRef) activeAttachment.openRef = attachmentOpenRef;
+      }
+      const sourceType = searchArchiveValue(trimmed, "source_type");
       const sessionId = searchArchiveValue(trimmed, "session_id");
       const sessionTitle = searchArchiveValue(trimmed, "session_title");
       const turnId = searchArchiveValue(trimmed, "turn_id");
@@ -1843,6 +1898,7 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
       const score = searchArchiveValue(trimmed, "score");
       const snippet = searchArchiveValue(trimmed, "snippet");
       const openRef = searchArchiveValue(trimmed, "open_ref");
+      if (sourceType) activeHit.sourceType = sourceType;
       if (sessionId) activeHit.sessionId = sessionId;
       if (sessionTitle) activeHit.sessionTitle = sessionTitle;
       if (turnId) activeHit.turnId = turnId;
@@ -3661,6 +3717,25 @@ function searchArchiveHitAuthorLabel(role: string, userName: string, agentName: 
   return role.trim() || "message";
 }
 
+function searchArchiveHitIsFile(hit: AssistantSearchArchiveHit): boolean {
+  return hit.sourceType === "attachment" || hit.matchedField.startsWith("attachment_");
+}
+
+function searchArchiveAttachmentMatchesQuery(attachment: AssistantSearchArchiveAttachment, query: string): boolean {
+  const terms = searchArchiveHighlightTerms(query).map((term) => term.toLocaleLowerCase());
+  if (terms.length === 0) {
+    return false;
+  }
+  const haystack = `${attachment.name} ${attachment.textPreview}`.toLocaleLowerCase();
+  return terms.some((term) => haystack.includes(term));
+}
+
+function searchArchiveHitFileLabel(hit: AssistantSearchArchiveHit, query: string): string {
+  const matchingAttachment = hit.attachments.find((attachment) => searchArchiveAttachmentMatchesQuery(attachment, query));
+  const attachment = matchingAttachment ?? hit.attachments[0];
+  return attachment?.name?.trim() || "File";
+}
+
 interface SearchArchiveHitGroup {
   key: string;
   title: string;
@@ -3720,6 +3795,9 @@ function SearchArchiveResultCard({
                     <div className="searchArchiveResultCard__hitTop">
                       {hit.createdAt ? <time dateTime={hit.createdAt}>{hit.createdAt.slice(0, 10)}</time> : null}
                       <span>{searchArchiveHitAuthorLabel(hit.role, userName, agentName)}</span>
+                      {searchArchiveHitIsFile(hit) ? (
+                        <strong>{highlightedSearchArchiveSnippet(searchArchiveHitFileLabel(hit, result.query), result.query, `${messageId}-search-file-${blockIndex}-${groupIndex}-${hitIndex}`)}</strong>
+                      ) : null}
                     </div>
                     <p>{highlightedSearchArchiveSnippet(hit.snippet, result.query, `${messageId}-search-hit-${blockIndex}-${groupIndex}-${hitIndex}`)}</p>
                   </button>

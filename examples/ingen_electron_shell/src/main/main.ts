@@ -16597,6 +16597,100 @@ function searchArchiveLoopDemoSummary(result: SearchArchiveResult): string {
   return `J'ai retrouve ${result.hits.length} ${suffix}, regroupes par session. Sessions concernees: ${sessionTitles.join(", ")}.`;
 }
 
+const SEARCHARCHIVE_FILE_DEMO_STOPWORDS = new Set([
+  "avec",
+  "dans",
+  "des",
+  "document",
+  "file",
+  "fichier",
+  "image",
+  "les",
+  "pour",
+  "preview",
+  "sans",
+  "session",
+  "the",
+  "une",
+  "user"
+]);
+
+function searchArchiveLoopDemoSessionAttachments(session: ChatArchiveSession): ChatArchiveAttachment[] {
+  return session.messages.flatMap((message) => message.attachments ?? []);
+}
+
+function searchArchiveLoopDemoFileTermCandidates(attachment: ChatArchiveAttachment): string[] {
+  return `${attachment.name ?? ""} ${attachment.textPreview ?? ""}`
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase()
+    .split(/[^a-z0-9_]+/i)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 3 && !SEARCHARCHIVE_FILE_DEMO_STOPWORDS.has(term) && !/^\d+$/.test(term));
+}
+
+function searchArchiveLoopDemoFileQuery(session: ChatArchiveSession): string {
+  const attachments = searchArchiveLoopDemoSessionAttachments(session);
+  const scoreByTerm = new Map<string, number>();
+  for (const attachment of attachments) {
+    const uniqueTerms = new Set(searchArchiveLoopDemoFileTermCandidates(attachment));
+    for (const term of uniqueTerms) {
+      scoreByTerm.set(term, (scoreByTerm.get(term) ?? 0) + 1);
+    }
+  }
+  const sharedTerms = [...scoreByTerm.entries()]
+    .filter(([, score]) => score > 1)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([term]) => term);
+  if (sharedTerms.length > 0) {
+    return sharedTerms.slice(0, 4).join(" ");
+  }
+  const perFileTerms = attachments
+    .flatMap((attachment) => searchArchiveLoopDemoFileTermCandidates(attachment).slice(0, 1))
+    .filter((term, index, terms) => terms.indexOf(term) === index);
+  return perFileTerms.slice(0, 4).join(" ") || "fichiers";
+}
+
+function searchArchiveLoopDemoFileRequestForSession(session: ChatArchiveSession): SearchArchiveRequest {
+  const query = searchArchiveLoopDemoFileQuery(session);
+  return {
+    query,
+    keywords: query.split(/\s+/).filter(Boolean),
+    sessionScope: "all",
+    contentScope: "files",
+    fileOrigin: "all",
+    topK: 10,
+    contextTurns: 1,
+    includeFilePreviews: true,
+    includeArtifactRefs: true
+  };
+}
+
+function searchArchiveLoopDemoFileResultForSessions(sessions: ChatArchiveSession[]): { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null {
+  let fallback: { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null = null;
+  const candidates = sessions
+    .filter((session) => searchArchiveLoopDemoSessionAttachments(session).length >= 2)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  for (const session of candidates) {
+    const request = searchArchiveLoopDemoFileRequestForSession(session);
+    const result = searchArchiveSessions([session], request);
+    const fileHitCount = result.hits.filter((hit) => hit.sourceType === "attachment").length;
+    if (fileHitCount >= 2) {
+      return { session, request, result };
+    }
+    if (!fallback && fileHitCount > 0) {
+      fallback = { session, request, result };
+    }
+  }
+  return fallback;
+}
+
+function searchArchiveLoopDemoFileSummary(session: ChatArchiveSession, result: SearchArchiveResult): string {
+  const attachments = searchArchiveLoopDemoSessionAttachments(session);
+  const suffix = result.hits.length > 1 ? "resultats fichiers" : "resultat fichier";
+  return `J'ai retrouve ${result.hits.length} ${suffix} dans la session ${session.title}. Cette session contient ${attachments.length} fichiers, donc la card les regroupe sous le nom exact de la session.`;
+}
+
 function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
   const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const sourceSessions = Array.from(chatArchiveSessions.values())
@@ -16607,6 +16701,7 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
     );
   const request = searchArchiveLoopDemoRequestForSessions(sourceSessions);
   const result = searchArchiveSessions(sourceSessions, request);
+  const fileDemo = searchArchiveLoopDemoFileResultForSessions(sourceSessions);
   const queryText = request.query || request.keywords?.join(" ") || "archive";
   const messages: ChatArchiveMessage[] = [
     {
@@ -16638,7 +16733,41 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
       createdAt: "2026-06-16T08:30:21.000Z",
       attachments: [],
       proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-assistant-final-real", result: result.proofHash })
-    }
+    },
+    ...(fileDemo
+      ? [
+          {
+            turnId: "searcharchive-demo-file-user",
+            role: "user" as const,
+            text: `Maintenant retrouve aussi les fichiers lies a ${fileDemo.request.query} dans une vraie session qui contient plusieurs fichiers.`,
+            createdAt: "2026-06-16T08:31:00.000Z",
+            attachments: [],
+            proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-file-user", sessionId: fileDemo.session.sessionId, query: fileDemo.request.query })
+          },
+          {
+            turnId: "searcharchive-demo-file-assistant-tool",
+            role: "assistant" as const,
+            text: [
+              `Je vais verifier dans les fichiers archives de la session ${fileDemo.session.title}.`,
+              "",
+              BRAIN_SEARCHARCHIVE_COMMAND,
+              "",
+              renderSearchArchiveResult(fileDemo.result)
+            ].join("\n"),
+            createdAt: "2026-06-16T08:31:15.000Z",
+            attachments: [],
+            proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-file-assistant-tool", result: fileDemo.result.proofHash })
+          },
+          {
+            turnId: "searcharchive-demo-file-assistant-final",
+            role: "assistant" as const,
+            text: searchArchiveLoopDemoFileSummary(fileDemo.session, fileDemo.result),
+            createdAt: "2026-06-16T08:31:21.000Z",
+            attachments: [],
+            proofHash: stableSearchArchiveHash({ demo: "searcharchive-demo-file-assistant-final", result: fileDemo.result.proofHash })
+          }
+        ]
+      : [])
   ];
   return {
     schema: "forge.brain.chat_session_archive.v1",
@@ -16648,7 +16777,7 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
     workspaceLabel,
     date: "2026-06-16",
     createdAt: "2026-06-16T08:30:00.000Z",
-    updatedAt: "2026-06-16T08:30:21.000Z",
+    updatedAt: fileDemo ? "2026-06-16T08:31:21.000Z" : "2026-06-16T08:30:21.000Z",
     archived: false,
     messages,
     proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
