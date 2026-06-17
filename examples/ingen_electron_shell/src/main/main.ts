@@ -12079,6 +12079,13 @@ function animateNativeWidgetWindowBounds(window: BrowserWindow, targetBounds: El
     return;
   }
   clearWidgetWindowBoundsAnimationTimer();
+  /* Drop the window shape for the duration of the bounds animation. The shape is
+     computed by the renderer in CSS pixels and applied asynchronously, so while
+     the native bounds move per frame it always lags by a frame or two and clips
+     the chat bar mid-slide (stray/shimmering pixels). A transparent window with
+     no shape stays visually correct (per-pixel alpha); the precise shape is
+     restored once the bounds settle. */
+  applyNativeWidgetWindowShape(window, []);
   const startBounds = window.getBounds();
   const duration = Math.max(80, Math.min(900, Math.round(durationMs)));
   const startedAt = Date.now();
@@ -12099,6 +12106,8 @@ function animateNativeWidgetWindowBounds(window: BrowserWindow, targetBounds: El
     if (progress >= 1) {
       clearWidgetWindowBoundsAnimationTimer();
       window.setBounds(targetBounds, false);
+      // Bounds are stable again: restore the precise shape the renderer asked for.
+      applyNativeWidgetWindowShape(window, widgetWindowHitRegions);
     }
   };
   applyFrame();
@@ -13250,7 +13259,13 @@ function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, reg
     return true;
   }
   widgetWindowHitRegions = nextRegions;
-  applyNativeWidgetWindowShape(window, widgetWindowHitRegions);
+  /* While the window bounds are mid-animation (widget enter/exit, taskbar
+     slide) the renderer's CSS-pixel shape lags the native bounds; clipping per
+     frame makes the chat bar shimmer. Hold the regions — the animation's end
+     re-applies them once the bounds are stable. */
+  if (widgetWindowBoundsAnimationTimer === null) {
+    applyNativeWidgetWindowShape(window, widgetWindowHitRegions);
+  }
   return true;
 }
 
@@ -18507,9 +18522,9 @@ function installIpc(): void {
         georeferenceStage: "wgs84_ecef_to_enu_floating_origin",
         gpuSubmissionStage: "meshlet_or_indexed_mesh_upload_pending",
         visualFallback: "none_direct_cesium_required",
-        blocker: "cesium_or_google_direct_credentials_required"
+        blocker: "cesium_ion_credentials_required"
       },
-      directRootTilesetEndpoint: "https://tile.googleapis.com/v1/3dtiles/root.json" as const,
+      directRootTilesetEndpoint: "ion://google-photorealistic-3d-tiles" as const,
       requestBudget: 18,
       rootRequestTtlHours: 3 as const,
       showCreditsOnScreen: true as const,
@@ -18554,7 +18569,6 @@ function installIpc(): void {
       };
     }
     const cesiumIonAccessToken = (process.env.CESIUM_ACCESS_TOKEN ?? process.env.VITE_CESIUM_ACCESS_TOKEN ?? "").trim();
-    const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
     const explicitCesiumIonAccessTokenUrl = (
       process.env.FORGE_BANGER_CESIUM_ION_TOKEN_URL ??
       process.env.FORGE_CESIUM_ION_TOKEN_URL ??
@@ -18623,37 +18637,12 @@ function installIpc(): void {
         })
       };
     }
-    if (apiKey) {
-      const result = {
-        ...base,
-        source: "google-map-tiles-direct" as const,
-        accessMode: "google-map-tiles-api-key" as const,
-        accepted: true,
-        rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`
-      };
-      return {
-        ...result,
-        proofHash: hashJson({
-          schema,
-          accepted: true,
-          endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
-          source: result.source,
-          accessMode: result.accessMode,
-          keyFingerprint: hashJson(apiKey).slice(0, 16),
-          requestBudget: result.requestBudget,
-          lod: result.lod,
-          georeference: result.georeference,
-          attribution: result.attribution,
-          initialView
-        })
-      };
-    }
     return {
       ...base,
       accepted: false,
       error: {
         code: "shadow_only",
-        message: "Set CESIUM_ACCESS_TOKEN, FORGE_BANGER_CESIUM_ION_TOKEN_URL, or GOOGLE_MAP_TILES_API_KEY.",
+        message: "Set CESIUM_ACCESS_TOKEN or FORGE_BANGER_CESIUM_ION_TOKEN_URL.",
         proofHash: hashJson({ schema, configured: false })
       },
       proofHash: hashJson({ schema, accepted: false, configured: false })
