@@ -4752,39 +4752,39 @@ button {
 }
 
 .transcriptItem--archiveFocusFlash {
-  animation: transcriptArchiveFocusFlash 1600ms ease-out 1;
+  animation: none;
 }
 
-.transcriptArchiveFocusSnippet {
-  width: min(720px, calc(100% - 36px));
-  margin: 0 0 10px 34px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in oklab, var(--forge-line), var(--self-directed-cyan) 18%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
-  color: var(--forge-text);
-  scroll-margin-block: 88px;
+.transcriptItem--archiveFocusFlash .transcriptPill {
+  animation: transcriptArchiveFocusTextFlash 1500ms ease-out 1;
 }
 
-.transcriptArchiveFocusSnippet p {
-  margin: 0;
-  color: color-mix(in oklab, var(--forge-text), var(--self-directed-cyan) 8%);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.45;
-}
-
-@keyframes transcriptArchiveFocusFlash {
-  0%,
-  42% {
-    box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--self-directed-cyan), transparent 30%),
-      0 0 0 7px color-mix(in oklab, var(--self-directed-cyan), transparent 88%);
+@keyframes transcriptArchiveFocusTextFlash {
+  0% {
+    text-shadow: none;
+    filter: none;
+  }
+  18% {
+    text-shadow:
+      0 0 8px color-mix(in oklab, var(--self-directed-cyan), transparent 12%),
+      0 0 18px color-mix(in oklab, var(--self-directed-cyan), transparent 52%);
+    filter: brightness(1.18);
+  }
+  48% {
+    text-shadow:
+      0 0 5px color-mix(in oklab, var(--self-directed-cyan), transparent 34%),
+      0 0 12px color-mix(in oklab, var(--self-directed-cyan), transparent 72%);
+    filter: brightness(1.08);
   }
   100% {
-    box-shadow:
-      0 0 0 1px transparent,
-      0 0 0 7px transparent;
+    text-shadow: none;
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcriptItem--archiveFocusFlash .transcriptPill {
+    animation: none;
   }
 }
 

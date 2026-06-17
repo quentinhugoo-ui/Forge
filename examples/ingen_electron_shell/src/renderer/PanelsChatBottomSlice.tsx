@@ -4500,9 +4500,7 @@ function TranscriptCanvas({
         return;
       }
       const escapedId = CSS.escape(normalizedFocusMessageId);
-      const item =
-        container.querySelector<HTMLElement>(`[data-archive-focus-for="${escapedId}"]`) ??
-        container.querySelector<HTMLElement>(`[data-msg-id="${escapedId}"]`);
+      const item = container.querySelector<HTMLElement>(`[data-msg-id="${escapedId}"]`);
       if (!item) {
         return;
       }
@@ -4702,7 +4700,6 @@ function TranscriptCanvas({
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
           const isArchiveFocusMessage = normalizedFocusMessageId === message.id;
-          const archiveFocusSnippet = isArchiveFocusMessage ? (message.archiveFocusSnippet ?? "").trim() : "";
           const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
@@ -4763,11 +4760,6 @@ function TranscriptCanvas({
               data-msg-id={message.id}
               key={message.id}
             >
-              {archiveFocusSnippet ? (
-                <div className="transcriptArchiveFocusSnippet" data-archive-focus-for={message.id}>
-                  <p>{archiveFocusSnippet}</p>
-                </div>
-              ) : null}
               {role === "assistant" ? (
                 <>
                   {visualAttachments.length > 0 ? (
