@@ -7061,9 +7061,11 @@ ol.assistantText__list li::before {
   position: relative;
   display: grid;
   gap: 4px;
-  width: 100%;
+  box-sizing: border-box;
+  width: calc(100% + 34px);
   min-width: 0;
-  padding: 7px 0 8px;
+  margin-left: -34px;
+  padding: 7px 0 8px 34px;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -7081,7 +7083,7 @@ ol.assistantText__list li::before {
 .searchArchiveResultCard__hit::before {
   content: "";
   position: absolute;
-  inset: 2px 0 2px -34px;
+  inset: 2px 0;
   z-index: -1;
   background: var(--forge-sidebar-bg);
   border: 1px solid var(--forge-line);
@@ -7102,7 +7104,7 @@ ol.assistantText__list li::before {
 
 .searchArchiveResultCard__hitIcon {
   position: absolute;
-  left: -30px;
+  left: 4px;
   top: 50%;
   z-index: 1;
   display: inline-grid;
