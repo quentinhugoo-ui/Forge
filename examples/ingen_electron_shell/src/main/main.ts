@@ -812,7 +812,7 @@ let panelsChatBottomState = {
   activeSessionId: "",
   transcript: [] as TranscriptMessage[]
 };
-const parallelChatLanes = new Map<number, { sessionId: string; transcript: TranscriptMessage[]; groupId: string; focusMessageId?: string }>();
+const parallelChatLanes = new Map<number, { sessionId: string; transcript: TranscriptMessage[]; groupId: string; focusMessageId?: string; sessionTitle?: string }>();
 const composerUploadPreviewItems = new Map<string, ComposerUploadItem>();
 const providerAttachmentCache = new Map<string, ProviderAttachment>();
 
@@ -14702,7 +14702,10 @@ function publicTranscript(messages: TranscriptMessage[]): TranscriptMessage[] {
   );
 }
 
-function parallelChatLaneSessionTitle(sessionId: string): string {
+function parallelChatLaneSessionTitle(sessionId: string, explicitTitle = ""): string {
+  if (explicitTitle.trim()) {
+    return explicitTitle.trim();
+  }
   const item = sessionById(sessionId);
   const archiveSession = chatArchiveSessions.get(sessionId);
   return item?.label || archiveSession?.title || "Parallel session";
@@ -14711,20 +14714,24 @@ function parallelChatLaneSessionTitle(sessionId: string): string {
 function parallelChatLaneSnapshots(): PanelsChatBottomSnapshot["parallelLanes"] {
   return Array.from(parallelChatLanes.entries())
     .sort(([left], [right]) => left - right)
-    .map(([index, lane]) => ({
-      index,
-      sessionId: lane.sessionId,
-      sessionTitle: parallelChatLaneSessionTitle(lane.sessionId),
-      transcript: publicTranscript(lane.transcript),
-      focusMessageId: lane.focusMessageId,
-      proofHash: hashJson({
+    .map(([index, lane]) => {
+      const sessionTitle = parallelChatLaneSessionTitle(lane.sessionId, lane.sessionTitle);
+      const transcript = publicTranscript(lane.transcript);
+      return {
         index,
         sessionId: lane.sessionId,
-        sessionTitle: parallelChatLaneSessionTitle(lane.sessionId),
-        transcript: publicTranscript(lane.transcript),
-        focusMessageId: lane.focusMessageId ?? ""
-      })
-    }));
+        sessionTitle,
+        transcript,
+        focusMessageId: lane.focusMessageId,
+        proofHash: hashJson({
+          index,
+          sessionId: lane.sessionId,
+          sessionTitle,
+          transcript,
+          focusMessageId: lane.focusMessageId ?? ""
+        })
+      };
+    });
 }
 
 function resetPanelsChatSessionView(): void {
@@ -15762,7 +15769,8 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
     sessionId,
     transcript,
     groupId,
-    focusMessageId: turnId
+    focusMessageId: turnId,
+    sessionTitle: archiveSession.title
   });
   updateParallelGroupMetadata(groupId);
   sidebarState.recentSessionId = groupId;

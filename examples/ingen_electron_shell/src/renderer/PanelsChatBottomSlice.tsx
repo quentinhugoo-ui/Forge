@@ -5727,7 +5727,7 @@ export function PanelsChatBottomSlice({
             {parallelPrompts.map((_prompt, index) => {
               const lane = snapshot.parallelLanes.find((candidate) => candidate.index === index);
               const laneMessages = index === 0 ? canvasMessages : lane?.transcript.filter((message) => message.role !== "system") ?? [];
-              const laneTitle = index === 0 ? sessionName : lane?.sessionTitle ?? "";
+              const laneTitle = index === 0 ? "" : lane?.sessionTitle ?? "";
               return (
                 <TranscriptCanvas
                   activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
