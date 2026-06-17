@@ -1042,21 +1042,18 @@ fn banger_maps_root_ingest(
     force_content_decode: Option<bool>,
     force_gpu_staging: Option<bool>,
 ) -> BangerMapsRootIngestProjection {
-    let Some(url) = env::var("FORGE_BANGER_MAPS_ROOT_URL")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty()) else {
-            let cache_dir = banger_maps_cache_dir();
-            let message = "Set FORGE_BANGER_MAPS_ROOT_URL to a direct Google 3D Tiles root URL or a local tileset.json; no Render/proxy fallback is used.".to_string();
-            return failed_banger_maps_root_ingest(
-                "",
-                &cache_dir,
-                &cache_dir.join("missing-root-url.root.json"),
-                "missing_direct_maps_root_url",
-                message,
-                false,
-            );
-        };
+    let Some(url) = banger_maps_resolved_root_url() else {
+        let cache_dir = banger_maps_cache_dir();
+        let message = "Set FORGE_BANGER_MAPS_ROOT_URL to a direct 3D Tiles root URL, or set GOOGLE_MAP_TILES_API_KEY/GOOGLE_API_KEY so Banger can build the Google Photorealistic 3D Tiles root URL locally.".to_string();
+        return failed_banger_maps_root_ingest(
+            "",
+            &cache_dir,
+            &cache_dir.join("missing-root-url.root.json"),
+            "missing_direct_maps_root_url",
+            message,
+            false,
+        );
+    };
     let cache_dir = banger_maps_cache_dir();
     let url_hash = sha256_hex(url.as_bytes());
     let cache_path = cache_dir.join(format!("{url_hash}.root.json"));
@@ -1093,6 +1090,32 @@ fn banger_maps_root_ingest(
         force_content_decode,
         force_gpu_staging,
     )
+}
+
+fn banger_maps_resolved_root_url() -> Option<String> {
+    banger_maps_root_url_from_values(
+        env::var("FORGE_BANGER_MAPS_ROOT_URL").ok().as_deref(),
+        env::var("GOOGLE_MAP_TILES_API_KEY").ok().as_deref(),
+        env::var("GOOGLE_API_KEY").ok().as_deref(),
+    )
+}
+
+fn banger_maps_root_url_from_values(
+    direct_root_url: Option<&str>,
+    google_map_tiles_api_key: Option<&str>,
+    google_api_key: Option<&str>,
+) -> Option<String> {
+    direct_root_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            google_map_tiles_api_key
+                .or(google_api_key)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|key| format!("https://tile.googleapis.com/v1/3dtiles/root.json?key={key}"))
+        })
 }
 
 fn failed_banger_maps_root_ingest(
@@ -9106,6 +9129,28 @@ mod tests {
         );
         assert_eq!(u32::from_le_bytes(clusters[36..40].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(clusters[44..48].try_into().unwrap()), 3);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolves_maps_root_url_from_direct_url_or_google_key() {
+        let direct = banger_maps_root_url_from_values(
+            Some(" https://example.test/tileset.json "),
+            Some("google-map-key"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(direct, "https://example.test/tileset.json");
+
+        let google = banger_maps_root_url_from_values(None, Some(" google-map-key "), None).unwrap();
+        assert_eq!(
+            google,
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=google-map-key"
+        );
+        assert_eq!(
+            redact_url_secret(&google),
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted"
+        );
     }
 
     #[cfg(target_os = "windows")]
