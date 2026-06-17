@@ -1396,6 +1396,7 @@ export interface NativeWebExplorerBounds {
   y: number;
   width: number;
   height: number;
+  sceneKind?: "maps_sphere";
 }
 
 export interface NativeWebExplorerResult {

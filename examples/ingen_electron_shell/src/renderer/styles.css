@@ -9881,6 +9881,10 @@ ol.assistantText__list li::before {
   overflow: hidden;
 }
 
+.bangerSphereNativeFrame--nativeRequested .bangerSphereNativeFrame__fallback {
+  opacity: 0;
+}
+
 .bangerSphereNativeFrame__fallback::after {
   content: none;
 }

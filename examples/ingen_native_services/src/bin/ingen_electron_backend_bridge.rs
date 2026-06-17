@@ -1209,15 +1209,18 @@ fn banger_maps_cesium_root_url_from_endpoint_value(
     cesium_asset_id: &str,
 ) -> Option<String> {
     let endpoint = value.get("endpoint").unwrap_or(value);
-    let url = banger_maps_json_string(
-        endpoint,
-        &["url", "rootTilesetUrl", "tilesetUrl", "endpointUrl"],
-    )?;
+    let url_keys = ["url", "rootTilesetUrl", "tilesetUrl", "endpointUrl"];
+    let url = banger_maps_json_string(endpoint, &url_keys)
+        .or_else(|| value.get("options").and_then(|options| banger_maps_json_string(options, &url_keys)))
+        .or_else(|| endpoint.get("options").and_then(|options| banger_maps_json_string(options, &url_keys)))?;
     if url.starts_with("ion://") {
         let token = banger_maps_json_string(value, &["cesiumIonAccessToken", "accessToken", "token"])?;
         return banger_maps_cesium_root_url_from_token(&token, cesium_asset_id).ok();
     }
-    let token = banger_maps_json_string(endpoint, &["accessToken", "cesiumIonAccessToken", "token"])
+    let token_keys = ["accessToken", "cesiumIonAccessToken", "token"];
+    let token = banger_maps_json_string(endpoint, &token_keys)
+        .or_else(|| value.get("options").and_then(|options| banger_maps_json_string(options, &token_keys)))
+        .or_else(|| endpoint.get("options").and_then(|options| banger_maps_json_string(options, &token_keys)))
         .or_else(|| banger_maps_json_string(value, &["accessToken", "cesiumIonAccessToken", "token"]));
     Some(match token {
         Some(token) => banger_append_query_param(&url, "access_token", &token),
@@ -9292,6 +9295,19 @@ mod tests {
         assert_eq!(
             redact_url_secret(&root),
             "https://assets.cesium.com/2275207/root.json?v=1&access_token=redacted"
+        );
+
+        let cesium_ion_options_endpoint = serde_json::json!({
+            "externalType": "3DTILES",
+            "type": "3DTILES",
+            "options": {
+                "url": "https://tile.googleapis.com/v1/3dtiles/root.json?key=cesium-session-key"
+            }
+        });
+        let root = banger_maps_cesium_root_url_from_endpoint_value(&cesium_ion_options_endpoint, "2275207").unwrap();
+        assert_eq!(
+            redact_url_secret(&root),
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted"
         );
     }
 

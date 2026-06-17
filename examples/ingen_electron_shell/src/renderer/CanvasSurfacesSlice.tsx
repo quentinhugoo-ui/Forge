@@ -115,7 +115,8 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
         x: Math.round(rect.x),
         y: Math.round(rect.y),
         width: Math.round(rect.width),
-        height: Math.round(rect.height)
+        height: Math.round(rect.height),
+        sceneKind: "maps_sphere" as const
       };
       const command = firstSync ? showNativeMaps : updateNativeMapsBounds;
       firstSync = false;
@@ -168,7 +169,11 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
   return (
     <div
       ref={hostRef}
-      className="googleEarthDomFrame bangerSphereNativeFrame"
+      className={[
+        "googleEarthDomFrame",
+        "bangerSphereNativeFrame",
+        tilesConfig?.accepted ? "bangerSphereNativeFrame--nativeRequested" : ""
+      ].filter(Boolean).join(" ")}
       aria-label={`${label} - ${tilesConfigLoaded ? status : "Banger native Maps config loading"}`}
       data-tileset-schema={tilesConfig?.schema ?? "forge.banger.google_photorealistic_tiles_config.v1"}
       data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
