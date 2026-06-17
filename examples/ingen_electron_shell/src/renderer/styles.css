@@ -6926,6 +6926,8 @@ ol.assistantText__list li::before {
   scrollbar-color: var(--forge-chat-bg) transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
 .searchArchiveResultCard__summary {

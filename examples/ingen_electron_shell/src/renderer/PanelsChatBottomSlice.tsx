@@ -1245,6 +1245,16 @@ function followTranscriptLatest(container: HTMLElement | null, behavior: ScrollB
   });
 }
 
+function scrollTranscriptItemIntoView(container: HTMLElement, item: HTMLElement, behavior: ScrollBehavior = "auto") {
+  const containerRect = container.getBoundingClientRect();
+  const itemRect = item.getBoundingClientRect();
+  const top =
+    container.scrollTop +
+    (itemRect.top - containerRect.top) -
+    Math.max(0, (container.clientHeight - itemRect.height) / 2);
+  container.scrollTo({ top: Math.max(0, top), behavior });
+}
+
 function latestTranscriptContainerFor(element: Element | null): HTMLElement | null {
   const item = element?.closest(".transcriptItem");
   const container = element?.closest<HTMLElement>(".chatCanvas__messages");
@@ -4327,6 +4337,7 @@ function TranscriptCanvas({
   const focusedMessageIndex = normalizedFocusMessageId
     ? messages.findIndex((message) => message.id === normalizedFocusMessageId)
     : -1;
+  const hasArchiveFocusTarget = Boolean(normalizedFocusMessageId && focusedMessageIndex >= 0);
   const baseVisibleMessageCount = Math.min(
     messages.length,
     messageWindow.sessionId === activeSessionId ? messageWindow.count : initialTranscriptWindowSize(messages.length)
@@ -4421,8 +4432,10 @@ function TranscriptCanvas({
       sessionId: activeSessionId,
       count: initialTranscriptWindowSize(messages.length)
     });
-    followLatestTranscriptRef.current = true;
-    followTranscriptLatest(messagesRef.current, "instant");
+    followLatestTranscriptRef.current = !hasArchiveFocusTarget;
+    if (!hasArchiveFocusTarget) {
+      followTranscriptLatest(messagesRef.current, "instant");
+    }
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -4430,26 +4443,45 @@ function TranscriptCanvas({
     visibleMessageCountRef.current = visibleMessageCount;
   }, [messages.length, visibleMessageCount]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!normalizedFocusMessageId || focusedMessageIndex < 0) {
       return undefined;
     }
-    const scrollKey = `${activeSessionId}:${normalizedFocusMessageId}:${messages.length}`;
+    const scrollKey = `${activeSessionId}:${normalizedFocusMessageId}:${messages.length}:${visibleStartIndex}`;
     if (focusedMessageScrollRef.current === scrollKey) {
       return undefined;
     }
     focusedMessageScrollRef.current = scrollKey;
-    const frame = globalThis.requestAnimationFrame(() => {
+    followLatestTranscriptRef.current = false;
+    const frames: number[] = [];
+    const timers: ReturnType<typeof globalThis.setTimeout>[] = [];
+    const scrollToFocus = (behavior: ScrollBehavior) => {
+      const container = messagesRef.current;
+      if (!container) {
+        return;
+      }
       const escapedId = CSS.escape(normalizedFocusMessageId);
       const item =
-        messagesRef.current?.querySelector<HTMLElement>(`[data-archive-focus-for="${escapedId}"]`) ??
-        messagesRef.current?.querySelector<HTMLElement>(`[data-msg-id="${escapedId}"]`);
-      item?.scrollIntoView({ block: "center", behavior: "smooth" });
-      item?.classList.add("transcriptItem--archiveFocusFlash");
-      globalThis.setTimeout(() => item?.classList.remove("transcriptItem--archiveFocusFlash"), 1600);
-    });
-    return () => globalThis.cancelAnimationFrame(frame);
-  }, [activeSessionId, focusedMessageIndex, messages.length, normalizedFocusMessageId]);
+        container.querySelector<HTMLElement>(`[data-archive-focus-for="${escapedId}"]`) ??
+        container.querySelector<HTMLElement>(`[data-msg-id="${escapedId}"]`);
+      if (!item) {
+        return;
+      }
+      scrollTranscriptItemIntoView(container, item, behavior);
+      item.classList.add("transcriptItem--archiveFocusFlash");
+      timers.push(globalThis.setTimeout(() => item.classList.remove("transcriptItem--archiveFocusFlash"), 1600));
+    };
+    scrollToFocus("auto");
+    frames.push(globalThis.requestAnimationFrame(() => scrollToFocus("auto")));
+    frames.push(globalThis.requestAnimationFrame(() => {
+      frames.push(globalThis.requestAnimationFrame(() => scrollToFocus(prefersReducedMotion() ? "auto" : "smooth")));
+    }));
+    timers.push(globalThis.setTimeout(() => scrollToFocus("auto"), 120));
+    return () => {
+      frames.forEach((frame) => globalThis.cancelAnimationFrame(frame));
+      timers.forEach((timer) => globalThis.clearTimeout(timer));
+    };
+  }, [activeSessionId, focusedMessageIndex, messages.length, normalizedFocusMessageId, visibleStartIndex]);
 
   useLayoutEffect(() => {
     const restore = prependScrollRestoreRef.current;
