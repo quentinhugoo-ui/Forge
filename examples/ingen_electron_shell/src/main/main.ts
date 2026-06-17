@@ -812,7 +812,7 @@ let panelsChatBottomState = {
   activeSessionId: "",
   transcript: [] as TranscriptMessage[]
 };
-const parallelChatLanes = new Map<number, { sessionId: string; transcript: TranscriptMessage[]; groupId: string }>();
+const parallelChatLanes = new Map<number, { sessionId: string; transcript: TranscriptMessage[]; groupId: string; focusMessageId?: string }>();
 const composerUploadPreviewItems = new Map<string, ComposerUploadItem>();
 const providerAttachmentCache = new Map<string, ProviderAttachment>();
 
@@ -14709,7 +14709,8 @@ function parallelChatLaneSnapshots(): PanelsChatBottomSnapshot["parallelLanes"] 
       index,
       sessionId: lane.sessionId,
       transcript: publicTranscript(lane.transcript),
-      proofHash: hashJson({ index, sessionId: lane.sessionId, transcript: publicTranscript(lane.transcript) })
+      focusMessageId: lane.focusMessageId,
+      proofHash: hashJson({ index, sessionId: lane.sessionId, transcript: publicTranscript(lane.transcript), focusMessageId: lane.focusMessageId ?? "" })
     }));
 }
 
@@ -15726,7 +15727,8 @@ function openArchiveSessionInParallel(sessionId: string, turnId: string, paralle
   parallelChatLanes.set(boundedIndex, {
     sessionId,
     transcript: archiveTranscriptAroundTurn(archiveSession, turnId),
-    groupId
+    groupId,
+    focusMessageId: turnId
   });
   updateParallelGroupMetadata(groupId);
   sidebarState.recentSessionId = groupId;

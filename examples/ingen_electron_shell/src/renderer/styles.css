@@ -4834,6 +4834,29 @@ button {
   max-width: calc(100% - 8px);
 }
 
+.transcriptItem--archiveFocus {
+  border-radius: 8px;
+  scroll-margin-block: 72px;
+}
+
+.transcriptItem--archiveFocusFlash {
+  animation: transcriptArchiveFocusFlash 1600ms ease-out 1;
+}
+
+@keyframes transcriptArchiveFocusFlash {
+  0%,
+  42% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--self-directed-cyan), transparent 30%),
+      0 0 0 7px color-mix(in oklab, var(--self-directed-cyan), transparent 88%);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px transparent,
+      0 0 0 7px transparent;
+  }
+}
+
 .transcriptItem--user + .transcriptItem--assistant {
   margin-top: 32px;
 }

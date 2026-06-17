@@ -604,6 +604,7 @@ const PARALLEL_CHAT_LANE: InterfaceSpec = InterfaceSpec {
         FieldSpec { name: "index", ts_type: "number", optional: false },
         FieldSpec { name: "sessionId", ts_type: "string", optional: false },
         FieldSpec { name: "transcript", ts_type: "TranscriptMessage[]", optional: false },
+        FieldSpec { name: "focusMessageId", ts_type: "string", optional: true },
         FieldSpec { name: "proofHash", ts_type: "string", optional: false },
     ],
 };

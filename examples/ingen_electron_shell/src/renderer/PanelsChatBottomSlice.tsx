@@ -4278,6 +4278,7 @@ function TranscriptCanvas({
   messages,
   agentName,
   userName,
+  focusMessageId = "",
   parallelSessionIndex = 0,
   className = "chatCanvas",
   assistantBusy = false,
@@ -4290,6 +4291,7 @@ function TranscriptCanvas({
   messages: TranscriptMessage[];
   agentName: string;
   userName: string;
+  focusMessageId?: string;
   parallelSessionIndex?: number;
   className?: string;
   assistantBusy?: boolean;
@@ -4306,6 +4308,7 @@ function TranscriptCanvas({
   const prependScrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const messageCountRef = useRef(messages.length);
   const visibleMessageCountRef = useRef(initialTranscriptWindowSize(messages.length));
+  const focusedMessageScrollRef = useRef("");
   const [messageWindow, setMessageWindow] = useState(() => ({
     sessionId: activeSessionId,
     count: initialTranscriptWindowSize(messages.length)
@@ -4314,10 +4317,16 @@ function TranscriptCanvas({
   const [, setAssistantAnimationQueueVersion] = useState(0);
   const latestMessage = messages.at(-1);
   const messageIds = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
-  const visibleMessageCount = Math.min(
+  const normalizedFocusMessageId = focusMessageId.trim();
+  const focusedMessageIndex = normalizedFocusMessageId
+    ? messages.findIndex((message) => message.id === normalizedFocusMessageId)
+    : -1;
+  const baseVisibleMessageCount = Math.min(
     messages.length,
     messageWindow.sessionId === activeSessionId ? messageWindow.count : initialTranscriptWindowSize(messages.length)
   );
+  const focusVisibleMessageCount = focusedMessageIndex >= 0 ? messages.length - focusedMessageIndex : 0;
+  const visibleMessageCount = Math.min(messages.length, Math.max(baseVisibleMessageCount, focusVisibleMessageCount));
   const visibleStartIndex = Math.max(0, messages.length - visibleMessageCount);
   const visibleMessages = useMemo(() => messages.slice(visibleStartIndex), [messages, visibleStartIndex]);
   const visibleMessageIds = useMemo(() => new Set(visibleMessages.map((message) => message.id)), [visibleMessages]);
@@ -4414,6 +4423,24 @@ function TranscriptCanvas({
     messageCountRef.current = messages.length;
     visibleMessageCountRef.current = visibleMessageCount;
   }, [messages.length, visibleMessageCount]);
+
+  useEffect(() => {
+    if (!normalizedFocusMessageId || focusedMessageIndex < 0) {
+      return undefined;
+    }
+    const scrollKey = `${activeSessionId}:${normalizedFocusMessageId}:${messages.length}`;
+    if (focusedMessageScrollRef.current === scrollKey) {
+      return undefined;
+    }
+    focusedMessageScrollRef.current = scrollKey;
+    const frame = globalThis.requestAnimationFrame(() => {
+      const item = messagesRef.current?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(normalizedFocusMessageId)}"]`);
+      item?.scrollIntoView({ block: "center", behavior: "smooth" });
+      item?.classList.add("transcriptItem--archiveFocusFlash");
+      globalThis.setTimeout(() => item?.classList.remove("transcriptItem--archiveFocusFlash"), 1600);
+    });
+    return () => globalThis.cancelAnimationFrame(frame);
+  }, [activeSessionId, focusedMessageIndex, messages.length, normalizedFocusMessageId]);
 
   useLayoutEffect(() => {
     const restore = prependScrollRestoreRef.current;
@@ -4574,6 +4601,7 @@ function TranscriptCanvas({
           const pinned = pinnedIds.has(message.id);
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
+          const isArchiveFocusMessage = normalizedFocusMessageId === message.id;
           const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
@@ -4630,7 +4658,7 @@ function TranscriptCanvas({
           );
           const item = (
             <div
-              className={`transcriptItem transcriptItem--${role}${followsVisualUserMessage ? " transcriptItem--afterVisualMedia" : ""}${followsAssistantMessage ? " transcriptItem--assistantLoop" : ""}`}
+              className={`transcriptItem transcriptItem--${role}${followsVisualUserMessage ? " transcriptItem--afterVisualMedia" : ""}${followsAssistantMessage ? " transcriptItem--assistantLoop" : ""}${isArchiveFocusMessage ? " transcriptItem--archiveFocus" : ""}`}
               data-msg-id={message.id}
               key={message.id}
             >
@@ -5794,6 +5822,7 @@ export function PanelsChatBottomSlice({
                   messages={laneMessages}
                   agentName={brainAgentName}
                   userName={brainUserName}
+                  focusMessageId={index === 0 ? "" : lane?.focusMessageId}
                   parallelSessionIndex={index}
                   className="chatCanvas chatCanvas--parallelPane"
                   assistantBusy={index === 0 ? Boolean(snapshot.composer.assistantBusy) : false}

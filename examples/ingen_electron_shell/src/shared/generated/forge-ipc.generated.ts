@@ -550,6 +550,7 @@ export interface ParallelChatLane {
   index: number;
   sessionId: string;
   transcript: TranscriptMessage[];
+  focusMessageId?: string;
   proofHash: string;
 }
 
