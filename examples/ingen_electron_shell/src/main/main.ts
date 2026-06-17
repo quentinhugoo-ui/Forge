@@ -16666,9 +16666,31 @@ function searchArchiveLoopDemoFileRequestForSession(session: ChatArchiveSession)
   };
 }
 
+function searchArchiveLoopDemoFileRequestForSessions(sessions: ChatArchiveSession[]): SearchArchiveRequest {
+  const attachments = sessions.flatMap(searchArchiveLoopDemoSessionAttachments);
+  const perFileTerms = attachments
+    .flatMap((attachment) => searchArchiveLoopDemoFileTermCandidates(attachment).slice(0, 1))
+    .filter((term, index, terms) => terms.indexOf(term) === index);
+  const query = perFileTerms.slice(0, 4).join(" ") || "fichiers";
+  return {
+    query,
+    keywords: query.split(/\s+/).filter(Boolean),
+    sessionScope: "all",
+    contentScope: "files",
+    fileOrigin: "all",
+    topK: 10,
+    contextTurns: 1,
+    includeFilePreviews: true,
+    includeArtifactRefs: true
+  };
+}
+
 function searchArchiveLoopDemoFileResultForSessions(sessions: ChatArchiveSession[]): { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null {
   let fallback: { session: ChatArchiveSession; request: SearchArchiveRequest; result: SearchArchiveResult } | null = null;
-  const candidates = sessions
+  const fileSessions = sessions
+    .filter((session) => searchArchiveLoopDemoSessionAttachments(session).length > 0)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const candidates = fileSessions
     .filter((session) => searchArchiveLoopDemoSessionAttachments(session).length >= 2)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   for (const session of candidates) {
@@ -16682,13 +16704,26 @@ function searchArchiveLoopDemoFileResultForSessions(sessions: ChatArchiveSession
       fallback = { session, request, result };
     }
   }
-  return fallback;
+  if (fallback) {
+    return fallback;
+  }
+  if (fileSessions.length === 0) {
+    return null;
+  }
+  const request = searchArchiveLoopDemoFileRequestForSessions(fileSessions);
+  const result = searchArchiveSessions(fileSessions, request);
+  const session = fileSessions[0];
+  return result.hits.some((hit) => hit.sourceType === "attachment") ? { session, request, result } : null;
 }
 
 function searchArchiveLoopDemoFileSummary(session: ChatArchiveSession, result: SearchArchiveResult): string {
   const attachments = searchArchiveLoopDemoSessionAttachments(session);
+  const sessionTitles = Array.from(new Set(result.hits.map((hit) => hit.sessionTitle))).slice(0, 4);
   const suffix = result.hits.length > 1 ? "resultats fichiers" : "resultat fichier";
-  return `J'ai retrouve ${result.hits.length} ${suffix} dans la session ${session.title}. Cette session contient ${attachments.length} fichiers, donc la card les regroupe sous le nom exact de la session.`;
+  if (attachments.length >= 2 && result.hits.every((hit) => hit.sessionId === session.sessionId)) {
+    return `J'ai retrouve ${result.hits.length} ${suffix} dans la session ${session.title}. Cette session contient ${attachments.length} fichiers, donc la card les regroupe sous le nom exact de la session.`;
+  }
+  return `J'ai retrouve ${result.hits.length} ${suffix} dans les fichiers reels deja archives. Il n'y a pas encore de session canonique avec plusieurs fichiers dans le store local; des qu'il y en aura une, cette meme card se regroupera sous son nom exact. Sessions concernees: ${sessionTitles.join(", ")}.`;
 }
 
 function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
@@ -16787,10 +16822,12 @@ function searchArchiveLoopRealDemoArchiveSession(): ChatArchiveSession {
 function ensureSearchArchiveLoopDemoSession(): void {
   const workspaceLabel = searchArchiveLoopDemoWorkspaceLabel();
   const removedFakeMemory = chatArchiveSessions.delete(SEARCHARCHIVE_LOOP_DEMO_MEMORY_SESSION_ID);
+  let demoSession: ChatArchiveSession;
   if (!chatArchiveSessions.has(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)) {
-    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, searchArchiveLoopRealDemoArchiveSession());
+    demoSession = searchArchiveLoopRealDemoArchiveSession();
+    chatArchiveSessions.set(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID, demoSession);
   } else {
-    const demoSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)!;
+    demoSession = chatArchiveSessions.get(SEARCHARCHIVE_LOOP_DEMO_SESSION_ID)!;
     const initialDemo = searchArchiveLoopRealDemoArchiveSession();
     demoSession.workspaceLabel = workspaceLabel;
     demoSession.messages = initialDemo.messages;
@@ -16798,7 +16835,13 @@ function ensureSearchArchiveLoopDemoSession(): void {
     demoSession.proofHash = archiveSessionProofHash(demoSession);
     demoSession.archived = false;
   }
-  if (removedFakeMemory) {
+  if (panelsChatBottomState.activeSessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID) {
+    panelsChatBottomState.transcript = demoSession.messages
+      .filter((message) => !isInternalTranscriptMessage(message))
+      .map(archiveMessageToTranscriptMessage);
+    panelsChatBottomState.activeBrainSegment = activeBrainSegmentFromTranscript(panelsChatBottomState.transcript);
+  }
+  if (removedFakeMemory || demoSession.messages.length > 3) {
     persistChatArchiveSoon();
   }
   const localDemo = localChatSessions.find((session) => session.sessionId === SEARCHARCHIVE_LOOP_DEMO_SESSION_ID);
