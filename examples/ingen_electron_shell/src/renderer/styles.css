@@ -4606,29 +4606,27 @@ button {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   margin: 0;
   padding: 0;
   align-self: center;
   color: color-mix(in oklab, var(--forge-text), transparent 18%);
   background: transparent;
   border: 0;
-  border-radius: 4px;
   cursor: pointer;
   opacity: 0.88;
   pointer-events: auto;
   transform: translateY(0);
   transition:
     color 140ms ease-out,
-    opacity 140ms ease-out,
-    background 140ms ease-out;
+    opacity 140ms ease-out;
 }
 
 .parallelTranscriptHeader__close span {
   display: block;
-  width: 10px;
-  height: 10px;
+  width: 13px;
+  height: 13px;
   background: currentColor;
   mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
   -webkit-mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
@@ -4636,8 +4634,8 @@ button {
 
 .parallelTranscriptHeader__close:hover,
 .parallelTranscriptHeader__close:focus-visible {
-  color: var(--forge-text);
-  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 6%);
+  color: #fff;
+  background: transparent;
   opacity: 1;
   outline: 0;
 }
