@@ -8125,14 +8125,23 @@ fn banger_maps_render_mesh_from_gltf(
             ),
             gltf_node_transform,
         );
+        let mut drawable_primitives = Vec::new();
+        let mut primitive_errors = Vec::new();
         for (primitive_index, primitive) in primitives.iter().enumerate() {
             match banger_maps_render_mesh_from_primitive(gltf, bin_chunk, primitive, render_transform) {
-                Ok(mesh) => return Ok(mesh),
+                Ok(mesh) => drawable_primitives.push(mesh),
                 Err(error) => {
-                    let _ = (mesh_index, primitive_index, error);
+                    primitive_errors.push(format!("mesh {mesh_index} primitive {primitive_index}: {error}"));
                 }
             }
         }
+        if drawable_primitives.len() == 1 {
+            return Ok(drawable_primitives.remove(0));
+        }
+        if drawable_primitives.len() > 1 {
+            return banger_maps_concat_visible_tile_meshes(drawable_primitives);
+        }
+        let _ = primitive_errors;
     }
     Err("no drawable glTF primitive could be converted to Banger render mesh".to_string())
 }
@@ -8990,6 +8999,34 @@ mod tests {
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn converts_all_tile_gltf_primitives_into_one_native_draw_mesh() {
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4},{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0]}}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963}],"buffers":[{"byteLength":42}]}"#;
+        let mut bin_chunk = Vec::new();
+        for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            bin_chunk.extend_from_slice(&value.to_le_bytes());
+        }
+        for index in [0u16, 1, 2] {
+            bin_chunk.extend_from_slice(&index.to_le_bytes());
+        }
+        let glb = test_glb_with_json_bin(json, &bin_chunk);
+        let decoded = decode_banger_glb_full(&glb).unwrap();
+        let mesh = banger_maps_render_mesh_from_gltf(
+            &decoded.gltf_value,
+            decoded.bin_chunk,
+            banger_identity_mat4_f64(),
+            banger_identity_mat4_f64(),
+        )
+        .unwrap();
+        assert_eq!(mesh.source, "banger_maps_3d_tiles_visible_tile_batch");
+        assert_eq!(mesh.vertex_bytes.len(), 6 * 24);
+        assert_eq!(mesh.index_bytes.len(), 6 * 2);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
+        assert_eq!(u16::from_le_bytes(mesh.index_bytes[10..12].try_into().unwrap()), 5);
     }
 
     #[cfg(target_os = "windows")]
