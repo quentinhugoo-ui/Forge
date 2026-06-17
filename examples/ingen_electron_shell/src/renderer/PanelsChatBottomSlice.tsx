@@ -4636,7 +4636,7 @@ function TranscriptCanvas({
           {parallelSessionIndex > 0 && onParallelClose ? (
             <button
               type="button"
-              className="parallelCanvasClose parallelTranscriptHeader__close"
+              className="parallelTranscriptHeader__close"
               aria-label={`Close ${sessionTitle.trim() || "parallel session"}`}
               onClick={() => {
                 void panelsChatBottomStore.dispatch({
