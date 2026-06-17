@@ -41,9 +41,6 @@ export interface SearchArchiveTemplateResult {
   allowedValues: {
     sessionScope: SearchArchiveSessionScope[];
     contentScope: SearchArchiveContentScope[];
-    fileOrigin: SearchArchiveFileOrigin[];
-    createdInAppSources: SearchArchiveCreatedInAppSource[];
-    fileTypes: SearchArchiveFileType[];
   };
   proofHash: string;
 }
@@ -157,14 +154,9 @@ export function searchArchiveTemplateResult(reason: SearchArchiveTemplateResult[
     'date_from=""',
     'date_to=""',
     'session_scope="current|recent|archived|all"',
-    'content_scope="messages|files|artifacts|all"',
-    'file_origin="uploaded|created_in_app|all"',
-    'created_in_app_sources=["agent","scrapers","image_generation","image_edit","compute","banger_3d","other"]',
-    'file_types=["image","pdf","text","code","markdown","csv","json","html","audio","video","model3d","other"]',
+    'content_scope="messages|all"',
     "top_k=10",
-    "context_turns=3",
-    "include_file_previews=true",
-    "include_artifact_refs=true"
+    "context_turns=3"
   ].join("\n");
   const result: SearchArchiveTemplateResult = {
     schema: SEARCHARCHIVE_TEMPLATE_RESULT_SCHEMA,
@@ -174,10 +166,7 @@ export function searchArchiveTemplateResult(reason: SearchArchiveTemplateResult[
     template,
     allowedValues: {
       sessionScope: SEARCHARCHIVE_SESSION_SCOPES,
-      contentScope: SEARCHARCHIVE_CONTENT_SCOPES,
-      fileOrigin: SEARCHARCHIVE_FILE_ORIGINS,
-      createdInAppSources: SEARCHARCHIVE_CREATED_IN_APP_SOURCES,
-      fileTypes: SEARCHARCHIVE_FILE_TYPES
+      contentScope: SEARCHARCHIVE_CONTENT_SCOPES.filter((scope) => scope === "messages" || scope === "all")
     },
     proofHash: ""
   };
@@ -640,20 +629,12 @@ function searchArchiveTemplateProofHash(): string {
       "date_to",
       "session_scope",
       "content_scope",
-      "file_origin",
-      "created_in_app_sources",
-      "file_types",
       "top_k",
-      "context_turns",
-      "include_file_previews",
-      "include_artifact_refs"
+      "context_turns"
     ],
     allowedValues: {
       sessionScope: SEARCHARCHIVE_SESSION_SCOPES,
-      contentScope: SEARCHARCHIVE_CONTENT_SCOPES,
-      fileOrigin: SEARCHARCHIVE_FILE_ORIGINS,
-      createdInAppSources: SEARCHARCHIVE_CREATED_IN_APP_SOURCES,
-      fileTypes: SEARCHARCHIVE_FILE_TYPES
+      contentScope: SEARCHARCHIVE_CONTENT_SCOPES.filter((scope) => scope === "messages" || scope === "all")
     }
   });
 }

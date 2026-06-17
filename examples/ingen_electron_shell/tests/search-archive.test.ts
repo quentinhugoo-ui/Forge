@@ -40,8 +40,12 @@ describe("search archive CodeAct", () => {
     const templateStep = readSearchArchiveCodeAct("/searcharchive_");
     expect(templateStep?.kind).toBe("template");
     expect(templateStep?.kind === "template" ? renderSearchArchiveTemplateResult(templateStep.result) : "").toContain("SEARCHARCHIVE_TEMPLATE_RESULT");
-    expect(templateStep?.kind === "template" ? templateStep.result.template : "").toContain("file_origin=\"uploaded|created_in_app|all\"");
-    expect(templateStep?.kind === "template" ? templateStep.result.template : "").toContain("created_in_app_sources");
+    const template = templateStep?.kind === "template" ? templateStep.result.template : "";
+    expect(template).toContain('content_scope="messages|all"');
+    expect(template).not.toContain("file_origin");
+    expect(template).not.toContain("created_in_app_sources");
+    expect(template).not.toContain("file_types");
+    expect(template).not.toContain("include_file_previews");
 
     const directFilled = readSearchArchiveCodeAct('/searcharchive_ query="pain d epices" session_scope=archived');
     const proseThenTemplate = readSearchArchiveCodeAct("Je cherche dans les archives.\n/searcharchive_");
@@ -60,14 +64,9 @@ keywords=["orange","gingembre"]
 date_from="2026-06-01"
 date_to="2026-06-30"
 session_scope=archived
-content_scope=files
-file_origin=created_in_app
-created_in_app_sources=["scrapers","agent"]
-file_types=["text","markdown"]
+content_scope=messages
 top_k=3
-context_turns=2
-include_file_previews=false
-include_artifact_refs=false`);
+context_turns=2`);
     const executable = readSearchArchiveCodeAct(`/searcharchive_ template_proof_hash="sha256:${proofHash}" query="pain d epices" session_scope=recent top_k=2 context_turns=1`);
 
     expect(request).toMatchObject({
@@ -77,14 +76,9 @@ include_artifact_refs=false`);
       dateTo: "2026-06-30",
       scope: "archived",
       sessionScope: "archived",
-      contentScope: "files",
-      fileOrigin: "created_in_app",
-      createdInAppSources: ["scrapers", "agent"],
-      fileTypes: ["text", "markdown"],
+      contentScope: "messages",
       topK: 3,
-      contextTurns: 2,
-      includeFilePreviews: false,
-      includeArtifactRefs: false
+      contextTurns: 2
     });
     expect(executable?.kind === "request" ? executable.request : undefined).toMatchObject({
       query: "pain d epices",
@@ -128,13 +122,13 @@ include_artifact_refs=false`);
     expect(rendered).not.toContain("visual_summary");
   });
 
-  it("matches attachment names and text previews without generating semantic captions", () => {
+  it("returns attachment refs on matched message turns without searching by file", () => {
     const sessions = new Map<string, ChatArchiveSession>();
     upsertArchiveMessage(
       sessions,
       sessionMeta({ sessionId: "chat-file", title: "Documents" }),
       {
-        ...message("turn-file", "user", "Voici le fichier."),
+        ...message("turn-file", "user", "Voici le contexte pain d epices."),
         attachments: [
           {
             id: "file-1",
@@ -150,59 +144,15 @@ include_artifact_refs=false`);
     );
 
     const result = searchArchiveSessions(Array.from(sessions.values()), {
-      query: "pain epices",
+      query: "contexte pain",
       scope: "all",
       topK: 2,
       contextTurns: 0
     });
 
-    expect(result.hits.some((hit) => hit.matchedField === "attachment_name" || hit.matchedField === "attachment_text")).toBe(true);
+    expect(result.hits[0]?.matchedField).toBe("message_text");
     expect(result.hits[0]?.attachments[0]?.name).toBe("liste-pain-epices.txt");
     expect(renderSearchArchiveResult(result)).not.toContain("personne sur scooter");
-  });
-
-  it("returns only the matched file for attachment hits on multi-file turns", () => {
-    const sessions = new Map<string, ChatArchiveSession>();
-    upsertArchiveMessage(
-      sessions,
-      sessionMeta({ sessionId: "chat-seap", title: "SEAP" }),
-      {
-        ...message("turn-files", "user", "Voici les fichiers de la session."),
-        attachments: [
-          {
-            id: "file-unrelated",
-            name: "notes-generales.txt",
-            kind: "text",
-            url: "ingen://attachment/file-unrelated",
-            textPreview: "notes sans rapport",
-            tablePreview: []
-          },
-          {
-            id: "file-target",
-            name: "seap-inspection.pdf",
-            kind: "pdf",
-            url: "ingen://attachment/file-target",
-            textPreview: "rapport seap analyse inspection",
-            tablePreview: []
-          }
-        ]
-      },
-      "2026-06-10T11:20:00Z"
-    );
-
-    const result = searchArchiveSessions(Array.from(sessions.values()), {
-      query: "inspection",
-      scope: "all",
-      contentScope: "files",
-      topK: 1,
-      contextTurns: 0,
-      includeFilePreviews: true
-    });
-
-    expect(result.hits[0]?.sourceType).toBe("attachment");
-    expect(result.hits[0]?.attachments).toHaveLength(1);
-    expect(result.hits[0]?.attachments[0]?.name).toBe("seap-inspection.pdf");
-    expect(renderSearchArchiveResult(result)).not.toContain("notes-generales.txt");
   });
 
   it("centers long snippets on matching query terms when the full query phrase is absent", () => {
