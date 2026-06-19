@@ -3505,16 +3505,19 @@ fn push_u32_le(bytes: &mut Vec<u8>, value: u32) {
 }
 
 fn resolve_banger_tile_content_url(root_url: &str, content_uri: &str) -> String {
-    if content_uri.starts_with("http://") || content_uri.starts_with("https://") || content_uri.starts_with("file://") {
+    if content_uri.starts_with("http://") || content_uri.starts_with("https://") {
+        if let (Ok(base), Ok(resolved)) = (reqwest::Url::parse(root_url), reqwest::Url::parse(content_uri)) {
+            return banger_maps_merge_root_query_into_content_url(base, resolved);
+        }
+        return content_uri.to_string();
+    }
+    if content_uri.starts_with("file://") {
         return content_uri.to_string();
     }
     if root_url.starts_with("http://") || root_url.starts_with("https://") {
         if let Ok(base) = reqwest::Url::parse(root_url) {
-            if let Ok(mut resolved) = base.join(content_uri) {
-                if resolved.query().is_none() {
-                    resolved.set_query(base.query());
-                }
-                return resolved.to_string();
+            if let Ok(resolved) = base.join(content_uri) {
+                return banger_maps_merge_root_query_into_content_url(base, resolved);
             }
         }
     }
@@ -3533,6 +3536,35 @@ fn resolve_banger_tile_content_url(root_url: &str, content_uri: &str) -> String 
         .join(content_uri)
         .display()
         .to_string()
+}
+
+fn banger_maps_merge_root_query_into_content_url(
+    base: reqwest::Url,
+    mut resolved: reqwest::Url,
+) -> String {
+    if base.scheme() != resolved.scheme() || base.host_str() != resolved.host_str() {
+        return resolved.to_string();
+    }
+    let root_pairs = base
+        .query_pairs()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect::<Vec<_>>();
+    if root_pairs.is_empty() {
+        return resolved.to_string();
+    }
+    let existing_keys = resolved
+        .query_pairs()
+        .map(|(key, _)| key.to_string())
+        .collect::<Vec<_>>();
+    {
+        let mut query = resolved.query_pairs_mut();
+        for (key, value) in root_pairs {
+            if !existing_keys.iter().any(|existing| existing == &key) {
+                query.append_pair(&key, &value);
+            }
+        }
+    }
+    resolved.to_string()
 }
 
 fn banger_content_extension(uri: &str) -> String {
@@ -7952,7 +7984,7 @@ fn banger_maps_first_visible_tile_gpu_resource(
 ) -> Result<BangerNativeSceneGpuResource, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
     let maps_render_space_transform = banger_maps_render_space_transform();
-    let selected_records = banger_maps_visible_draw_records(&ingest, maps_render_space_transform)
+    let selected_records = banger_maps_draw_records_or_seed(&ingest, maps_render_space_transform)
         .into_iter()
         .take(banger_maps_visible_tile_batch_limit())
         .collect::<Vec<_>>();
@@ -8024,7 +8056,7 @@ fn banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(
     }
     let mut primitive_errors = Vec::new();
     let maps_render_space_transform = banger_maps_render_space_transform();
-    let selected_records = banger_maps_visible_draw_records(ingest, maps_render_space_transform);
+    let selected_records = banger_maps_draw_records_or_seed(ingest, maps_render_space_transform);
     let mut drawable_meshes = Vec::new();
     for record in selected_records.into_iter().take(banger_maps_visible_tile_batch_limit()) {
         match banger_maps_render_mesh_for_record(record, maps_render_space_transform) {
@@ -8158,6 +8190,25 @@ fn banger_maps_concat_visible_tile_meshes(
         instance_bytes: banger_maps_tile_instance_bytes(),
         source: "banger_maps_3d_tiles_visible_tile_batch",
     })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_draw_records_or_seed<'a>(
+    ingest: &'a BangerMapsRootIngestProjection,
+    maps_render_space_transform: [f64; 16],
+) -> Vec<&'a BangerMapsContentDecodeRecord> {
+    let visible = banger_maps_visible_draw_records(ingest, maps_render_space_transform);
+    if !visible.is_empty() {
+        return visible;
+    }
+    ingest
+        .content_decode
+        .records
+        .iter()
+        .filter(|record| record.error.is_none())
+        .filter(|record| matches!(record.container, "b3dm" | "glb"))
+        .take(banger_maps_visible_tile_batch_limit())
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -9319,6 +9370,28 @@ mod tests {
         assert_eq!(
             redact_url_secret(&root),
             "https://tile.googleapis.com/v1/3dtiles/root.json?key=redacted"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn propagates_cesium_google_root_key_to_absolute_tile_content_urls() {
+        let resolved = resolve_banger_tile_content_url(
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=cesium-session-key",
+            "https://tile.googleapis.com/v1/3dtiles/datasets/google/tileset/tile.b3dm",
+        );
+        assert_eq!(
+            redact_url_secret(&resolved),
+            "https://tile.googleapis.com/v1/3dtiles/datasets/google/tileset/tile.b3dm?key=redacted"
+        );
+
+        let with_existing_query = resolve_banger_tile_content_url(
+            "https://tile.googleapis.com/v1/3dtiles/root.json?key=cesium-session-key",
+            "https://tile.googleapis.com/v1/3dtiles/datasets/google/tileset/tile.b3dm?alt=media",
+        );
+        assert_eq!(
+            redact_url_secret(&with_existing_query),
+            "https://tile.googleapis.com/v1/3dtiles/datasets/google/tileset/tile.b3dm?alt=media&key=redacted"
         );
     }
 
