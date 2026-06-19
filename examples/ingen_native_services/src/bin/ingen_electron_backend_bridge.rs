@@ -607,6 +607,8 @@ impl BangerMapsTilesetContract {
 #[cfg(target_os = "windows")]
 struct BangerNativeScenePipeline {
     render_pipeline: wgpu::RenderPipeline,
+    sky_present_bind_group_layout: wgpu::BindGroupLayout,
+    sky_present_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
@@ -4126,7 +4128,7 @@ fn render_child_surface_frame(
     queue: &wgpu::Queue,
     scene_pipeline: &BangerNativeScenePipeline,
     frame_target: &BangerNativeFrameTarget,
-    clear_color: [f64; 4],
+    _clear_color: [f64; 4],
     time_seconds: f32,
     frame_index: u32,
 ) -> Result<String, String> {
@@ -4156,6 +4158,7 @@ fn render_child_surface_frame(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-child-host-encoder"),
     });
+    present_banger_sky_atmosphere(device, &mut encoder, scene_pipeline, &view);
     {
         let color_attachments = [
             Some(wgpu::RenderPassColorAttachment {
@@ -4163,12 +4166,7 @@ fn render_child_surface_frame(
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear_color[0],
-                        g: clear_color[1],
-                        b: clear_color[2],
-                        a: clear_color[3],
-                    }),
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
             }),
@@ -5105,6 +5103,47 @@ fn dispatch_banger_single_layer_water_composite(
 }
 
 #[cfg(target_os = "windows")]
+fn present_banger_sky_atmosphere(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    output_view: &wgpu::TextureView,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-sky-atmosphere-present-bind-group"),
+        layout: &scene_pipeline.sky_present_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: scene_pipeline.uniform_buffer.as_entire_binding(),
+        }],
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("banger-native-sky-atmosphere-present-pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: output_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.015,
+                    g: 0.018,
+                    b: 0.024,
+                    a: 1.0,
+                }),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&scene_pipeline.sky_present_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+#[cfg(target_os = "windows")]
 fn present_banger_single_layer_water_composite(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
@@ -5754,6 +5793,56 @@ fn create_banger_first_scene_pipeline(
         multiview_mask: None,
         cache: None,
     });
+    let sky_present_shader_source = banger_sky_atmosphere_present_wgsl();
+    let sky_present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-sky-atmosphere-present-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(sky_present_shader_source.into()),
+    });
+    let sky_present_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-sky-atmosphere-present-bind-group-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+    let sky_present_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-sky-atmosphere-present-pipeline-layout"),
+            bind_group_layouts: &[Some(&sky_present_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let sky_present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-sky-atmosphere-present-pipeline"),
+        layout: Some(&sky_present_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &sky_present_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &sky_present_shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
     let meshlet_cull_shader_source = banger_meshlet_cluster_cull_compute_wgsl();
     let meshlet_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-meshlet-cluster-cull-wgsl"),
@@ -6239,8 +6328,9 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
+            sha256_hex(sky_present_shader_source.as_bytes()),
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
             sha256_hex(vsm_physical_page_shader_source.as_bytes()),
@@ -6260,6 +6350,8 @@ fn create_banger_first_scene_pipeline(
     );
     Ok(BangerNativeScenePipeline {
         render_pipeline,
+        sky_present_bind_group_layout,
+        sky_present_pipeline,
         uniform_buffer,
         bind_group,
         vertex_buffer: gpu_resource.vertex_buffer,
@@ -6347,6 +6439,56 @@ fn create_banger_first_scene_pipeline(
         shader_source_hash,
         render_pipeline_hash,
     })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_sky_atmosphere_present_wgsl() -> &'static str {
+    r#"
+struct FrameUniform {
+    view_proj: mat4x4<f32>,
+    time_seconds: f32,
+    frame_index: u32,
+    viewport: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> frame: FrameUniform;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    let x = f32((vertex_index << 1u) & 2u);
+    let y = f32(vertex_index & 2u);
+    var out: VertexOut;
+    out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, y);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let aspect = max(frame.viewport.x / max(frame.viewport.y, 1.0), 0.1);
+    let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+    let view_ray = normalize(vec3<f32>(ndc.x * aspect, ndc.y * 0.72 + 0.16, 1.0));
+    let sun_phase = frame.time_seconds * 0.035 + 0.55;
+    let sun_dir = normalize(vec3<f32>(sin(sun_phase) * 0.28, 0.38 + 0.18 * sin(sun_phase * 0.37), 0.88));
+    let horizon = smoothstep(-0.22, 0.34, view_ray.y);
+    let rayleigh = pow(max(view_ray.y * 0.5 + 0.5, 0.0), 1.65);
+    let mie = pow(max(dot(view_ray, sun_dir), 0.0), 28.0);
+    let sun_disk = smoothstep(0.9985, 0.9998, dot(view_ray, sun_dir));
+    let lower = vec3<f32>(0.28, 0.36, 0.45);
+    let upper = vec3<f32>(0.022, 0.047, 0.105);
+    let rayleigh_blue = vec3<f32>(0.12, 0.30, 0.62) * rayleigh * 0.32;
+    let mie_warmth = vec3<f32>(1.0, 0.54, 0.24) * mie * 0.32;
+    let sunset_band = vec3<f32>(0.92, 0.38, 0.16) * (1.0 - horizon) * 0.24;
+    let color = mix(lower + sunset_band, upper + rayleigh_blue, horizon) + mie_warmth + vec3<f32>(1.0, 0.74, 0.38) * sun_disk;
+    return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+"#
 }
 
 #[cfg(target_os = "windows")]
@@ -10111,6 +10253,11 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn embeds_first_scene_wgsl_pipeline_artifact() {
+        let sky_source = banger_sky_atmosphere_present_wgsl();
+        assert!(sky_source.contains("rayleigh"));
+        assert!(sky_source.contains("mie"));
+        assert!(sky_source.contains("sun_disk"));
+        assert!(sky_source.contains("FrameUniform"));
         let source = banger_native_first_scene_wgsl();
         assert!(source.contains("@vertex"));
         assert!(source.contains("@fragment"));
