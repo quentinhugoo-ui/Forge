@@ -3151,6 +3151,12 @@ pub struct BangerNativeShaderCapabilityPlan {
     pub fallback_path: &'static str,
     pub capability_gate: &'static str,
     pub compiler_ticket_hash: String,
+    pub native_feature_tier: &'static str,
+    pub negotiated_features: Vec<&'static str>,
+    pub emulated_features: Vec<&'static str>,
+    pub blocked_features: Vec<&'static str>,
+    pub capability_score: u32,
+    pub capability_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3819,6 +3825,11 @@ impl BangerNativeEngine {
             &shader_compiler_ticket,
             pipeline_cache_dir.as_deref(),
         )?;
+        let shader_capability_plan = build_shader_capability_plan(
+            prefer_mesh_shaders,
+            &shader_compiler_ticket,
+            &pipeline_cache_manifest,
+        );
         let resource_table = build_resource_table(
             &prepared,
             &render_artifacts,
@@ -4019,6 +4030,7 @@ impl BangerNativeEngine {
         let proof_chain_hash = render_handoff_hash(
             &prepared,
             &artifacts,
+            &shader_capability_plan,
             &shader_compiler_ticket,
             &pipeline_cache_manifest,
             &benchmark_promotion_manifest,
@@ -4087,14 +4099,7 @@ impl BangerNativeEngine {
             render_pass_count,
             residency_job_count,
             gpu_shader_profiles,
-            shader_capability_plan: BangerNativeShaderCapabilityPlan {
-                bootstrap_rhi: "wgpu_native_vulkan_metal_dx12",
-                frontier_target: "slang_capability_checked_meshlet_mesh_shader_rhi",
-                mesh_shader_preferred: prefer_mesh_shaders,
-                fallback_path: "compute_cull_indirect_draw_when_mesh_shader_unavailable_or_benchmark_gate_fails",
-                capability_gate: "benchmark_promotion_hash+render_manifest_hash+shader_profile+renderer_cache_hash+shader_compiler_ticket_hash",
-                compiler_ticket_hash: shader_compiler_ticket.proof_hash.clone(),
-            },
+            shader_capability_plan,
             shader_compiler_ticket,
             pipeline_cache_manifest,
             benchmark_promotion_manifest,
@@ -23029,6 +23034,157 @@ fn shader_compiler_ticket(
     }
 }
 
+fn build_shader_capability_plan(
+    prefer_mesh_shaders: bool,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+) -> BangerNativeShaderCapabilityPlan {
+    let has_backend = pipeline_cache_manifest.backend != "backend_unavailable"
+        && pipeline_cache_manifest.selected_adapter_label != "adapter_unavailable";
+    let has_modern_native_backend = pipeline_cache_manifest
+        .entries
+        .iter()
+        .any(|entry| entry.backend_capability_bits & (1 << 1) != 0);
+    let has_meshlet_pages = pipeline_cache_manifest
+        .entries
+        .iter()
+        .any(|entry| entry.backend_capability_bits & (1 << 2) != 0);
+    let has_async_compute = pipeline_cache_manifest
+        .entries
+        .iter()
+        .any(|entry| entry.backend_capability_bits & (1 << 3) != 0);
+    let has_virtual_shadow_work = pipeline_cache_manifest
+        .entries
+        .iter()
+        .any(|entry| entry.backend_capability_bits & (1 << 4) != 0);
+
+    let mut negotiated_features = vec![
+        "wgpu_native_backend",
+        "content_addressed_pipeline_cache",
+        "render_graph_barrier_batches",
+        "gpu_scene_storage_buffers",
+        "draw_indirect_command_buffer",
+    ];
+    if has_modern_native_backend {
+        negotiated_features.push("vulkan_dx12_modern_rhi_lane");
+    }
+    if has_meshlet_pages {
+        negotiated_features.push("meshlet_page_storage");
+        negotiated_features.push("meshlet_visibility_indirect_args");
+    }
+    if has_async_compute {
+        negotiated_features.push("async_compute_candidates");
+    }
+    if has_virtual_shadow_work {
+        negotiated_features.push("virtual_shadow_feedback_pages");
+    }
+    if shader_compiler_ticket.compiler_detected {
+        negotiated_features.push("slang_multi_target_shader_ticket");
+    } else {
+        negotiated_features.push("wgsl_bootstrap_shader_ticket");
+    }
+
+    let mut emulated_features = Vec::new();
+    if prefer_mesh_shaders && has_meshlet_pages {
+        emulated_features.push("mesh_shader_emulated_by_compute_cull_plus_indirect_draw");
+    }
+    if !shader_compiler_ticket.compiler_detected {
+        emulated_features.push("slang_reflection_emulated_by_static_wgsl_abi");
+    }
+    emulated_features.push("bindless_emulated_by_hashed_resource_slots");
+
+    let mut blocked_features = Vec::new();
+    if !has_backend {
+        blocked_features.push("native_gpu_backend_unavailable");
+    }
+    if prefer_mesh_shaders && !has_meshlet_pages {
+        blocked_features.push("mesh_shader_lane_waiting_for_meshlet_pages");
+    }
+    if !has_modern_native_backend {
+        blocked_features.push("modern_native_backend_feature_gate_unmet");
+    }
+
+    let capability_score = [
+        has_backend,
+        has_modern_native_backend,
+        has_meshlet_pages,
+        has_async_compute,
+        has_virtual_shadow_work,
+        shader_compiler_ticket.compiler_detected,
+        pipeline_cache_manifest.persisted_entry_count == pipeline_cache_manifest.entry_count,
+    ]
+    .into_iter()
+    .filter(|flag| *flag)
+    .count() as u32;
+    let native_feature_tier = match capability_score {
+        6..=u32::MAX => "frontier_meshlet_indirect_cached_rhi",
+        4..=5 => "high_end_compute_indirect_rhi",
+        2..=3 => "bootstrap_wgpu_rhi",
+        _ => "adapter_probe_pending",
+    };
+    let capability_hash = shader_capability_plan_hash(
+        prefer_mesh_shaders,
+        native_feature_tier,
+        &negotiated_features,
+        &emulated_features,
+        &blocked_features,
+        capability_score,
+        shader_compiler_ticket,
+        pipeline_cache_manifest,
+    );
+
+    BangerNativeShaderCapabilityPlan {
+        bootstrap_rhi: "wgpu_native_vulkan_metal_dx12",
+        frontier_target: "capability_checked_meshlet_indirect_cached_rhi",
+        mesh_shader_preferred: prefer_mesh_shaders,
+        fallback_path: "compute_cull_indirect_draw_when_mesh_shader_unavailable_or_benchmark_gate_fails",
+        capability_gate: "capability_hash+benchmark_promotion_hash+render_manifest_hash+shader_profile+renderer_cache_hash+shader_compiler_ticket_hash",
+        compiler_ticket_hash: shader_compiler_ticket.proof_hash.clone(),
+        native_feature_tier,
+        negotiated_features,
+        emulated_features,
+        blocked_features,
+        capability_score,
+        capability_hash,
+    }
+}
+
+fn shader_capability_plan_hash(
+    prefer_mesh_shaders: bool,
+    native_feature_tier: &str,
+    negotiated_features: &[&str],
+    emulated_features: &[&str],
+    blocked_features: &[&str],
+    capability_score: u32,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.shader_capability_plan.v2\0");
+    h.update([prefer_mesh_shaders as u8]);
+    h.update(native_feature_tier.as_bytes());
+    h.update(capability_score.to_le_bytes());
+    h.update(shader_compiler_ticket.proof_hash.as_bytes());
+    h.update(shader_compiler_ticket.target_manifest_hash.as_bytes());
+    h.update(shader_compiler_ticket.fallback_wgsl_hash.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.backend_capability_hash.as_bytes());
+    h.update(pipeline_cache_manifest.descriptor_abi_hash.as_bytes());
+    for feature in negotiated_features {
+        h.update(b"\0negotiated\0");
+        h.update(feature.as_bytes());
+    }
+    for feature in emulated_features {
+        h.update(b"\0emulated\0");
+        h.update(feature.as_bytes());
+    }
+    for feature in blocked_features {
+        h.update(b"\0blocked\0");
+        h.update(feature.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn detect_slang_version() -> Option<String> {
     let output = Command::new("slangc").arg("-version").output().ok()?;
     if output.status.success() {
@@ -26520,6 +26676,7 @@ fn present_loop_bootstrap_hash(
 fn render_handoff_hash(
     prepared: &MonsterPreparedCompute,
     artifacts: &[BangerNativeRenderArtifactSummary],
+    shader_capability_plan: &BangerNativeShaderCapabilityPlan,
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
     benchmark_promotion_manifest: &BangerNativeBenchmarkPromotionManifest,
@@ -26553,6 +26710,8 @@ fn render_handoff_hash(
     h.update(b"forge.banger.native_render_handoff.v1\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(shader_capability_plan.capability_hash.as_bytes());
+    h.update(shader_capability_plan.native_feature_tier.as_bytes());
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
     h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
@@ -27596,6 +27755,40 @@ mod tests {
             .shader_capability_plan
             .capability_gate
             .contains("benchmark_promotion_hash"));
+        assert_eq!(response.shader_capability_plan.capability_hash.len(), 64);
+        assert!(response.shader_capability_plan.capability_score >= 2);
+        assert!(matches!(
+            response.shader_capability_plan.native_feature_tier,
+            "frontier_meshlet_indirect_cached_rhi"
+                | "high_end_compute_indirect_rhi"
+                | "bootstrap_wgpu_rhi"
+                | "adapter_probe_pending"
+        ));
+        assert!(response
+            .shader_capability_plan
+            .negotiated_features
+            .iter()
+            .any(|feature| *feature == "content_addressed_pipeline_cache"));
+        assert!(response
+            .shader_capability_plan
+            .negotiated_features
+            .iter()
+            .any(|feature| *feature == "draw_indirect_command_buffer"));
+        assert!(response
+            .shader_capability_plan
+            .negotiated_features
+            .iter()
+            .any(|feature| *feature == "meshlet_visibility_indirect_args"));
+        assert!(response
+            .shader_capability_plan
+            .emulated_features
+            .iter()
+            .any(|feature| *feature == "mesh_shader_emulated_by_compute_cull_plus_indirect_draw"));
+        assert!(response
+            .shader_capability_plan
+            .emulated_features
+            .iter()
+            .any(|feature| *feature == "bindless_emulated_by_hashed_resource_slots"));
         assert_eq!(response.shader_compiler_ticket.proof_hash.len(), 64);
         assert_eq!(response.shader_compiler_ticket.preferred_compiler, "slangc");
         assert_eq!(response.shader_compiler_ticket.bootstrap_target, "wgsl");
@@ -30743,6 +30936,11 @@ mod tests {
             .page_residency_allocator
             .entries
             .iter()
+            .any(|entry| entry.page_kind == "virtual_geometry_micro_page"));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
             .any(|entry| entry.page_kind == "nanite_geometry_page"));
         assert!(response
             .page_residency_allocator
@@ -30772,7 +30970,8 @@ mod tests {
                 && entry.entry_hash.len() == 64
                 && matches!(
                     entry.page_kind,
-                    "nanite_geometry_page"
+                    "virtual_geometry_micro_page"
+                        | "nanite_geometry_page"
                         | "virtual_shadow_page"
                         | "material_virtual_texture_page"
                 )
