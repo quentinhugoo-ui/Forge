@@ -6539,6 +6539,38 @@ fn banger_contact_ambient_occlusion(normal: vec3<f32>, world_pos: vec3<f32>, mat
     return clamp(1.0 - slope_cavity * 0.24 - low_contact * 0.18 - material_cavity - micro_noise * 0.035, 0.54, 1.0);
 }
 
+fn banger_fresnel_schlick(f0: vec3<f32>, voh: f32) -> vec3<f32> {
+    let f = pow(1.0 - clamp(voh, 0.0, 1.0), 5.0);
+    return f0 + (vec3<f32>(1.0) - f0) * f;
+}
+
+fn banger_distribution_ggx(noh: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = max(noh * noh * (a2 - 1.0) + 1.0, 0.0008);
+    return a2 / (3.14159265 * denom * denom);
+}
+
+fn banger_visibility_smith_ggx_fast(nov: f32, nol: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let ggx_v = nol * (nov * (1.0 - a) + a);
+    let ggx_l = nov * (nol * (1.0 - a) + a);
+    return 0.5 / max(ggx_v + ggx_l, 0.0008);
+}
+
+fn banger_microfacet_brdf(base_color: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>, light_dir: vec3<f32>, roughness: f32, metallic: f32) -> vec3<f32> {
+    let half_dir = normalize(view_dir + light_dir);
+    let nol = clamp(dot(normal, light_dir), 0.0, 1.0);
+    let nov = clamp(dot(normal, view_dir), 0.0, 1.0);
+    let noh = clamp(dot(normal, half_dir), 0.0, 1.0);
+    let voh = clamp(dot(view_dir, half_dir), 0.0, 1.0);
+    let f0 = mix(vec3<f32>(0.04), base_color, metallic);
+    let fresnel = banger_fresnel_schlick(f0, voh);
+    let specular = banger_distribution_ggx(noh, roughness) * banger_visibility_smith_ggx_fast(nov, nol, roughness) * fresnel;
+    let diffuse = base_color * (vec3<f32>(1.0) - fresnel) * (1.0 - metallic) * 0.3183099;
+    return (diffuse + specular) * nol;
+}
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
@@ -6566,18 +6598,22 @@ fn vs_main(
 fn fs_main(in: VertexOut) -> FragmentOut {
     let normal = normalize(in.normal_hint);
     let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
+    let view_dir = normalize(vec3<f32>(-in.world_pos.x * 0.012, 0.28, 1.0 - in.world_pos.z * 0.006));
     let view_fade = clamp(length(in.world_pos.xz) / 58.0, 0.0, 1.0);
     let lambert = clamp(dot(normal, sun_dir) * 0.62 + 0.38, 0.18, 1.0);
     let sky = mix(vec3<f32>(0.02, 0.035, 0.065), vec3<f32>(0.95, 0.48, 0.18), clamp(in.world_pos.y * 0.04 + 0.35, 0.0, 1.0));
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
-    let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), normalize(vec3<f32>(0.0, 0.22, 1.0))), 0.0), 18.0);
+    let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), view_dir), 0.0), 18.0);
     let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
     let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
     let base_color = mix(in.color, sampled * in.color, maps_texture_weight);
     let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
-    let diffuse_light = lambert * contact_ao + 0.16 * contact_ao;
-    let lit = base_color * diffuse_light + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
+    let material_roughness = mix(0.78, 0.18, smoothstep(2.4, 3.4, in.material_kind));
+    let material_metallic = smoothstep(4.5, 6.0, in.material_kind) * 0.45;
+    let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
+    let diffuse_light = lambert * contact_ao + 0.12 * contact_ao;
+    let lit = pbr_direct * (2.45 * contact_ao) + base_color * diffuse_light + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -6587,7 +6623,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
-    out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
+    out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint);
     out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), contact_ao);
     return out;
 }
@@ -10272,7 +10308,12 @@ mod tests {
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
+        assert!(source.contains("banger_microfacet_brdf"));
+        assert!(source.contains("banger_distribution_ggx"));
+        assert!(source.contains("banger_visibility_smith_ggx_fast"));
+        assert!(source.contains("banger_fresnel_schlick"));
         assert!(source.contains("contact_ao"));
+        assert!(source.contains("material_roughness"));
         assert!(source.contains("exposure"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
