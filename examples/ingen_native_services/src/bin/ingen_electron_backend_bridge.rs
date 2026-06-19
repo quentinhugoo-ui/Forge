@@ -656,6 +656,9 @@ struct BangerNativeScenePipeline {
     spectral_ocean_pipeline: wgpu::ComputePipeline,
     single_layer_water_bind_group_layout: wgpu::BindGroupLayout,
     single_layer_water_pipeline: wgpu::ComputePipeline,
+    single_layer_water_present_bind_group_layout: wgpu::BindGroupLayout,
+    single_layer_water_present_pipeline: wgpu::RenderPipeline,
+    single_layer_water_present_sampler: wgpu::Sampler,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -4228,6 +4231,7 @@ fn render_child_surface_frame(
     );
     dispatch_banger_spectral_ocean_compute(device, &mut encoder, scene_pipeline, frame_target);
     dispatch_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target);
+    present_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target, &view);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -5095,6 +5099,53 @@ fn dispatch_banger_single_layer_water_composite(
     pass.set_pipeline(&scene_pipeline.single_layer_water_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.dispatch_workgroups(frame_target.width.div_ceil(8), frame_target.height.div_ceil(8), 1);
+}
+
+#[cfg(target_os = "windows")]
+fn present_banger_single_layer_water_composite(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+    output_view: &wgpu::TextureView,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-single-layer-water-present-bind-group"),
+        layout: &scene_pipeline.single_layer_water_present_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.composite_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&frame_target.water.refraction_mask_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&scene_pipeline.single_layer_water_present_sampler),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("banger-native-single-layer-water-present-pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: output_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&scene_pipeline.single_layer_water_present_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
 }
 
 #[cfg(target_os = "windows")]
@@ -6007,9 +6058,87 @@ fn create_banger_first_scene_pipeline(
         compilation_options: Default::default(),
         cache: None,
     });
+    let single_layer_water_present_shader_source = banger_single_layer_water_present_wgsl();
+    let single_layer_water_present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-single-layer-water-present-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(single_layer_water_present_shader_source.into()),
+    });
+    let single_layer_water_present_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-single-layer-water-present-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+    let single_layer_water_present_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-single-layer-water-present-pipeline-layout"),
+            bind_group_layouts: &[Some(&single_layer_water_present_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let single_layer_water_present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-single-layer-water-present-pipeline"),
+        layout: Some(&single_layer_water_present_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &single_layer_water_present_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &single_layer_water_present_shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let single_layer_water_present_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("banger-native-single-layer-water-present-sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
@@ -6017,6 +6146,7 @@ fn create_banger_first_scene_pipeline(
             sha256_hex(vsm_projection_shader_source.as_bytes()),
             sha256_hex(spectral_ocean_shader_source.as_bytes()),
             sha256_hex(single_layer_water_shader_source.as_bytes()),
+            sha256_hex(single_layer_water_present_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
             format,
@@ -6077,6 +6207,9 @@ fn create_banger_first_scene_pipeline(
         spectral_ocean_pipeline,
         single_layer_water_bind_group_layout,
         single_layer_water_pipeline,
+        single_layer_water_present_bind_group_layout,
+        single_layer_water_present_pipeline,
+        single_layer_water_present_sampler,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -6277,6 +6410,46 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let bit_mask = 1u << (tile_index % 32u);
         atomicOr(&water_tile_mask[word_index], bit_mask);
     }
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_single_layer_water_present_wgsl() -> &'static str {
+    r#"
+@group(0) @binding(0)
+var water_composite: texture_2d<f32>;
+@group(0) @binding(1)
+var refraction_mask: texture_2d<f32>;
+@group(0) @binding(2)
+var water_sampler: sampler;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    let x = f32((vertex_index << 1u) & 2u);
+    let y = f32(vertex_index & 2u);
+    var out: VertexOut;
+    out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, y);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let pixel = vec2<i32>(i32(in.position.x), i32(in.position.y));
+    let mask = textureLoad(refraction_mask, pixel, 0).r;
+    if (mask <= 0.015) {
+        discard;
+    }
+    let color = textureSample(water_composite, water_sampler, in.uv).rgb;
+    let sparkle = pow(clamp(mask, 0.0, 1.0), 2.0) * vec3<f32>(0.20, 0.36, 0.45);
+    let alpha = smoothstep(0.02, 0.45, mask) * 0.66;
+    return vec4<f32>(clamp(color + sparkle, vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
 }
 "#
 }
@@ -10963,6 +11136,11 @@ mod tests {
         assert!(shader.contains("texture_storage_2d<r32float, write>"));
         assert!(shader.contains("refraction_mask"));
         assert!(shader.contains("atomicOr"));
+        let present_shader = banger_single_layer_water_present_wgsl();
+        assert!(present_shader.contains("water_composite"));
+        assert!(present_shader.contains("refraction_mask"));
+        assert!(present_shader.contains("smoothstep"));
+        assert!(present_shader.contains("discard"));
     }
 
     #[cfg(target_os = "windows")]
