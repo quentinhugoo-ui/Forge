@@ -609,6 +609,8 @@ struct BangerNativeScenePipeline {
     render_pipeline: wgpu::RenderPipeline,
     sky_present_bind_group_layout: wgpu::BindGroupLayout,
     sky_present_pipeline: wgpu::RenderPipeline,
+    ssao_present_bind_group_layout: wgpu::BindGroupLayout,
+    ssao_present_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
@@ -4222,6 +4224,7 @@ fn render_child_surface_frame(
     dispatch_banger_virtual_shadow_map_page_mark(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_physical_pages(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_projection_filter(device, &mut encoder, scene_pipeline);
+    present_banger_screen_space_ambient_occlusion(device, &mut encoder, scene_pipeline, frame_target, &view);
     let spectral_params_bytes =
         banger_spectral_ocean_params_bytes(frame_target.width, frame_target.height, time_seconds, frame_index);
     queue.write_buffer(
@@ -5144,6 +5147,49 @@ fn present_banger_sky_atmosphere(
 }
 
 #[cfg(target_os = "windows")]
+fn present_banger_screen_space_ambient_occlusion(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+    output_view: &wgpu::TextureView,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-ssao-present-bind-group"),
+        layout: &scene_pipeline.ssao_present_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_target.depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.normal_view),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("banger-native-ssao-present-pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: output_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&scene_pipeline.ssao_present_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+#[cfg(target_os = "windows")]
 fn present_banger_single_layer_water_composite(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
@@ -5843,6 +5889,68 @@ fn create_banger_first_scene_pipeline(
         multiview_mask: None,
         cache: None,
     });
+    let ssao_present_shader_source = banger_screen_space_ambient_occlusion_present_wgsl();
+    let ssao_present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-ssao-present-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(ssao_present_shader_source.into()),
+    });
+    let ssao_present_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-ssao-present-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let ssao_present_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-ssao-present-pipeline-layout"),
+            bind_group_layouts: &[Some(&ssao_present_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let ssao_present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-ssao-present-pipeline"),
+        layout: Some(&ssao_present_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &ssao_present_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &ssao_present_shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
     let meshlet_cull_shader_source = banger_meshlet_cluster_cull_compute_wgsl();
     let meshlet_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-meshlet-cluster-cull-wgsl"),
@@ -6328,9 +6436,10 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(sky_present_shader_source.as_bytes()),
+            sha256_hex(ssao_present_shader_source.as_bytes()),
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
             sha256_hex(vsm_physical_page_shader_source.as_bytes()),
@@ -6352,6 +6461,8 @@ fn create_banger_first_scene_pipeline(
         render_pipeline,
         sky_present_bind_group_layout,
         sky_present_pipeline,
+        ssao_present_bind_group_layout,
+        ssao_present_pipeline,
         uniform_buffer,
         bind_group,
         vertex_buffer: gpu_resource.vertex_buffer,
@@ -6487,6 +6598,62 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let sunset_band = vec3<f32>(0.92, 0.38, 0.16) * (1.0 - horizon) * 0.24;
     let color = mix(lower + sunset_band, upper + rayleigh_blue, horizon) + mie_warmth + vec3<f32>(1.0, 0.74, 0.38) * sun_disk;
     return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_screen_space_ambient_occlusion_present_wgsl() -> &'static str {
+    r#"
+@group(0) @binding(0)
+var source_depth: texture_depth_2d;
+@group(0) @binding(1)
+var gbuffer_normal: texture_2d<f32>;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    let x = f32((vertex_index << 1u) & 2u);
+    let y = f32(vertex_index & 2u);
+    var out: VertexOut;
+    out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    return out;
+}
+
+fn banger_ssao_sample(pixel: vec2<i32>, offset: vec2<i32>, extent: vec2<i32>, center_depth: f32, center_normal: vec3<f32>) -> f32 {
+    let sample_pixel = clamp(pixel + offset, vec2<i32>(0), extent - vec2<i32>(1));
+    let sample_depth = textureLoad(source_depth, sample_pixel, 0);
+    let sample_normal = normalize(textureLoad(gbuffer_normal, sample_pixel, 0).xyz * 2.0 - vec3<f32>(1.0));
+    let closer = smoothstep(0.0007, 0.019, center_depth - sample_depth);
+    let normal_fold = smoothstep(0.18, 0.88, 1.0 - dot(center_normal, sample_normal));
+    let radius_falloff = 1.0 / (1.0 + length(vec2<f32>(offset)) * 0.18);
+    return (closer * 0.78 + normal_fold * 0.22) * radius_falloff;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let extent_u = textureDimensions(source_depth);
+    let extent = vec2<i32>(i32(extent_u.x), i32(extent_u.y));
+    let pixel = vec2<i32>(i32(in.position.x), i32(in.position.y));
+    let center_depth = textureLoad(source_depth, pixel, 0);
+    if (center_depth >= 0.999) {
+        discard;
+    }
+    let center_normal = normalize(textureLoad(gbuffer_normal, pixel, 0).xyz * 2.0 - vec3<f32>(1.0));
+    var occlusion = 0.0;
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(1, 0), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(-1, 0), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(0, 1), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(0, -1), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(3, 2), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(-3, 2), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(2, -3), extent, center_depth, center_normal);
+    occlusion += banger_ssao_sample(pixel, vec2<i32>(-2, -3), extent, center_depth, center_normal);
+    let ao_alpha = clamp((occlusion / 8.0) * 0.62, 0.0, 0.42);
+    return vec4<f32>(0.0, 0.0, 0.0, ao_alpha);
 }
 "#
 }
@@ -10294,6 +10461,11 @@ mod tests {
         assert!(sky_source.contains("mie"));
         assert!(sky_source.contains("sun_disk"));
         assert!(sky_source.contains("FrameUniform"));
+        let ssao_source = banger_screen_space_ambient_occlusion_present_wgsl();
+        assert!(ssao_source.contains("texture_depth_2d"));
+        assert!(ssao_source.contains("gbuffer_normal"));
+        assert!(ssao_source.contains("banger_ssao_sample"));
+        assert!(ssao_source.contains("ao_alpha"));
         let source = banger_native_first_scene_wgsl();
         assert!(source.contains("@vertex"));
         assert!(source.contains("@fragment"));
