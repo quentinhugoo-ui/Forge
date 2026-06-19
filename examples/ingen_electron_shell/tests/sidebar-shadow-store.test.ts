@@ -124,6 +124,54 @@ describe("sidebar shadow store", () => {
     expect(state.manifest.snapshotProofHash).toBe("sidebar-snapshot-proof");
   });
 
+  it("resolves the shell API lazily when preload arrives after store creation", async () => {
+    let api: ForgeShellApi | undefined;
+    const store = createSidebarShadowStore(() => api);
+
+    const fallbackState = await store.boot();
+    expect(fallbackState.snapshot.recentItems).toEqual([]);
+
+    api = {
+      getCutover: async () => "shadow",
+      getHeaderSnapshot: async () => {
+        throw new Error("unused");
+      },
+      getHeaderSurfaceSnapshot: async () => {
+        throw new Error("unused");
+      },
+      dispatchHeaderCommand: async () => {
+        throw new Error("unused");
+      },
+      getSidebarSnapshot: async () => cloneSnapshot({ proofHash: "late-sidebar-snapshot-proof" }),
+      dispatchSidebarCommand: async (command) => commandResult(command, "shadow"),
+      getPanelsChatBottomSnapshot: async () => {
+        throw new Error("unused");
+      },
+      dispatchPanelsChatBottomCommand: async () => {
+        throw new Error("unused");
+      },
+      getCanvasSurfacesSnapshot: async () => {
+        throw new Error("unused");
+      },
+      dispatchCanvasSurfacesCommand: async () => {
+        throw new Error("unused");
+      },
+      getRightPanelSnapshot: async () => {
+        throw new Error("unused");
+      },
+      dispatchRightPanelCommand: async () => {
+        throw new Error("unused");
+      },
+      connectLlmProvider: async () => {
+        throw new Error("unused");
+      }
+    };
+
+    const hydratedState = await store.boot();
+    expect(hydratedState.snapshot.recentItems.map((item) => item.sessionId)).toContain("native-front-migration");
+    expect(hydratedState.manifest.snapshotProofHash).toBe("late-sidebar-snapshot-proof");
+  });
+
   it("dispatches session mode changes with generated IPC types and preserves focus", async () => {
     const commands: SidebarCommand[] = [];
     let snapshot = cloneSnapshot();

@@ -268,7 +268,17 @@ function previewSnapshotFromLocation(): SidebarSnapshot {
   return fallbackSidebarSnapshot;
 }
 
-export function createSidebarShadowStore(api?: ForgeShellApi) {
+type SidebarShellApiProvider = ForgeShellApi | (() => ForgeShellApi | undefined);
+
+function browserApi(): ForgeShellApi | undefined {
+  return typeof window === "undefined" ? undefined : window.forgeShell;
+}
+
+export function createSidebarShadowStore(apiProvider?: SidebarShellApiProvider) {
+  const resolveApi = () =>
+    typeof apiProvider === "function"
+      ? apiProvider()
+      : apiProvider ?? browserApi();
   let pendingChatSession: SidebarSessionItem | null = null;
   let internals: StoreInternals = {
     snapshot: fallbackSidebarSnapshot,
@@ -328,6 +338,7 @@ export function createSidebarShadowStore(api?: ForgeShellApi) {
   }
 
   async function dispatch(command: SidebarCommand, focusTarget: string): Promise<SidebarShadowState> {
+    const api = resolveApi();
     emit({
       snapshot: localPreviewSnapshot(internals.snapshot, command),
       lastEvent: "shadow_manifest_recorded",
@@ -414,6 +425,7 @@ export function createSidebarShadowStore(api?: ForgeShellApi) {
       return state;
     },
     async boot(): Promise<SidebarShadowState> {
+      const api = resolveApi();
       const snapshot = (await api?.getSidebarSnapshot()) ?? previewSnapshotFromLocation();
       return emit({
         snapshot: withPendingChatSession(snapshot),
@@ -435,8 +447,6 @@ export function createSidebarShadowStore(api?: ForgeShellApi) {
     }
   };
 }
-
-const browserApi = typeof window === "undefined" ? undefined : window.forgeShell;
 
 export const sidebarShadowStore = createSidebarShadowStore(browserApi);
 
