@@ -6151,6 +6151,15 @@ fn banger_filmic_tonemap(color: vec3<f32>) -> vec3<f32> {
     return (x * (6.2 * x + vec3<f32>(0.5))) / (x * (6.2 * x + vec3<f32>(1.7)) + vec3<f32>(0.06));
 }
 
+fn banger_contact_ambient_occlusion(normal: vec3<f32>, world_pos: vec3<f32>, material_kind: f32) -> f32 {
+    let upward_access = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    let slope_cavity = pow(1.0 - upward_access, 1.7);
+    let low_contact = exp(-abs(world_pos.y) * 0.08) * smoothstep(0.15, 0.85, 1.0 - abs(normal.y));
+    let material_cavity = smoothstep(1.5, 3.5, material_kind) * 0.08;
+    let micro_noise = fract(sin(dot(world_pos, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
+    return clamp(1.0 - slope_cavity * 0.24 - low_contact * 0.18 - material_cavity - micro_noise * 0.035, 0.54, 1.0);
+}
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
@@ -6187,7 +6196,9 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
     let base_color = mix(in.color, sampled * in.color, maps_texture_weight);
-    let lit = base_color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
+    let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
+    let diffuse_light = lambert * contact_ao + 0.16 * contact_ao;
+    let lit = base_color * diffuse_light + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -6198,7 +6209,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
-    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), 1.0);
+    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), contact_ao);
     return out;
 }
 "#
@@ -9786,6 +9797,8 @@ mod tests {
         assert!(source.contains("material_kind"));
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
+        assert!(source.contains("banger_contact_ambient_occlusion"));
+        assert!(source.contains("contact_ao"));
         assert!(source.contains("exposure"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
