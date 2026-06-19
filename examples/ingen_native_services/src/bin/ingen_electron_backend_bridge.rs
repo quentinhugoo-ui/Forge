@@ -7,7 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::{env, fs};
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -821,6 +821,13 @@ struct BangerNativeHzbResources {
     height: u32,
     _hzb_hash: String,
     _consumer_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+enum BangerNativeHostCommand {
+    Resize { x: i32, y: i32, width: u32, height: u32 },
+    Shutdown,
 }
 
 fn main() {
@@ -3769,8 +3776,8 @@ fn run_banger_native_host(
     unsafe {
         RegisterClassW(&wc);
     }
-    let viewport_x = env::var("FORGE_BANGER_VIEWPORT_X").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
-    let viewport_y = env::var("FORGE_BANGER_VIEWPORT_Y").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    let mut viewport_x = env::var("FORGE_BANGER_VIEWPORT_X").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    let mut viewport_y = env::var("FORGE_BANGER_VIEWPORT_Y").ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
     let fixed_viewport = env::var("FORGE_BANGER_VIEWPORT_FIXED").ok().as_deref() == Some("1");
     let scene_kind = env::var("FORGE_BANGER_SCENE_KIND").unwrap_or_else(|_| "dense_meshlet_field".to_string());
     let child = unsafe {
@@ -3991,10 +3998,57 @@ fn run_banger_native_host(
     println!("{}", serde_json::to_string(&projection).expect("serialize banger native host"));
     io::stdout().flush().map_err(|error| format!("failed to flush Banger host readiness JSON: {error}"))?;
 
+    let command_rx = spawn_banger_native_host_command_reader();
     let requested_frames = frame_limit.unwrap_or(u32::MAX);
     let mut submitted = 1u32;
-    while submitted < requested_frames && unsafe { IsWindow(parent) } != 0 && unsafe { IsWindow(child) } != 0 {
+    let mut shutdown_requested = false;
+    while !shutdown_requested && submitted < requested_frames && unsafe { IsWindow(parent) } != 0 && unsafe { IsWindow(child) } != 0 {
         pump_win32_messages();
+        while let Ok(command) = command_rx.try_recv() {
+            match command {
+                BangerNativeHostCommand::Resize { x, y, width, height } => {
+                    viewport_x = x;
+                    viewport_y = y;
+                    unsafe {
+                        SetWindowPos(
+                            child,
+                            std::ptr::null_mut(),
+                            viewport_x,
+                            viewport_y,
+                            width as i32,
+                            height as i32,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                    if width != config.width || height != config.height {
+                        config.width = width;
+                        config.height = height;
+                        surface.configure(&device, &config);
+                        surface_resize_count += 1;
+                        frame_target_allocation_count += 1;
+                        frame_target = create_banger_frame_target(
+                            &device,
+                            config.width,
+                            config.height,
+                            scene_pipeline.depth_format,
+                            frame_target_allocation_count,
+                        );
+                        projection.viewport_width = config.width;
+                        projection.viewport_height = config.height;
+                        projection.frame_target_hash = frame_target.target_hash.clone();
+                        projection.depth_target_hash = frame_target.depth_target_hash.clone();
+                        projection.frame_target_allocation_count = frame_target_allocation_count;
+                        projection.surface_resize_count = surface_resize_count;
+                    }
+                }
+                BangerNativeHostCommand::Shutdown => {
+                    shutdown_requested = true;
+                }
+            }
+        }
+        if shutdown_requested {
+            break;
+        }
         if !fixed_viewport {
             if let Some((parent_width, parent_height)) = parent_client_size(parent) {
             let parent_width = parent_width.clamp(64, 16384);
@@ -4004,8 +4058,8 @@ fn run_banger_native_host(
                     SetWindowPos(
                         child,
                         std::ptr::null_mut(),
-                        0,
-                        0,
+                        viewport_x,
+                        viewport_y,
                         parent_width as i32,
                         parent_height as i32,
                         SWP_NOZORDER | SWP_NOACTIVATE,
@@ -9614,6 +9668,40 @@ fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(target_os = "windows")]
+fn parse_banger_native_host_command(line: &str) -> Option<BangerNativeHostCommand> {
+    let mut parts = line.split_whitespace();
+    match parts.next()? {
+        "resize" => {
+            let x = parts.next()?.parse::<i32>().ok()?;
+            let y = parts.next()?.parse::<i32>().ok()?;
+            let width = parts.next()?.parse::<u32>().ok()?.clamp(64, 16384);
+            let height = parts.next()?.parse::<u32>().ok()?.clamp(64, 16384);
+            Some(BangerNativeHostCommand::Resize { x, y, width, height })
+        }
+        "shutdown" => Some(BangerNativeHostCommand::Shutdown),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_banger_native_host_command_reader() -> std::sync::mpsc::Receiver<BangerNativeHostCommand> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines().map_while(Result::ok) {
+            let Some(command) = parse_banger_native_host_command(&line) else {
+                continue;
+            };
+            let shutdown = matches!(command, BangerNativeHostCommand::Shutdown);
+            if sender.send(command).is_err() || shutdown {
+                break;
+            }
+        }
+    });
+    receiver
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9639,6 +9727,26 @@ mod tests {
         assert_eq!(frame.metrics.water_info_texture_hash.len(), 64);
         assert!(frame.metrics.water_info_shoreline_texel_count > 0);
         assert!(frame.metrics.promotion_allowed);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parses_banger_native_host_control_commands() {
+        match parse_banger_native_host_command("resize 12 34 800 450") {
+            Some(BangerNativeHostCommand::Resize { x, y, width, height }) => {
+                assert_eq!((x, y, width, height), (12, 34, 800, 450));
+            }
+            other => panic!("unexpected resize command: {other:?}"),
+        }
+        assert!(matches!(
+            parse_banger_native_host_command("shutdown"),
+            Some(BangerNativeHostCommand::Shutdown)
+        ));
+        assert!(matches!(
+            parse_banger_native_host_command("resize 0 0 1 2"),
+            Some(BangerNativeHostCommand::Resize { width: 64, height: 64, .. })
+        ));
+        assert!(parse_banger_native_host_command("noise").is_none());
     }
 
     #[test]

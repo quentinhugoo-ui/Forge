@@ -190,6 +190,7 @@ const cacheTtlMs = 15_000;
 let bangerNativeHost:
   | {
       key: string;
+      boundsKey: string;
       child: ChildProcessWithoutNullStreams;
       ready: RustBangerPresentLoopBootstrap;
     }
@@ -197,6 +198,9 @@ let bangerNativeHost:
 
 export function stopRustBangerNativeHost(): void {
   if (bangerNativeHost && !bangerNativeHost.child.killed) {
+    if (!bangerNativeHost.child.stdin.destroyed && bangerNativeHost.child.stdin.writable) {
+      bangerNativeHost.child.stdin.write("shutdown\n");
+    }
     bangerNativeHost.child.kill();
   }
   bangerNativeHost = null;
@@ -272,7 +276,7 @@ export async function loadRustBangerPresentLoopBootstrap(
       return null;
     });
     if (host) {
-      if (host.previewFrameDataUrl) {
+      if (host.surfaceKind === "win32_child_window_wgpu_surface" || host.previewFrameDataUrl) {
         return host;
       }
       console.warn("Rust Banger native host has no preview frame; falling back to offscreen present-loop preview.");
@@ -334,10 +338,6 @@ async function launchRustBangerNativeHost(
     : "cargo-backend";
   const key = [
     parentWindowHandle,
-    x,
-    y,
-    width,
-    height,
     sceneKind,
     latitude?.toFixed(7) ?? "none",
     longitude?.toFixed(7) ?? "none",
@@ -345,7 +345,19 @@ async function launchRustBangerNativeHost(
     createHash("sha256").update(target).digest("hex").slice(0, 16),
     createHash("sha256").update(bridgeSignature).digest("hex").slice(0, 16)
   ].join(":");
+  const boundsKey = bangerNativeBoundsKey(x, y, width, height);
   if (bangerNativeHost && bangerNativeHost.key === key && !bangerNativeHost.child.killed) {
+    if (bangerNativeHost.boundsKey !== boundsKey) {
+      sendRustBangerNativeHostBounds(bangerNativeHost.child, x, y, width, height);
+      bangerNativeHost.boundsKey = boundsKey;
+      bangerNativeHost.ready = {
+        ...bangerNativeHost.ready,
+        viewportWidth: width,
+        viewportHeight: height,
+        surfaceResizeCount: (bangerNativeHost.ready.surfaceResizeCount ?? 0) + 1,
+        routeStatus: "native_child_surface_host_live_resized"
+      };
+    }
     return bangerNativeHost.ready;
   }
   if (bangerNativeHost && !bangerNativeHost.child.killed) {
@@ -414,8 +426,25 @@ async function launchRustBangerNativeHost(
   });
   const ready = await readFirstJsonLine(child, 12_000);
   const parsed = parseBangerPresentLoopBootstrap(ready);
-  bangerNativeHost = { key, child, ready: parsed };
+  bangerNativeHost = { key, boundsKey, child, ready: parsed };
   return parsed;
+}
+
+function bangerNativeBoundsKey(x: number, y: number, width: number, height: number): string {
+  return `${Math.round(x)}:${Math.round(y)}:${Math.round(width)}:${Math.round(height)}`;
+}
+
+function sendRustBangerNativeHostBounds(
+  child: ChildProcessWithoutNullStreams,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): void {
+  if (child.killed || child.stdin.destroyed || !child.stdin.writable) {
+    return;
+  }
+  child.stdin.write(`resize ${Math.round(x)} ${Math.round(y)} ${Math.round(width)} ${Math.round(height)}\n`);
 }
 
 function readFirstJsonLine(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<string> {
