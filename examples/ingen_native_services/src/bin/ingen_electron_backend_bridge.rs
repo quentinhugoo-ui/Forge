@@ -3152,6 +3152,19 @@ fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) ->
 }
 
 #[cfg(target_os = "windows")]
+fn banger_default_material_resource_bytes() -> Vec<u8> {
+    banger_maps_material_resource_bytes(&[BangerMapsMaterialStage {
+        material_index: 0,
+        base_color_factor: [1.0, 1.0, 1.0, 1.0],
+        metallic_factor: 0.0,
+        roughness_factor: 0.72,
+        base_color_texture: None,
+        material_hash: "banger_default_material_resource".to_string(),
+    }])
+    .expect("default Banger material must produce one 32-byte record")
+}
+
+#[cfg(target_os = "windows")]
 #[allow(dead_code)]
 fn banger_maps_texture_staging_resource_bytes(
     gltf: &Value,
@@ -5725,6 +5738,16 @@ fn create_banger_first_scene_pipeline(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5751,6 +5774,14 @@ fn create_banger_first_scene_pipeline(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::TextureView(&gpu_resource.virtual_shadow_map_projection_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: gpu_resource
+                    .material_buffer
+                    .as_ref()
+                    .expect("Banger material buffer must be defaulted before pipeline creation")
+                    .as_entire_binding(),
             },
         ],
     });
@@ -6691,6 +6722,17 @@ var maps_base_sampler: sampler;
 @group(0) @binding(3)
 var virtual_shadow_projection: texture_2d<u32>;
 
+struct BangerMaterialRecord {
+    base_color_factor: vec4<f32>,
+    metallic_factor: f32,
+    roughness_factor: f32,
+    base_color_texture: u32,
+    material_index: u32,
+};
+
+@group(0) @binding(4)
+var<storage, read> material_records: array<BangerMaterialRecord>;
+
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
@@ -6754,6 +6796,12 @@ fn banger_microfacet_brdf(base_color: vec3<f32>, normal: vec3<f32>, view_dir: ve
     return (diffuse + specular) * nol;
 }
 
+fn banger_material_record_for_kind(material_kind: f32) -> BangerMaterialRecord {
+    let material_count = arrayLength(&material_records);
+    let material_index = min(u32(max(material_kind, 0.0)), material_count - 1u);
+    return material_records[material_index];
+}
+
 fn banger_virtual_shadow_visibility(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
     let projection_extent = vec2<i32>(textureDimensions(virtual_shadow_projection));
     let shadow_uv = fract(world_pos.xz * 0.018 + vec2<f32>(0.31, 0.57));
@@ -6801,13 +6849,16 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
     let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), view_dir), 0.0), 18.0);
     let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
+    let material_record = banger_material_record_for_kind(in.material_kind);
     let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
-    let base_color = mix(in.color, sampled * in.color, maps_texture_weight);
+    let pbr_base_factor = clamp(material_record.base_color_factor.rgb, vec3<f32>(0.0), vec3<f32>(8.0));
+    let alpha_factor = clamp(material_record.base_color_factor.a, 0.0, 1.0);
+    let base_color = mix(in.color, sampled * in.color, maps_texture_weight) * pbr_base_factor;
     let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
     let shadow_visibility = banger_virtual_shadow_visibility(in.world_pos, normal, sun_dir);
-    let material_roughness = mix(0.78, 0.18, smoothstep(2.4, 3.4, in.material_kind));
-    let material_metallic = smoothstep(4.5, 6.0, in.material_kind) * 0.45;
+    let material_roughness = clamp(material_record.roughness_factor * mix(1.0, 0.45, smoothstep(2.4, 3.4, in.material_kind)), 0.045, 1.0);
+    let material_metallic = clamp(material_record.metallic_factor + smoothstep(4.5, 6.0, in.material_kind) * 0.25, 0.0, 1.0);
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
     let diffuse_light = lambert * contact_ao + 0.12 * contact_ao;
     let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
@@ -6817,11 +6868,11 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let graded = banger_filmic_tonemap(fogged * exposure);
     let contrast = mix(vec3<f32>(0.5), graded, vec3<f32>(1.08));
     var out: FragmentOut;
-    out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
+    out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), alpha_factor);
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint * shadow_visibility);
-    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), contact_ao);
+    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35 + max(alpha_factor - 1.0, 0.0)), contact_ao);
     return out;
 }
 "#
@@ -7301,11 +7352,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let vertex_hash = sha256_hex(&vertex_bytes);
     let index_hash = sha256_hex(&index_bytes);
     let instance_hash = sha256_hex(&instance_bytes);
-    let material_hash = material_bytes
-        .as_ref()
-        .map(|bytes| sha256_hex(bytes))
-        .unwrap_or_else(|| sha256_hex(b"no-material-buffer"));
-    let material_byte_count = material_bytes.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
+    let material_bytes = material_bytes.filter(|bytes| !bytes.is_empty());
+    let effective_material_bytes = material_bytes
+        .clone()
+        .unwrap_or_else(banger_default_material_resource_bytes);
+    let material_hash = sha256_hex(&effective_material_bytes);
+    let material_byte_count = effective_material_bytes.len();
     let texture_byte_count = texture_staging_bytes.iter().map(Vec::len).sum::<usize>();
     let texture_hash = sha256_hex(
         texture_staging_bytes
@@ -7333,7 +7385,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let texture_resource_manifest_bytes = banger_maps_texture_resource_manifest_bytes(&texture_staging_bytes);
     let material_bin_bytes = banger_material_bin_bytes(
         &meshlet_cluster_bytes,
-        material_bytes.as_deref(),
+        Some(&effective_material_bytes),
         &texture_resource_manifest_bytes,
     );
     let material_bin_hash = sha256_hex(&material_bin_bytes);
@@ -7475,14 +7527,12 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         wgpu::BufferUsages::VERTEX,
         &instance_bytes,
     );
-    let material_buffer = material_bytes.filter(|bytes| !bytes.is_empty()).map(|bytes| {
-        banger_create_mapped_buffer(
-            device,
-            "banger-native-maps-material-resource-buffer",
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            &bytes,
-        )
-    });
+    let material_buffer = Some(banger_create_mapped_buffer(
+        device,
+        "banger-native-maps-material-resource-buffer",
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        &effective_material_bytes,
+    ));
     let material_bin_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-material-bin-buffer",
@@ -10517,6 +10567,9 @@ mod tests {
         assert!(source.contains("virtual_shadow_projection"));
         assert!(source.contains("banger_virtual_shadow_visibility"));
         assert!(source.contains("shadow_visibility"));
+        assert!(source.contains("BangerMaterialRecord"));
+        assert!(source.contains("material_records"));
+        assert!(source.contains("banger_material_record_for_kind"));
         assert!(source.contains("contact_ao"));
         assert!(source.contains("material_roughness"));
         assert!(source.contains("exposure"));
@@ -11448,6 +11501,11 @@ mod tests {
         assert!((f32::from_le_bytes(bytes[16..20].try_into().unwrap()) - 0.2).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(bytes[28..32].try_into().unwrap()), 7);
+        let fallback = banger_default_material_resource_bytes();
+        assert_eq!(fallback.len(), 32);
+        assert_eq!(f32::from_le_bytes(fallback[0..4].try_into().unwrap()), 1.0);
+        assert_eq!(f32::from_le_bytes(fallback[16..20].try_into().unwrap()), 0.0);
+        assert!((f32::from_le_bytes(fallback[20..24].try_into().unwrap()) - 0.72).abs() < 0.0001);
     }
 
     #[cfg(target_os = "windows")]
