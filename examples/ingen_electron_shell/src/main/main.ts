@@ -14,6 +14,7 @@ import {
   loadRustBangerPresentLoopBootstrap,
   loadRustBangerPreviewFrame,
   refreshRustBackendProjection,
+  stopRustBangerNativeHost,
   type RustBangerPresentLoopBootstrap,
   type RustBangerPreviewFrame,
   type RustBackendProjection
@@ -11622,6 +11623,10 @@ body[data-gate="${visualGate}"]::after{border-color:rgba(127,218,169,.2);}
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
+function isNativeBangerChildSurface(bootstrap: RustBangerPresentLoopBootstrap): boolean {
+  return bootstrap.surfaceKind === "win32_child_window_wgpu_surface" && Boolean(bootstrap.childWindowHandleHash);
+}
+
 function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): void {
   if (!owner.getBrowserViews().includes(view)) {
     owner.addBrowserView(view);
@@ -11722,7 +11727,7 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
   }
   hideNativeMapsView();
   hideNativeWebExplorerView();
-  hideNativeBangerView();
+  hideNativeBangerSurface();
   configureNativeMapsSession();
   const view = new WebContentsView({
     webPreferences: {
@@ -11893,6 +11898,11 @@ function hideNativeBangerView(): void {
   }
 }
 
+function hideNativeBangerSurface(): void {
+  hideNativeBangerView();
+  stopRustBangerNativeHost();
+}
+
 function showNativeWebExplorer(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): NativeWebExplorerResult {
   if (!validateSender(event)) {
     return nativeWebExplorerResult(false, {
@@ -11918,7 +11928,7 @@ function showNativeWebExplorer(event: Electron.IpcMainInvokeEvent, bounds: Nativ
     });
   }
   hideNativeMapsView();
-  hideNativeBangerView();
+  hideNativeBangerSurface();
   const view = ensureNativeWebExplorerView(owner);
   view.setBounds(normalized);
   nativeWebExplorerBoundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}`;
@@ -12090,10 +12100,7 @@ async function showNativeBanger(event: Electron.IpcMainInvokeEvent, bounds: Nati
   }
   hideNativeMapsView();
   hideNativeWebExplorerView();
-  const view = ensureNativeBangerView(owner);
   const boundsKey = buildNativeBangerBoundsKey(normalized);
-  view.setBounds(normalized);
-  nativeBangerBoundsKey = boundsKey;
   const bootstrap = await loadRustBangerPresentLoopBootstrap(shellRoot, {
     parentWindowHandle: nativeWindowHandleDecimal(owner),
     x: normalized.x,
@@ -12113,9 +12120,18 @@ async function showNativeBanger(event: Electron.IpcMainInvokeEvent, bounds: Nati
       proofHash: bootstrap.error?.proofHash ?? bootstrap.proofHash
     });
   }
-  await loadNativeBangerSurface(view, bootstrap);
+  nativeBangerOwner = owner;
+  nativeBangerBoundsKey = boundsKey;
+  if (isNativeBangerChildSurface(bootstrap)) {
+    hideNativeBangerView();
+  } else {
+    const view = ensureNativeBangerView(owner);
+    view.setBounds(normalized);
+    await loadNativeBangerSurface(view, bootstrap);
+  }
   console.info("Native Banger view shown.", {
     bounds: normalized,
+    childWindowHandleHash: bootstrap.childWindowHandleHash,
     routeStatus: bootstrap.routeStatus,
     renderLoopPolicy: bootstrap.renderLoopPolicy,
     frameHash: bootstrap.frameHash,
@@ -12125,9 +12141,6 @@ async function showNativeBanger(event: Electron.IpcMainInvokeEvent, bounds: Nati
 }
 
 async function updateNativeBangerBounds(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> {
-  if (!nativeBangerView) {
-    return showNativeBanger(event, bounds);
-  }
   if (!validateSender(event)) {
     return nativeBangerResult(false, {
       code: "bad_sender",
@@ -12199,7 +12212,7 @@ function installNativeWebExplorerIpc(): void {
         proofHash: hashJson(event.senderFrame?.url ?? "")
       });
     }
-    hideNativeBangerView();
+    hideNativeBangerSurface();
     return nativeBangerResult(true);
   });
   ipcMain.handle("forge:maps-dom-ram-cartography-capture", async (event): Promise<NativeDomRamCartographyResult> => {

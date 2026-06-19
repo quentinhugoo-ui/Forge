@@ -195,6 +195,13 @@ let bangerNativeHost:
     }
   | null = null;
 
+export function stopRustBangerNativeHost(): void {
+  if (bangerNativeHost && !bangerNativeHost.child.killed) {
+    bangerNativeHost.child.kill();
+  }
+  bangerNativeHost = null;
+}
+
 export function cachedRustBackendProjection(): RustBackendProjection | null {
   return cachedProjection;
 }
@@ -342,8 +349,7 @@ async function launchRustBangerNativeHost(
     return bangerNativeHost.ready;
   }
   if (bangerNativeHost && !bangerNativeHost.child.killed) {
-    bangerNativeHost.child.kill();
-    bangerNativeHost = null;
+    stopRustBangerNativeHost();
   }
 
   const env = {
