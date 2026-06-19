@@ -151,6 +151,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub direct_lighting_packet: BangerNativeDirectLightingPacket,
     pub material_closure_packet: BangerNativeMaterialClosurePacket,
     pub temporal_history_packet: BangerNativeTemporalHistoryPacket,
+    pub reservoir_lighting_packet: BangerNativeReservoirLightingPacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -2831,6 +2832,77 @@ pub struct BangerNativeTemporalHistoryValidationReceipt {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeReservoirLightingPacket {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub direct_lighting_hash: String,
+    pub radiance_schedule_hash: String,
+    pub temporal_history_hash: String,
+    pub render_graph_hash: String,
+    pub reservoir_count: usize,
+    pub temporal_reuse_count: usize,
+    pub spatial_reuse_count: usize,
+    pub radiance_cache_reuse_count: usize,
+    pub candidate_sample_count: u64,
+    pub selected_sample_count: u64,
+    pub max_spatial_neighbor_count: u32,
+    pub reservoir_table_hash: String,
+    pub candidate_hash: String,
+    pub temporal_reuse_hash: String,
+    pub spatial_reuse_hash: String,
+    pub radiance_reuse_hash: String,
+    pub confidence_hash: String,
+    pub validation_receipt_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeReservoirLightingEntry>,
+    pub validation_receipt: BangerNativeReservoirLightingValidationReceipt,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeReservoirLightingEntry {
+    pub reservoir_id: String,
+    pub object_id: String,
+    pub cluster_id: String,
+    pub light_cluster_id: String,
+    pub sample_tile_id: String,
+    pub source_probe_page_id: String,
+    pub history_layer_id: String,
+    pub candidate_count: u32,
+    pub selected_sample_count: u32,
+    pub temporal_weight_q15: u16,
+    pub spatial_neighbor_count: u32,
+    pub radiance_reuse_frames: u32,
+    pub confidence_q15: u16,
+    pub disocclusion_rejected: bool,
+    pub reservoir_weight_hash: String,
+    pub candidate_hash: String,
+    pub temporal_reuse_hash: String,
+    pub spatial_reuse_hash: String,
+    pub radiance_reuse_hash: String,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeReservoirLightingValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_reservoir_count: usize,
+    pub invalid_candidate_count: usize,
+    pub invalid_selection_count: usize,
+    pub temporal_reuse_count: usize,
+    pub spatial_reuse_count: usize,
+    pub radiance_cache_reuse_count: usize,
+    pub all_reservoirs_have_sources: bool,
+    pub validation_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeGaussianSplatLayerManifest {
     pub schema: &'static str,
     pub authority: &'static str,
@@ -3928,6 +4000,13 @@ impl BangerNativeEngine {
             &material_closure_packet,
             &render_graph_compilation,
         );
+        let reservoir_lighting_packet = build_reservoir_lighting_packet(
+            &prepared,
+            &direct_lighting_packet,
+            &radiance_schedule_manifest,
+            &temporal_history_packet,
+            &render_graph_compilation,
+        );
         let page_residency_allocator = build_page_residency_allocator_packet(
             &prepared,
             &resource_table,
@@ -4052,6 +4131,7 @@ impl BangerNativeEngine {
             &material_closure_packet,
             &page_residency_allocator,
             &temporal_history_packet,
+            &reservoir_lighting_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -4129,6 +4209,7 @@ impl BangerNativeEngine {
             direct_lighting_packet,
             material_closure_packet,
             temporal_history_packet,
+            reservoir_lighting_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -8953,6 +9034,556 @@ fn build_temporal_history_packet(
         entries,
         validation_receipt,
     }
+}
+
+fn build_reservoir_lighting_packet(
+    prepared: &MonsterPreparedCompute,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeReservoirLightingPacket {
+    let entries = direct_lighting_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, direct_entry)| {
+            let probe_page = if radiance_schedule_manifest.entries.is_empty() {
+                None
+            } else {
+                radiance_schedule_manifest
+                    .entries
+                    .get(index % radiance_schedule_manifest.entries.len())
+            };
+            let temporal_entry = temporal_history_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == direct_entry.cluster_id)
+                .or_else(|| {
+                    if temporal_history_packet.entries.is_empty() {
+                        None
+                    } else {
+                        temporal_history_packet
+                            .entries
+                            .get(index % temporal_history_packet.entries.len())
+                    }
+                });
+            reservoir_lighting_entry_from_direct(direct_entry, probe_page, temporal_entry, index as u32)
+        })
+        .collect::<Vec<_>>();
+    let validation_receipt = reservoir_lighting_validation_receipt(&entries);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
+    let reservoir_table_hash = reservoir_lighting_table_hash(&entries);
+    let candidate_hash = reservoir_lighting_candidate_table_hash(&entries);
+    let temporal_reuse_hash = reservoir_lighting_temporal_table_hash(&entries);
+    let spatial_reuse_hash = reservoir_lighting_spatial_table_hash(&entries);
+    let radiance_reuse_hash = reservoir_lighting_radiance_table_hash(&entries);
+    let confidence_hash = reservoir_lighting_confidence_table_hash(&entries);
+    let packet_hash = reservoir_lighting_packet_hash(
+        prepared,
+        direct_lighting_packet,
+        radiance_schedule_manifest,
+        temporal_history_packet,
+        render_graph_compilation,
+        &reservoir_table_hash,
+        &candidate_hash,
+        &temporal_reuse_hash,
+        &spatial_reuse_hash,
+        &radiance_reuse_hash,
+        &confidence_hash,
+        &validation_receipt_hash,
+        &entries,
+    );
+    BangerNativeReservoirLightingPacket {
+        schema: "forge.banger.reservoir_lighting_packet.v1",
+        schema_version: 1,
+        authority: "banger_direct_lighting_radiance_temporal_reservoir_reuse",
+        clean_room_basis: "restir_style_streaming_reservoir_principles_with_local_banger_hash_contract_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        direct_lighting_hash: direct_lighting_packet.packet_hash.clone(),
+        radiance_schedule_hash: radiance_schedule_manifest.schedule_hash.clone(),
+        temporal_history_hash: temporal_history_packet.packet_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        reservoir_count: entries.len(),
+        temporal_reuse_count: entries.iter().filter(|entry| entry.temporal_weight_q15 > 0).count(),
+        spatial_reuse_count: entries.iter().filter(|entry| entry.spatial_neighbor_count > 0).count(),
+        radiance_cache_reuse_count: entries
+            .iter()
+            .filter(|entry| entry.radiance_reuse_frames > 0)
+            .count(),
+        candidate_sample_count: entries.iter().map(|entry| entry.candidate_count as u64).sum(),
+        selected_sample_count: entries
+            .iter()
+            .map(|entry| entry.selected_sample_count as u64)
+            .sum(),
+        max_spatial_neighbor_count: entries
+            .iter()
+            .map(|entry| entry.spatial_neighbor_count)
+            .max()
+            .unwrap_or_default(),
+        reservoir_table_hash,
+        candidate_hash,
+        temporal_reuse_hash,
+        spatial_reuse_hash,
+        radiance_reuse_hash,
+        confidence_hash,
+        validation_receipt_hash,
+        packet_hash,
+        entries,
+        validation_receipt,
+    }
+}
+
+fn reservoir_lighting_entry_from_direct(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
+    index: u32,
+) -> BangerNativeReservoirLightingEntry {
+    let source_probe_page_id = probe_page
+        .map(|page| page.probe_page_id.clone())
+        .unwrap_or_else(|| "radiance:none".to_string());
+    let history_layer_id = temporal_entry
+        .map(|entry| entry.history_layer_id.clone())
+        .unwrap_or_else(|| "history:none".to_string());
+    let radiance_reuse_frames = probe_page.map(|page| page.temporal_reuse_frames).unwrap_or(0);
+    let temporal_weight_q15 = temporal_entry
+        .map(|entry| entry.history_validity_q15)
+        .unwrap_or_else(|| (direct_entry.temporal_history_weight.clamp(0.0, 1.0) * 32767.0).round() as u16)
+        .max(1);
+    let spatial_neighbor_count = reservoir_lighting_spatial_neighbor_count(direct_entry, temporal_entry);
+    let candidate_count = reservoir_lighting_candidate_count(direct_entry, probe_page, temporal_entry);
+    let selected_sample_count = reservoir_lighting_selected_sample_count(candidate_count, direct_entry);
+    let disocclusion_rejected = temporal_entry
+        .map(|entry| entry.disocclusion_score > 24576 || entry.rejection_mode != "history_accept")
+        .unwrap_or(false);
+    let confidence_q15 = reservoir_lighting_confidence_q15(
+        candidate_count,
+        temporal_weight_q15,
+        spatial_neighbor_count,
+        radiance_reuse_frames,
+        disocclusion_rejected,
+    );
+    let reservoir_id = format!("reservoir:{}:{}:{}", direct_entry.cluster_id, direct_entry.sample_tile_id, index);
+    let reservoir_weight_hash = reservoir_lighting_weight_hash(
+        direct_entry,
+        probe_page,
+        temporal_entry,
+        candidate_count,
+        selected_sample_count,
+        confidence_q15,
+    );
+    let candidate_hash =
+        reservoir_lighting_candidate_hash(direct_entry, probe_page, candidate_count, selected_sample_count);
+    let temporal_reuse_hash =
+        reservoir_lighting_temporal_hash(direct_entry, temporal_entry, temporal_weight_q15, disocclusion_rejected);
+    let spatial_reuse_hash =
+        reservoir_lighting_spatial_hash(direct_entry, spatial_neighbor_count, &direct_entry.denoiser_tile, &direct_entry.resolve_tile);
+    let radiance_reuse_hash = reservoir_lighting_radiance_hash(direct_entry, probe_page, radiance_reuse_frames);
+    let entry_hash = reservoir_lighting_entry_hash(
+        &reservoir_id,
+        direct_entry,
+        &source_probe_page_id,
+        &history_layer_id,
+        candidate_count,
+        selected_sample_count,
+        temporal_weight_q15,
+        spatial_neighbor_count,
+        radiance_reuse_frames,
+        confidence_q15,
+        disocclusion_rejected,
+        &reservoir_weight_hash,
+        &candidate_hash,
+        &temporal_reuse_hash,
+        &spatial_reuse_hash,
+        &radiance_reuse_hash,
+    );
+    BangerNativeReservoirLightingEntry {
+        reservoir_id,
+        object_id: direct_entry.object_id.clone(),
+        cluster_id: direct_entry.cluster_id.clone(),
+        light_cluster_id: direct_entry.light_cluster_id.clone(),
+        sample_tile_id: direct_entry.sample_tile_id.clone(),
+        source_probe_page_id,
+        history_layer_id,
+        candidate_count,
+        selected_sample_count,
+        temporal_weight_q15,
+        spatial_neighbor_count,
+        radiance_reuse_frames,
+        confidence_q15,
+        disocclusion_rejected,
+        reservoir_weight_hash,
+        candidate_hash,
+        temporal_reuse_hash,
+        spatial_reuse_hash,
+        radiance_reuse_hash,
+        entry_hash,
+    }
+}
+
+fn reservoir_lighting_candidate_count(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
+) -> u32 {
+    let radiance_candidates = probe_page
+        .map(|page| page.probe_count.min(page.light_budget.max(1)))
+        .unwrap_or(0);
+    let temporal_candidates = temporal_entry
+        .map(|entry| u32::from(entry.history_sample_count.max(1)))
+        .unwrap_or(0);
+    direct_entry
+        .sample_count
+        .saturating_add(radiance_candidates)
+        .saturating_add(temporal_candidates)
+        .clamp(1, 4096)
+}
+
+fn reservoir_lighting_selected_sample_count(
+    candidate_count: u32,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u32 {
+    if candidate_count >= 8 && direct_entry.ray_tracing_candidate {
+        2
+    } else {
+        1
+    }
+}
+
+fn reservoir_lighting_spatial_neighbor_count(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
+) -> u32 {
+    let base = if direct_entry.stochastic_sample_mode == "mega_light_many_sample_tile" {
+        8
+    } else {
+        4
+    };
+    let temporal_bonus = temporal_entry
+        .map(|entry| if entry.parallax_disocclusion_score < 8192 { 2 } else { 0 })
+        .unwrap_or(0);
+    (base + temporal_bonus).min(12)
+}
+
+fn reservoir_lighting_confidence_q15(
+    candidate_count: u32,
+    temporal_weight_q15: u16,
+    spatial_neighbor_count: u32,
+    radiance_reuse_frames: u32,
+    disocclusion_rejected: bool,
+) -> u16 {
+    let candidate_score = candidate_count.min(64).saturating_mul(256);
+    let spatial_score = spatial_neighbor_count.min(12).saturating_mul(512);
+    let radiance_score = radiance_reuse_frames.min(8).saturating_mul(1024);
+    let temporal_score = u32::from(temporal_weight_q15) / 2;
+    let penalty = if disocclusion_rejected { 8192 } else { 0 };
+    candidate_score
+        .saturating_add(spatial_score)
+        .saturating_add(radiance_score)
+        .saturating_add(temporal_score)
+        .saturating_sub(penalty)
+        .clamp(1, 32767) as u16
+}
+
+fn reservoir_lighting_validation_receipt(
+    entries: &[BangerNativeReservoirLightingEntry],
+) -> BangerNativeReservoirLightingValidationReceipt {
+    let invalid_candidate_count = entries.iter().filter(|entry| entry.candidate_count == 0).count();
+    let invalid_selection_count = entries
+        .iter()
+        .filter(|entry| entry.selected_sample_count == 0 || entry.selected_sample_count > entry.candidate_count)
+        .count();
+    let temporal_reuse_count = entries.iter().filter(|entry| entry.temporal_weight_q15 > 0).count();
+    let spatial_reuse_count = entries.iter().filter(|entry| entry.spatial_neighbor_count > 0).count();
+    let radiance_cache_reuse_count = entries.iter().filter(|entry| entry.radiance_reuse_frames > 0).count();
+    let all_reservoirs_have_sources = entries.iter().all(|entry| {
+        !entry.sample_tile_id.is_empty()
+            && !entry.light_cluster_id.is_empty()
+            && entry.source_probe_page_id != "radiance:none"
+            && entry.history_layer_id != "history:none"
+    });
+    let validation_hash = reservoir_lighting_validation_hash(
+        entries.len(),
+        invalid_candidate_count,
+        invalid_selection_count,
+        temporal_reuse_count,
+        spatial_reuse_count,
+        radiance_cache_reuse_count,
+        all_reservoirs_have_sources,
+    );
+    BangerNativeReservoirLightingValidationReceipt {
+        schema: "forge.banger.reservoir_lighting_validation_receipt.v1",
+        authority: "reservoir_candidate_selection_temporal_spatial_radiance_source_check",
+        checked_reservoir_count: entries.len(),
+        invalid_candidate_count,
+        invalid_selection_count,
+        temporal_reuse_count,
+        spatial_reuse_count,
+        radiance_cache_reuse_count,
+        all_reservoirs_have_sources,
+        validation_hash,
+    }
+}
+
+fn reservoir_lighting_weight_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
+    candidate_count: u32,
+    selected_sample_count: u32,
+    confidence_q15: u16,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.weight.v1\0");
+    h.update(direct_entry.entry_hash.as_bytes());
+    if let Some(probe_page) = probe_page {
+        h.update(probe_page.proof_hash.as_bytes());
+    }
+    if let Some(temporal_entry) = temporal_entry {
+        h.update(temporal_entry.entry_hash.as_bytes());
+    }
+    h.update(candidate_count.to_le_bytes());
+    h.update(selected_sample_count.to_le_bytes());
+    h.update(confidence_q15.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_candidate_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    candidate_count: u32,
+    selected_sample_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.candidate.v1\0");
+    h.update(direct_entry.sample_sequence.to_le_bytes());
+    h.update(direct_entry.sample_tile_hash.as_bytes());
+    if let Some(probe_page) = probe_page {
+        h.update(probe_page.trace_tile_hash.as_bytes());
+        h.update(probe_page.indirect_dispatch_hash.as_bytes());
+    }
+    h.update(candidate_count.to_le_bytes());
+    h.update(selected_sample_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_temporal_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
+    temporal_weight_q15: u16,
+    disocclusion_rejected: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.temporal.v1\0");
+    h.update(direct_entry.temporal_reprojection_hash.as_bytes());
+    if let Some(temporal_entry) = temporal_entry {
+        h.update(temporal_entry.history_reprojection_hash.as_bytes());
+        h.update(temporal_entry.disocclusion_hash.as_bytes());
+        h.update(temporal_entry.accumulation_hash.as_bytes());
+    }
+    h.update(temporal_weight_q15.to_le_bytes());
+    h.update([disocclusion_rejected as u8]);
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_spatial_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    spatial_neighbor_count: u32,
+    denoiser_tile: &[u32; 4],
+    resolve_tile: &[u32; 4],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.spatial.v1\0");
+    for value in &direct_entry.denoiser_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in &direct_entry.resolve_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in denoiser_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in resolve_tile {
+        h.update(value.to_le_bytes());
+    }
+    h.update(spatial_neighbor_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_radiance_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    radiance_reuse_frames: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.radiance.v1\0");
+    h.update(direct_entry.contribution_hash.as_bytes());
+    if let Some(probe_page) = probe_page {
+        h.update(probe_page.probe_page_id.as_bytes());
+        h.update(probe_page.source_page_hash.as_bytes());
+        h.update(probe_page.invalidation_hash.as_bytes());
+    }
+    h.update(radiance_reuse_frames.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_entry_hash(
+    reservoir_id: &str,
+    direct_entry: &BangerNativeDirectLightingEntry,
+    source_probe_page_id: &str,
+    history_layer_id: &str,
+    candidate_count: u32,
+    selected_sample_count: u32,
+    temporal_weight_q15: u16,
+    spatial_neighbor_count: u32,
+    radiance_reuse_frames: u32,
+    confidence_q15: u16,
+    disocclusion_rejected: bool,
+    reservoir_weight_hash: &str,
+    candidate_hash: &str,
+    temporal_reuse_hash: &str,
+    spatial_reuse_hash: &str,
+    radiance_reuse_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.entry.v1\0");
+    h.update(reservoir_id.as_bytes());
+    h.update(direct_entry.entry_hash.as_bytes());
+    h.update(source_probe_page_id.as_bytes());
+    h.update(history_layer_id.as_bytes());
+    h.update(candidate_count.to_le_bytes());
+    h.update(selected_sample_count.to_le_bytes());
+    h.update(temporal_weight_q15.to_le_bytes());
+    h.update(spatial_neighbor_count.to_le_bytes());
+    h.update(radiance_reuse_frames.to_le_bytes());
+    h.update(confidence_q15.to_le_bytes());
+    h.update([disocclusion_rejected as u8]);
+    h.update(reservoir_weight_hash.as_bytes());
+    h.update(candidate_hash.as_bytes());
+    h.update(temporal_reuse_hash.as_bytes());
+    h.update(spatial_reuse_hash.as_bytes());
+    h.update(radiance_reuse_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.table.v1\0");
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+        h.update(entry.reservoir_id.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_candidate_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.candidate_table.v1\0");
+    for entry in entries {
+        h.update(entry.candidate_hash.as_bytes());
+        h.update(entry.candidate_count.to_le_bytes());
+        h.update(entry.selected_sample_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_temporal_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.temporal_table.v1\0");
+    for entry in entries {
+        h.update(entry.temporal_reuse_hash.as_bytes());
+        h.update(entry.temporal_weight_q15.to_le_bytes());
+        h.update([entry.disocclusion_rejected as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_spatial_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.spatial_table.v1\0");
+    for entry in entries {
+        h.update(entry.spatial_reuse_hash.as_bytes());
+        h.update(entry.spatial_neighbor_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_radiance_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.radiance_table.v1\0");
+    for entry in entries {
+        h.update(entry.radiance_reuse_hash.as_bytes());
+        h.update(entry.radiance_reuse_frames.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_confidence_table_hash(entries: &[BangerNativeReservoirLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.confidence_table.v1\0");
+    for entry in entries {
+        h.update(entry.reservoir_weight_hash.as_bytes());
+        h.update(entry.confidence_q15.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_validation_hash(
+    checked_reservoir_count: usize,
+    invalid_candidate_count: usize,
+    invalid_selection_count: usize,
+    temporal_reuse_count: usize,
+    spatial_reuse_count: usize,
+    radiance_cache_reuse_count: usize,
+    all_reservoirs_have_sources: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting.validation.v1\0");
+    h.update((checked_reservoir_count as u64).to_le_bytes());
+    h.update((invalid_candidate_count as u64).to_le_bytes());
+    h.update((invalid_selection_count as u64).to_le_bytes());
+    h.update((temporal_reuse_count as u64).to_le_bytes());
+    h.update((spatial_reuse_count as u64).to_le_bytes());
+    h.update((radiance_cache_reuse_count as u64).to_le_bytes());
+    h.update([all_reservoirs_have_sources as u8]);
+    hex32(h.finalize().into())
+}
+
+fn reservoir_lighting_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    reservoir_table_hash: &str,
+    candidate_hash: &str,
+    temporal_reuse_hash: &str,
+    spatial_reuse_hash: &str,
+    radiance_reuse_hash: &str,
+    confidence_hash: &str,
+    validation_receipt_hash: &str,
+    entries: &[BangerNativeReservoirLightingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.reservoir_lighting_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(direct_lighting_packet.packet_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(reservoir_table_hash.as_bytes());
+    h.update(candidate_hash.as_bytes());
+    h.update(temporal_reuse_hash.as_bytes());
+    h.update(spatial_reuse_hash.as_bytes());
+    h.update(radiance_reuse_hash.as_bytes());
+    h.update(confidence_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn build_page_residency_allocator_packet(
@@ -26698,6 +27329,7 @@ fn render_handoff_hash(
     material_closure_packet: &BangerNativeMaterialClosurePacket,
     page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
     temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+    reservoir_lighting_packet: &BangerNativeReservoirLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -26800,6 +27432,10 @@ fn render_handoff_hash(
     h.update(temporal_history_packet.history_reprojection_hash.as_bytes());
     h.update(temporal_history_packet.disocclusion_mask_hash.as_bytes());
     h.update(temporal_history_packet.accumulation_hash.as_bytes());
+    h.update(reservoir_lighting_packet.packet_hash.as_bytes());
+    h.update(reservoir_lighting_packet.reservoir_table_hash.as_bytes());
+    h.update(reservoir_lighting_packet.temporal_reuse_hash.as_bytes());
+    h.update(reservoir_lighting_packet.radiance_reuse_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -30748,6 +31384,98 @@ mod tests {
                         | "history_clamp_responsive_material"
                         | "history_accept"
                 )));
+        assert_eq!(
+            response.reservoir_lighting_packet.schema,
+            "forge.banger.reservoir_lighting_packet.v1"
+        );
+        assert_eq!(response.reservoir_lighting_packet.schema_version, 1);
+        assert_eq!(
+            response.reservoir_lighting_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.direct_lighting_hash,
+            response.direct_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.radiance_schedule_hash,
+            response.radiance_schedule_manifest.schedule_hash
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.temporal_history_hash,
+            response.temporal_history_packet.packet_hash
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.reservoir_count,
+            response.reservoir_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.validation_receipt.checked_reservoir_count,
+            response.reservoir_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.validation_receipt.validation_hash,
+            response.reservoir_lighting_packet.validation_receipt_hash
+        );
+        assert_eq!(response.reservoir_lighting_packet.reservoir_table_hash.len(), 64);
+        assert_eq!(response.reservoir_lighting_packet.candidate_hash.len(), 64);
+        assert_eq!(response.reservoir_lighting_packet.temporal_reuse_hash.len(), 64);
+        assert_eq!(response.reservoir_lighting_packet.spatial_reuse_hash.len(), 64);
+        assert_eq!(response.reservoir_lighting_packet.radiance_reuse_hash.len(), 64);
+        assert_eq!(response.reservoir_lighting_packet.confidence_hash.len(), 64);
+        assert_eq!(
+            response.reservoir_lighting_packet.validation_receipt_hash.len(),
+            64
+        );
+        assert_eq!(response.reservoir_lighting_packet.packet_hash.len(), 64);
+        assert!(response.reservoir_lighting_packet.reservoir_count > 0);
+        assert!(response.reservoir_lighting_packet.candidate_sample_count > 0);
+        assert!(response.reservoir_lighting_packet.selected_sample_count > 0);
+        assert!(response.reservoir_lighting_packet.max_spatial_neighbor_count > 0);
+        assert!(response.reservoir_lighting_packet.temporal_reuse_count > 0);
+        assert!(response.reservoir_lighting_packet.spatial_reuse_count > 0);
+        assert!(response.reservoir_lighting_packet.radiance_cache_reuse_count > 0);
+        assert_eq!(
+            response.reservoir_lighting_packet.validation_receipt.invalid_candidate_count,
+            0
+        );
+        assert_eq!(
+            response.reservoir_lighting_packet.validation_receipt.invalid_selection_count,
+            0
+        );
+        assert!(response
+            .reservoir_lighting_packet
+            .validation_receipt
+            .all_reservoirs_have_sources);
+        assert!(response
+            .reservoir_lighting_packet
+            .clean_room_basis
+            .contains("restir_style_streaming_reservoir"));
+        assert!(response
+            .reservoir_lighting_packet
+            .entries
+            .iter()
+            .all(|entry| entry.reservoir_id.starts_with("reservoir:")
+                && !entry.sample_tile_id.is_empty()
+                && entry.source_probe_page_id.starts_with("radiance:")
+                && entry.history_layer_id.len() == 64
+                && entry.candidate_count > 0
+                && entry.selected_sample_count > 0
+                && entry.selected_sample_count <= entry.candidate_count
+                && entry.temporal_weight_q15 > 0
+                && entry.spatial_neighbor_count > 0
+                && entry.radiance_reuse_frames > 0
+                && entry.confidence_q15 > 0
+                && entry.reservoir_weight_hash.len() == 64
+                && entry.candidate_hash.len() == 64
+                && entry.temporal_reuse_hash.len() == 64
+                && entry.spatial_reuse_hash.len() == 64
+                && entry.radiance_reuse_hash.len() == 64
+                && entry.entry_hash.len() == 64));
         assert_eq!(
             response.page_residency_allocator.schema,
             "forge.banger.page_residency_allocator_packet.v3"
