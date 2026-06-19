@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
-const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 36;
+const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 48;
 #[cfg(target_os = "windows")]
 static BANGER_MAPS_CAMERA_DEBUG_LOGGED: AtomicBool = AtomicBool::new(false);
 
@@ -5828,6 +5828,11 @@ fn create_banger_first_scene_pipeline(
                             offset: 32,
                             shader_location: 3,
                         },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 36,
+                            shader_location: 4,
+                        },
                     ],
                 },
                 wgpu::VertexBufferLayout {
@@ -5837,27 +5842,27 @@ fn create_banger_first_scene_pipeline(
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
                             offset: 0,
-                            shader_location: 4,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 16,
                             shader_location: 5,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 32,
+                            offset: 16,
                             shader_location: 6,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 48,
+                            offset: 32,
                             shader_location: 7,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 64,
+                            offset: 48,
                             shader_location: 8,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 9,
                         },
                     ],
                 },
@@ -6827,11 +6832,12 @@ fn vs_main(
     @location(1) uv: vec2<f32>,
     @location(2) color: vec3<f32>,
     @location(3) material_slot: f32,
-    @location(4) model_0: vec4<f32>,
-    @location(5) model_1: vec4<f32>,
-    @location(6) model_2: vec4<f32>,
-    @location(7) model_3: vec4<f32>,
-    @location(8) instance_tint: vec4<f32>,
+    @location(4) normal: vec3<f32>,
+    @location(5) model_0: vec4<f32>,
+    @location(6) model_1: vec4<f32>,
+    @location(7) model_2: vec4<f32>,
+    @location(8) model_3: vec4<f32>,
+    @location(9) instance_tint: vec4<f32>,
 ) -> VertexOut {
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let world = model * vec4<f32>(position, 1.0);
@@ -6839,7 +6845,7 @@ fn vs_main(
     out.position = frame.view_proj * world;
     out.color = color * instance_tint.rgb;
     out.uv = uv;
-    out.normal_hint = normalize((model * vec4<f32>(position, 0.0)).xyz);
+    out.normal_hint = normalize((model * vec4<f32>(normal, 0.0)).xyz);
     out.world_pos = world.xyz;
     out.material_kind = instance_tint.a;
     out.material_slot = material_slot;
@@ -9655,6 +9661,13 @@ fn banger_maps_render_mesh_from_primitive(
         .transpose()?
         .map(|stage| banger_maps_float_vec2_accessor_values(&stage, "TEXCOORD_0"))
         .transpose()?;
+    let normals = attributes
+        .get("NORMAL")
+        .and_then(Value::as_u64)
+        .map(|accessor| banger_gltf_accessor_stage(gltf, bin_chunk, accessor as usize))
+        .transpose()?
+        .map(|stage| banger_maps_float_vec3_accessor_values(&stage, "NORMAL"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
@@ -9664,6 +9677,7 @@ fn banger_maps_render_mesh_from_primitive(
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
         &position,
         texcoords.as_deref(),
+        normals.as_deref(),
         material_color,
         material_index,
         render_transform,
@@ -9701,6 +9715,11 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .get("TEXCOORD_0")
         .map(|stage| banger_maps_float_vec2_accessor_values(stage, "TEXCOORD_0"))
         .transpose()?;
+    let normals = decoded
+        .attributes
+        .get("NORMAL")
+        .map(|stage| banger_maps_float_vec3_accessor_values(stage, "NORMAL"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
@@ -9710,6 +9729,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
         position,
         texcoords.as_deref(),
+        normals.as_deref(),
         material_color,
         material_index,
         render_transform,
@@ -9729,6 +9749,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
 fn banger_maps_position_accessor_to_render_vertices(
     position: &BangerGltfAccessorStage,
     texcoords: Option<&[[f32; 2]]>,
+    normals: Option<&[[f32; 3]]>,
     material_color: [f32; 4],
     material_index: f32,
     render_transform: [f64; 16],
@@ -9739,6 +9760,9 @@ fn banger_maps_position_accessor_to_render_vertices(
         .collect::<Vec<_>>();
     if texcoords.as_ref().is_some_and(|values| values.len() != positions.len()) {
         return Err("render TEXCOORD_0 count must match POSITION count".to_string());
+    }
+    if normals.as_ref().is_some_and(|values| values.len() != positions.len()) {
+        return Err("render NORMAL count must match POSITION count".to_string());
     }
     let mut bytes = Vec::with_capacity(positions.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for (index, position) in positions.into_iter().enumerate() {
@@ -9755,6 +9779,10 @@ fn banger_maps_position_accessor_to_render_vertices(
                 (mapped[0] * 0.0125).fract().abs(),
                 (mapped[2] * 0.0125).fract().abs(),
             ]);
+        let normal = normals
+            .and_then(|values| values.get(index).copied())
+            .map(|normal| banger_transform_normal_f64(render_transform, normal))
+            .unwrap_or_else(|| banger_fallback_render_normal(mapped));
         for value in [
             mapped[0],
             mapped[1],
@@ -9765,6 +9793,9 @@ fn banger_maps_position_accessor_to_render_vertices(
             material_color[1],
             material_color[2],
             material_index,
+            normal[0],
+            normal[1],
+            normal[2],
         ] {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
@@ -10031,6 +10062,33 @@ fn banger_transform_point_f64(matrix: [f64; 16], point: [f32; 3]) -> [f64; 3] {
     banger_transform_point64_f64(matrix, [point[0] as f64, point[1] as f64, point[2] as f64])
 }
 
+fn banger_transform_normal_f64(matrix: [f64; 16], normal: [f32; 3]) -> [f32; 3] {
+    let x = normal[0] as f64;
+    let y = normal[1] as f64;
+    let z = normal[2] as f64;
+    banger_normalize_vec3_f64([
+        matrix[0] * x + matrix[4] * y + matrix[8] * z,
+        matrix[1] * x + matrix[5] * y + matrix[9] * z,
+        matrix[2] * x + matrix[6] * y + matrix[10] * z,
+    ])
+}
+
+fn banger_fallback_render_normal(position: [f32; 3]) -> [f32; 3] {
+    banger_normalize_vec3_f64([position[0] as f64, position[1] as f64, position[2] as f64])
+}
+
+fn banger_normalize_vec3_f64(vector: [f64; 3]) -> [f32; 3] {
+    let length = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
+    if !length.is_finite() || length <= 0.000001 {
+        return [0.0, 1.0, 0.0];
+    }
+    [
+        (vector[0] / length) as f32,
+        (vector[1] / length) as f32,
+        (vector[2] / length) as f32,
+    ]
+}
+
 fn banger_transform_point64_f64(matrix: [f64; 16], point: [f64; 3]) -> [f64; 3] {
     let x = point[0];
     let y = point[1];
@@ -10175,15 +10233,15 @@ fn banger_quaternion_mat4_f64(rotation: [f64; 4]) -> [f64; 16] {
 
 #[cfg(target_os = "windows")]
 fn banger_cube_vertex_bytes() -> Vec<u8> {
-    let vertices: [[f32; 9]; 8] = [
-        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12, 0.0],
-        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42, 0.0],
-        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00, 0.0],
-        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16, 0.0],
-        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92, 0.0],
-        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82, 0.0],
-        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21, 0.0],
-        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24, 0.0],
+    let vertices: [[f32; 12]; 8] = [
+        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12, 0.0, -0.577, -0.577, 0.577],
+        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42, 0.0, 0.577, -0.577, 0.577],
+        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00, 0.0, 0.577, 0.577, 0.577],
+        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16, 0.0, -0.577, 0.577, 0.577],
+        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92, 0.0, -0.577, -0.577, -0.577],
+        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82, 0.0, 0.577, -0.577, -0.577],
+        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21, 0.0, 0.577, 0.577, -0.577],
+        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24, 0.0, -0.577, 0.577, -0.577],
     ];
     let mut bytes = Vec::with_capacity(vertices.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for vertex in vertices {
@@ -10568,11 +10626,13 @@ mod tests {
         assert!(source.contains("@location(1) uv"));
         assert!(source.contains("@location(2) color"));
         assert!(source.contains("@location(3) material_slot"));
-        assert!(source.contains("@location(4) model_0"));
-        assert!(source.contains("@location(8) instance_tint"));
+        assert!(source.contains("@location(4) normal"));
+        assert!(source.contains("@location(5) model_0"));
+        assert!(source.contains("@location(9) instance_tint"));
         assert!(source.contains("world_pos"));
         assert!(source.contains("material_kind"));
         assert!(source.contains("material_slot"));
+        assert!(source.contains("normal_hint = normalize"));
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
@@ -10655,6 +10715,9 @@ mod tests {
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[24..28].try_into().unwrap()), 0.82);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[28..32].try_into().unwrap()), 0.9);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[32..36].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[36..40].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[40..44].try_into().unwrap()), 1.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[44..48].try_into().unwrap()), 0.0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
@@ -11351,6 +11414,9 @@ mod tests {
             .unwrap();
             assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
             assert_eq!(mesh.index_bytes.len(), 6);
+            assert!((f32::from_le_bytes(mesh.vertex_bytes[36..40].try_into().unwrap()) - 0.0).abs() < 0.0001);
+            assert!((f32::from_le_bytes(mesh.vertex_bytes[40..44].try_into().unwrap()) - 0.0).abs() < 0.0001);
+            assert!((f32::from_le_bytes(mesh.vertex_bytes[44..48].try_into().unwrap()) - 1.0).abs() < 0.0001);
         }
     }
 
@@ -11540,7 +11606,7 @@ mod tests {
             [1.0_f32, 1.0, 0.0],
             [0.0_f32, 1.0, 0.0],
         ] {
-            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75] {
+            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75, 0.75, 0.75, 0.0, 0.0, 0.0, 1.0] {
                 vertex_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
@@ -11572,7 +11638,7 @@ mod tests {
     fn packs_material_bins_from_meshlet_clusters() {
         let mut vertex_bytes = Vec::new();
         for position in [[0.0_f32, 0.0, 0.0], [1.0_f32, 0.0, 0.0], [0.0_f32, 1.0, 0.0]] {
-            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75] {
+            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75, 0.75, 0.75, 0.0, 0.0, 0.0, 1.0] {
                 vertex_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
