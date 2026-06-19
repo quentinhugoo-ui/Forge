@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
-const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 48;
+const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 64;
 #[cfg(target_os = "windows")]
 static BANGER_MAPS_CAMERA_DEBUG_LOGGED: AtomicBool = AtomicBool::new(false);
 
@@ -2390,6 +2390,14 @@ fn banger_maps_float_vec2_accessor_values(stage: &BangerGltfAccessorStage, seman
     }
     let values = banger_maps_accessor_f32_values(stage, semantic, 2)?;
     Ok(values.chunks_exact(2).map(|chunk| [chunk[0], chunk[1]]).collect())
+}
+
+fn banger_maps_float_vec4_accessor_values(stage: &BangerGltfAccessorStage, semantic: &str) -> Result<Vec<[f32; 4]>, String> {
+    if stage.accessor_type != "VEC4" {
+        return Err(format!("{semantic} must be VEC4, got {} {}", stage.component_type, stage.accessor_type));
+    }
+    let values = banger_maps_accessor_f32_values(stage, semantic, 4)?;
+    Ok(values.chunks_exact(4).map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]]).collect())
 }
 
 fn banger_maps_accessor_f32_values(
@@ -5833,6 +5841,11 @@ fn create_banger_first_scene_pipeline(
                             offset: 36,
                             shader_location: 4,
                         },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 48,
+                            shader_location: 5,
+                        },
                     ],
                 },
                 wgpu::VertexBufferLayout {
@@ -5842,27 +5855,27 @@ fn create_banger_first_scene_pipeline(
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
                             offset: 0,
-                            shader_location: 5,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 16,
                             shader_location: 6,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 32,
+                            offset: 16,
                             shader_location: 7,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 48,
+                            offset: 32,
                             shader_location: 8,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 64,
+                            offset: 48,
                             shader_location: 9,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 10,
                         },
                     ],
                 },
@@ -6751,6 +6764,7 @@ struct VertexOut {
     @location(3) world_pos: vec3<f32>,
     @location(4) material_kind: f32,
     @location(5) material_slot: f32,
+    @location(6) tangent_hint: vec4<f32>,
 };
 
 struct FragmentOut {
@@ -6819,6 +6833,21 @@ fn banger_transform_normal(model: mat4x4<f32>, normal: vec3<f32>) -> vec3<f32> {
     return normalize(adjugate_normal * handedness);
 }
 
+fn banger_transform_tangent(model: mat4x4<f32>, tangent: vec4<f32>, normal: vec3<f32>) -> vec4<f32> {
+    let transformed = normalize((model * vec4<f32>(tangent.xyz, 0.0)).xyz);
+    let orthogonal = normalize(transformed - normal * dot(transformed, normal));
+    return vec4<f32>(orthogonal, tangent.w);
+}
+
+fn banger_tangent_space_detail_normal(normal: vec3<f32>, tangent: vec4<f32>, uv: vec2<f32>, material_kind: f32, roughness: f32) -> vec3<f32> {
+    let t = normalize(tangent.xyz);
+    let b = normalize(cross(normal, t) * tangent.w);
+    let detail_strength = smoothstep(0.18, 0.86, roughness) * (0.025 + 0.025 * smoothstep(1.5, 4.0, material_kind));
+    let wave_x = sin(uv.x * 74.0 + uv.y * 19.0 + frame.time_seconds * 0.04);
+    let wave_y = cos(uv.y * 61.0 - uv.x * 23.0 + frame.time_seconds * 0.03);
+    return normalize(normal + t * wave_x * detail_strength + b * wave_y * detail_strength);
+}
+
 fn banger_material_record_for_kind(material_kind: f32) -> BangerMaterialRecord {
     let material_count = arrayLength(&material_records);
     let material_index = min(u32(max(material_kind, 0.0)), material_count - 1u);
@@ -6845,37 +6874,41 @@ fn vs_main(
     @location(2) color: vec3<f32>,
     @location(3) material_slot: f32,
     @location(4) normal: vec3<f32>,
-    @location(5) model_0: vec4<f32>,
-    @location(6) model_1: vec4<f32>,
-    @location(7) model_2: vec4<f32>,
-    @location(8) model_3: vec4<f32>,
-    @location(9) instance_tint: vec4<f32>,
+    @location(5) tangent: vec4<f32>,
+    @location(6) model_0: vec4<f32>,
+    @location(7) model_1: vec4<f32>,
+    @location(8) model_2: vec4<f32>,
+    @location(9) model_3: vec4<f32>,
+    @location(10) instance_tint: vec4<f32>,
 ) -> VertexOut {
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let world = model * vec4<f32>(position, 1.0);
+    let world_normal = banger_transform_normal(model, normal);
     var out: VertexOut;
     out.position = frame.view_proj * world;
     out.color = color * instance_tint.rgb;
     out.uv = uv;
-    out.normal_hint = banger_transform_normal(model, normal);
+    out.normal_hint = world_normal;
     out.world_pos = world.xyz;
     out.material_kind = instance_tint.a;
     out.material_slot = material_slot;
+    out.tangent_hint = banger_transform_tangent(model, tangent, world_normal);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
-    let normal = normalize(in.normal_hint);
     let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
     let view_dir = normalize(vec3<f32>(-in.world_pos.x * 0.012, 0.28, 1.0 - in.world_pos.z * 0.006));
     let view_fade = clamp(length(in.world_pos.xz) / 58.0, 0.0, 1.0);
+    let material_record = banger_material_record_for_kind(in.material_slot);
+    let material_roughness = clamp(material_record.roughness_factor * mix(1.0, 0.45, smoothstep(2.4, 3.4, in.material_kind)), 0.045, 1.0);
+    let normal = banger_tangent_space_detail_normal(normalize(in.normal_hint), in.tangent_hint, in.uv, in.material_kind, material_roughness);
     let lambert = clamp(dot(normal, sun_dir) * 0.62 + 0.38, 0.18, 1.0);
     let sky = mix(vec3<f32>(0.02, 0.035, 0.065), vec3<f32>(0.95, 0.48, 0.18), clamp(in.world_pos.y * 0.04 + 0.35, 0.0, 1.0));
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
     let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), view_dir), 0.0), 18.0);
     let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
-    let material_record = banger_material_record_for_kind(in.material_slot);
     let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
     let pbr_base_factor = clamp(material_record.base_color_factor.rgb, vec3<f32>(0.0), vec3<f32>(8.0));
@@ -6883,7 +6916,6 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let base_color = mix(in.color, sampled * in.color, maps_texture_weight) * pbr_base_factor;
     let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
     let shadow_visibility = banger_virtual_shadow_visibility(in.world_pos, normal, sun_dir);
-    let material_roughness = clamp(material_record.roughness_factor * mix(1.0, 0.45, smoothstep(2.4, 3.4, in.material_kind)), 0.045, 1.0);
     let material_metallic = clamp(material_record.metallic_factor + smoothstep(4.5, 6.0, in.material_kind) * 0.25, 0.0, 1.0);
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
     let diffuse_light = lambert * contact_ao + 0.12 * contact_ao;
@@ -9680,6 +9712,13 @@ fn banger_maps_render_mesh_from_primitive(
         .transpose()?
         .map(|stage| banger_maps_float_vec3_accessor_values(&stage, "NORMAL"))
         .transpose()?;
+    let tangents = attributes
+        .get("TANGENT")
+        .and_then(Value::as_u64)
+        .map(|accessor| banger_gltf_accessor_stage(gltf, bin_chunk, accessor as usize))
+        .transpose()?
+        .map(|stage| banger_maps_float_vec4_accessor_values(&stage, "TANGENT"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
@@ -9690,6 +9729,7 @@ fn banger_maps_render_mesh_from_primitive(
         &position,
         texcoords.as_deref(),
         normals.as_deref(),
+        tangents.as_deref(),
         material_color,
         material_index,
         render_transform,
@@ -9732,6 +9772,11 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .get("NORMAL")
         .map(|stage| banger_maps_float_vec3_accessor_values(stage, "NORMAL"))
         .transpose()?;
+    let tangents = decoded
+        .attributes
+        .get("TANGENT")
+        .map(|stage| banger_maps_float_vec4_accessor_values(stage, "TANGENT"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
@@ -9742,6 +9787,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
         position,
         texcoords.as_deref(),
         normals.as_deref(),
+        tangents.as_deref(),
         material_color,
         material_index,
         render_transform,
@@ -9762,6 +9808,7 @@ fn banger_maps_position_accessor_to_render_vertices(
     position: &BangerGltfAccessorStage,
     texcoords: Option<&[[f32; 2]]>,
     normals: Option<&[[f32; 3]]>,
+    tangents: Option<&[[f32; 4]]>,
     material_color: [f32; 4],
     material_index: f32,
     render_transform: [f64; 16],
@@ -9775,6 +9822,9 @@ fn banger_maps_position_accessor_to_render_vertices(
     }
     if normals.as_ref().is_some_and(|values| values.len() != positions.len()) {
         return Err("render NORMAL count must match POSITION count".to_string());
+    }
+    if tangents.as_ref().is_some_and(|values| values.len() != positions.len()) {
+        return Err("render TANGENT count must match POSITION count".to_string());
     }
     let mut bytes = Vec::with_capacity(positions.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for (index, position) in positions.into_iter().enumerate() {
@@ -9795,6 +9845,10 @@ fn banger_maps_position_accessor_to_render_vertices(
             .and_then(|values| values.get(index).copied())
             .map(|normal| banger_transform_normal_f64(render_transform, normal))
             .unwrap_or_else(|| banger_fallback_render_normal(mapped));
+        let tangent = tangents
+            .and_then(|values| values.get(index).copied())
+            .map(|tangent| banger_transform_tangent_f64(render_transform, tangent, normal))
+            .unwrap_or_else(|| banger_fallback_render_tangent(normal));
         for value in [
             mapped[0],
             mapped[1],
@@ -9808,6 +9862,10 @@ fn banger_maps_position_accessor_to_render_vertices(
             normal[0],
             normal[1],
             normal[2],
+            tangent[0],
+            tangent[1],
+            tangent[2],
+            tangent[3],
         ] {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
@@ -10097,8 +10155,37 @@ fn banger_transform_normal_f64(matrix: [f64; 16], normal: [f32; 3]) -> [f32; 3] 
     ])
 }
 
+fn banger_transform_tangent_f64(matrix: [f64; 16], tangent: [f32; 4], normal: [f32; 3]) -> [f32; 4] {
+    let transformed = [
+        matrix[0] * tangent[0] as f64 + matrix[4] * tangent[1] as f64 + matrix[8] * tangent[2] as f64,
+        matrix[1] * tangent[0] as f64 + matrix[5] * tangent[1] as f64 + matrix[9] * tangent[2] as f64,
+        matrix[2] * tangent[0] as f64 + matrix[6] * tangent[1] as f64 + matrix[10] * tangent[2] as f64,
+    ];
+    let n = [normal[0] as f64, normal[1] as f64, normal[2] as f64];
+    let projected = [
+        transformed[0] - n[0] * dot3(transformed, n),
+        transformed[1] - n[1] * dot3(transformed, n),
+        transformed[2] - n[2] * dot3(transformed, n),
+    ];
+    let normalized = banger_normalize_vec3_f64(projected);
+    let determinant_sign = if dot3([matrix[0], matrix[1], matrix[2]], cross3([matrix[4], matrix[5], matrix[6]], [matrix[8], matrix[9], matrix[10]])) < 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let handedness = if tangent[3] < 0.0 { -1.0 } else { 1.0 } * determinant_sign;
+    [normalized[0], normalized[1], normalized[2], handedness as f32]
+}
+
 fn banger_fallback_render_normal(position: [f32; 3]) -> [f32; 3] {
     banger_normalize_vec3_f64([position[0] as f64, position[1] as f64, position[2] as f64])
+}
+
+fn banger_fallback_render_tangent(normal: [f32; 3]) -> [f32; 4] {
+    let n = [normal[0] as f64, normal[1] as f64, normal[2] as f64];
+    let reference = if normal[1].abs() < 0.92 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+    let tangent = banger_normalize_vec3_f64(cross3(reference, n));
+    [tangent[0], tangent[1], tangent[2], 1.0]
 }
 
 fn banger_normalize_vec3_f64(vector: [f64; 3]) -> [f32; 3] {
@@ -10257,15 +10344,15 @@ fn banger_quaternion_mat4_f64(rotation: [f64; 4]) -> [f64; 16] {
 
 #[cfg(target_os = "windows")]
 fn banger_cube_vertex_bytes() -> Vec<u8> {
-    let vertices: [[f32; 12]; 8] = [
-        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12, 0.0, -0.577, -0.577, 0.577],
-        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42, 0.0, 0.577, -0.577, 0.577],
-        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00, 0.0, 0.577, 0.577, 0.577],
-        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16, 0.0, -0.577, 0.577, 0.577],
-        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92, 0.0, -0.577, -0.577, -0.577],
-        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82, 0.0, 0.577, -0.577, -0.577],
-        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21, 0.0, 0.577, 0.577, -0.577],
-        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24, 0.0, -0.577, 0.577, -0.577],
+    let vertices: [[f32; 16]; 8] = [
+        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12, 0.0, -0.577, -0.577, 0.577, 1.0, 0.0, 0.0, 1.0],
+        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42, 0.0, 0.577, -0.577, 0.577, 1.0, 0.0, 0.0, 1.0],
+        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00, 0.0, 0.577, 0.577, 0.577, 1.0, 0.0, 0.0, 1.0],
+        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16, 0.0, -0.577, 0.577, 0.577, 1.0, 0.0, 0.0, 1.0],
+        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92, 0.0, -0.577, -0.577, -0.577, 1.0, 0.0, 0.0, 1.0],
+        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82, 0.0, 0.577, -0.577, -0.577, 1.0, 0.0, 0.0, 1.0],
+        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21, 0.0, 0.577, 0.577, -0.577, 1.0, 0.0, 0.0, 1.0],
+        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24, 0.0, -0.577, 0.577, -0.577, 1.0, 0.0, 0.0, 1.0],
     ];
     let mut bytes = Vec::with_capacity(vertices.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for vertex in vertices {
@@ -10651,13 +10738,16 @@ mod tests {
         assert!(source.contains("@location(2) color"));
         assert!(source.contains("@location(3) material_slot"));
         assert!(source.contains("@location(4) normal"));
-        assert!(source.contains("@location(5) model_0"));
-        assert!(source.contains("@location(9) instance_tint"));
+        assert!(source.contains("@location(5) tangent"));
+        assert!(source.contains("@location(6) model_0"));
+        assert!(source.contains("@location(10) instance_tint"));
         assert!(source.contains("world_pos"));
         assert!(source.contains("material_kind"));
         assert!(source.contains("material_slot"));
         assert!(source.contains("banger_transform_normal"));
-        assert!(source.contains("normal_hint = banger_transform_normal"));
+        assert!(source.contains("banger_transform_tangent"));
+        assert!(source.contains("banger_tangent_space_detail_normal"));
+        assert!(source.contains("out.normal_hint = world_normal"));
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
@@ -10743,6 +10833,10 @@ mod tests {
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[36..40].try_into().unwrap()), 0.0);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[40..44].try_into().unwrap()), 1.0);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[44..48].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[48..52].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[52..56].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[56..60].try_into().unwrap()), 1.0);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[60..64].try_into().unwrap()), 1.0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
@@ -11253,6 +11347,37 @@ mod tests {
         assert!(normal[2].abs() < 0.0001);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_render_tangents_into_visible_vertex_buffer() {
+        let mut position_bytes = Vec::new();
+        for value in [0.0_f32, 1.0, 0.0] {
+            position_bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let position = BangerGltfAccessorStage {
+            bytes: position_bytes,
+            count: 1,
+            component_type: 5126,
+            normalized: false,
+            accessor_type: "VEC3".to_string(),
+        };
+        let bytes = banger_maps_position_accessor_to_render_vertices(
+            &position,
+            None,
+            Some(&[[0.0, 1.0, 0.0]]),
+            Some(&[[1.0, 0.0, 0.0, -1.0]]),
+            [0.3, 0.4, 0.5, 1.0],
+            0.0,
+            banger_identity_mat4_f64(),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), BANGER_RENDER_VERTEX_STRIDE_BYTES);
+        assert!((f32::from_le_bytes(bytes[48..52].try_into().unwrap()) - 1.0).abs() < 0.0001);
+        assert!(f32::from_le_bytes(bytes[52..56].try_into().unwrap()).abs() < 0.0001);
+        assert!(f32::from_le_bytes(bytes[56..60].try_into().unwrap()).abs() < 0.0001);
+        assert!((f32::from_le_bytes(bytes[60..64].try_into().unwrap()) + 1.0).abs() < 0.0001);
+    }
+
     #[test]
     fn maps_wgs84_origin_maps_to_zero_in_enu_frame() {
         let georeference = BangerMapsGeoreference {
@@ -11640,7 +11765,14 @@ mod tests {
             [1.0_f32, 1.0, 0.0],
             [0.0_f32, 1.0, 0.0],
         ] {
-            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75, 0.75, 0.75, 0.0, 0.0, 0.0, 1.0] {
+            for value in [
+                position[0], position[1], position[2],
+                0.25, 0.5,
+                0.75, 0.75, 0.75,
+                0.0,
+                0.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 1.0,
+            ] {
                 vertex_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
@@ -11672,7 +11804,14 @@ mod tests {
     fn packs_material_bins_from_meshlet_clusters() {
         let mut vertex_bytes = Vec::new();
         for position in [[0.0_f32, 0.0, 0.0], [1.0_f32, 0.0, 0.0], [0.0_f32, 1.0, 0.0]] {
-            for value in [position[0], position[1], position[2], 0.25, 0.5, 0.75, 0.75, 0.75, 0.0, 0.0, 0.0, 1.0] {
+            for value in [
+                position[0], position[1], position[2],
+                0.25, 0.5,
+                0.75, 0.75, 0.75,
+                0.0,
+                0.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 1.0,
+            ] {
                 vertex_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
