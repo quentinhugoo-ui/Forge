@@ -6146,6 +6146,11 @@ struct FragmentOut {
     @location(4) gbuffer_emissive: vec4<f32>,
 };
 
+fn banger_filmic_tonemap(color: vec3<f32>) -> vec3<f32> {
+    let x = max(color - vec3<f32>(0.004), vec3<f32>(0.0));
+    return (x * (6.2 * x + vec3<f32>(0.5))) / (x * (6.2 * x + vec3<f32>(1.7)) + vec3<f32>(0.06));
+}
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
@@ -6185,8 +6190,11 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let lit = base_color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
+    let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
+    let graded = banger_filmic_tonemap(fogged * exposure);
+    let contrast = mix(vec3<f32>(0.5), graded, vec3<f32>(1.08));
     var out: FragmentOut;
-    out.scene_color = vec4<f32>(max(fogged, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
+    out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
@@ -6342,7 +6350,7 @@ fn banger_frame_uniform_bytes_for_bounds(
     bounds: BangerMeshBounds,
 ) -> [u8; 80] {
     banger_frame_uniform_bytes_from_view_projection(
-        banger_view_projection_matrix_for_bounds(bounds, viewport_width, viewport_height),
+        banger_view_projection_matrix_for_bounds(time_seconds, bounds, viewport_width, viewport_height),
         time_seconds,
         frame_index,
         viewport_width,
@@ -8334,7 +8342,7 @@ fn banger_maps_cpu_preview_gate(mesh: &BangerRenderMeshBytes, texture_seed: &str
     let width = 128u32;
     let height = 72u32;
     let mut rgba = vec![0u8; width as usize * height as usize * 4];
-    let view_proj = banger_view_projection_matrix_for_bounds(mesh.bounds, width, height);
+    let view_proj = banger_view_projection_matrix_for_bounds(0.0, mesh.bounds, width, height);
     let seed_color = banger_hash_color(texture_seed);
     for vertex in mesh.vertex_bytes.chunks_exact(BANGER_RENDER_VERTEX_STRIDE_BYTES) {
         let point = [
@@ -9529,22 +9537,26 @@ fn banger_view_projection_matrix(time_seconds: f32, viewport_width: u32, viewpor
 
 #[cfg(target_os = "windows")]
 fn banger_view_projection_matrix_for_bounds(
+    time_seconds: f32,
     bounds: BangerMeshBounds,
     viewport_width: u32,
     viewport_height: u32,
 ) -> [f32; 16] {
     if !bounds.valid() {
-        return banger_view_projection_matrix(0.0, viewport_width, viewport_height);
+        return banger_view_projection_matrix(time_seconds, viewport_width, viewport_height);
     }
     let aspect = (viewport_width as f32 / viewport_height.max(1) as f32).clamp(0.25, 4.0);
     let center = bounds.center();
     let radius = bounds.radius();
     let fovy = 55.0_f32.to_radians();
     let distance = (radius / (fovy * 0.5).tan()).max(radius * 2.4).max(8.0);
+    let orbit = time_seconds * 0.055;
+    let lateral = radius * 0.38 + distance * 0.08;
+    let dolly = 1.0 + 0.035 * (time_seconds * 0.17).sin();
     let eye = [
-        center[0] + radius * 0.35,
-        center[1] + radius * 0.42 + 2.0,
-        center[2] + distance,
+        center[0] + lateral * orbit.cos(),
+        center[1] + radius * 0.42 + 2.0 + radius * 0.04 * (time_seconds * 0.11).sin(),
+        center[2] + distance * dolly + lateral * orbit.sin(),
     ];
     let near = (distance - radius * 1.8).max(0.02);
     let far = (distance + radius * 4.0).max(256.0);
@@ -9766,15 +9778,36 @@ mod tests {
         assert!(source.contains("@fragment"));
         assert!(source.contains("view_proj"));
         assert!(source.contains("@location(0) position"));
-        assert!(source.contains("@location(1) color"));
-        assert!(source.contains("@location(2) model_0"));
-        assert!(source.contains("@location(6) instance_tint"));
+        assert!(source.contains("@location(1) uv"));
+        assert!(source.contains("@location(2) color"));
+        assert!(source.contains("@location(3) model_0"));
+        assert!(source.contains("@location(7) instance_tint"));
         assert!(source.contains("world_pos"));
         assert!(source.contains("material_kind"));
         assert!(source.contains("water_glint"));
+        assert!(source.contains("banger_filmic_tonemap"));
+        assert!(source.contains("exposure"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
         assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn animates_banger_bounds_camera_over_time() {
+        fn matrix_bytes(matrix: &[f32; 16]) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(16 * 4);
+            for value in matrix {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes
+        }
+        let mut bounds = BangerMeshBounds::empty();
+        bounds.include([-10.0, -2.0, -8.0]);
+        bounds.include([14.0, 6.0, 18.0]);
+        let first = banger_view_projection_matrix_for_bounds(0.0, bounds, 1280, 720);
+        let later = banger_view_projection_matrix_for_bounds(12.0, bounds, 1280, 720);
+        assert_ne!(sha256_hex(&matrix_bytes(&first)), sha256_hex(&matrix_bytes(&later)));
     }
 
     #[cfg(target_os = "windows")]
@@ -9816,9 +9849,9 @@ mod tests {
         assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
-        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[12..16].try_into().unwrap()), 0.7);
-        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[16..20].try_into().unwrap()), 0.82);
-        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[20..24].try_into().unwrap()), 0.9);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[20..24].try_into().unwrap()), 0.7);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[24..28].try_into().unwrap()), 0.82);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[28..32].try_into().unwrap()), 0.9);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
