@@ -1397,6 +1397,10 @@ export interface NativeWebExplorerBounds {
   width: number;
   height: number;
   sceneKind?: "maps_sphere";
+  target?: string;
+  latitude?: number;
+  longitude?: number;
+  heightMeters?: number;
 }
 
 export interface NativeWebExplorerResult {
@@ -1824,6 +1828,15 @@ export interface BangerPresentLoopBootstrapResult {
       required: true;
       mode: "visible_on_screen";
     };
+  } | null;
+  mapsVisualGate?: {
+    ok: boolean;
+    nonblackPixelCount: number;
+    nonFallbackBluePixelCount: number;
+    frameHash: string;
+    drawSource?: string | null;
+    drawIndexCount: number;
+    drawInstanceCount: number;
   } | null;
   previewWidth?: number;
   previewHeight?: number;

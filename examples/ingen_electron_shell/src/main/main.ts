@@ -11508,7 +11508,21 @@ function normalizeNativeWebExplorerBounds(bounds: NativeWebExplorerBounds): Nati
   if (![x, y, width, height].every(Number.isFinite) || width < 80 || height < 80) {
     return null;
   }
-  return { x, y, width, height };
+  const latitude = readValidMapsCoordinate((bounds as Partial<NativeWebExplorerBounds>).latitude, -90, 90);
+  const longitude = readValidMapsCoordinate((bounds as Partial<NativeWebExplorerBounds>).longitude, -180, 180);
+  const heightMeters = Number.isFinite(bounds.heightMeters) ? Math.round(bounds.heightMeters as number) : undefined;
+  const target = typeof bounds.target === "string" ? bounds.target.replace(/\s+/g, " ").trim().slice(0, 240) : "";
+  return {
+    x,
+    y,
+    width,
+    height,
+    ...(bounds.sceneKind === "maps_sphere" ? { sceneKind: "maps_sphere" as const } : {}),
+    ...(target ? { target } : {}),
+    ...(latitude !== undefined ? { latitude } : {}),
+    ...(longitude !== undefined ? { longitude } : {}),
+    ...(heightMeters !== undefined ? { heightMeters } : {})
+  };
 }
 
 function normalizeBangerViewportRequest(value: unknown): {
@@ -11544,8 +11558,21 @@ function expandNativeMapsBoundsForEarth(bounds: NativeWebExplorerBounds, owner: 
     x,
     y: bounds.y,
     width,
-    height
+    height,
+    sceneKind: bounds.sceneKind,
+    target: bounds.target,
+    latitude: bounds.latitude,
+    longitude: bounds.longitude,
+    heightMeters: bounds.heightMeters
   };
+}
+
+function buildNativeMapsBoundsKey(bounds: NativeWebExplorerBounds): string {
+  const latitude = typeof bounds.latitude === "number" ? bounds.latitude.toFixed(7) : "none";
+  const longitude = typeof bounds.longitude === "number" ? bounds.longitude.toFixed(7) : "none";
+  const heightMeters = typeof bounds.heightMeters === "number" ? Math.round(bounds.heightMeters) : 0;
+  const targetHash = hashJson(bounds.target ?? "").slice(0, 16);
+  return `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:maps_sphere:${latitude}:${longitude}:${heightMeters}:${targetHash}`;
 }
 
 function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): void {
@@ -11805,20 +11832,31 @@ async function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: Native
     });
   }
   hideNativeMapsView();
-  const boundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
+  const boundsKey = buildNativeMapsBoundsKey(normalized);
   const bootstrap = await loadRustBangerPresentLoopBootstrap(shellRoot, {
     parentWindowHandle: nativeWindowHandleDecimal(owner),
     x: normalized.x,
     y: normalized.y,
     width: normalized.width,
     height: normalized.height,
-    sceneKind: "maps_sphere"
+    sceneKind: "maps_sphere",
+    target: normalized.target,
+    latitude: normalized.latitude,
+    longitude: normalized.longitude,
+    heightMeters: normalized.heightMeters
   });
   if (!bootstrap.ok) {
     return nativeMapsResult(false, {
       code: "rust_unavailable",
       message: bootstrap.error?.message ?? "Banger native Maps host did not start.",
       proofHash: bootstrap.error?.proofHash ?? bootstrap.proofHash
+    });
+  }
+  if (bootstrap.mapsVisualGate && !bootstrap.mapsVisualGate.ok) {
+    return nativeMapsResult(false, {
+      code: "rust_unavailable",
+      message: `Banger native Maps host started but visible Cesium pixels were not confirmed (${bootstrap.mapsVisualGate.nonblackPixelCount}/${bootstrap.mapsVisualGate.nonFallbackBluePixelCount}).`,
+      proofHash: bootstrap.mapsVisualGate.frameHash
     });
   }
   nativeMapsOwner = owner;
@@ -11885,8 +11923,7 @@ async function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds
       proofHash: hashJson({ bounds })
     });
   }
-  hideNativeMapsView();
-  const boundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
+  const boundsKey = buildNativeMapsBoundsKey(normalized);
   if (nativeMapsBoundsKey === boundsKey) {
     return nativeMapsResult(true);
   }

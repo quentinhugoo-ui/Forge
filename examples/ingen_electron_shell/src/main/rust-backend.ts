@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -137,6 +137,15 @@ export interface RustBangerPresentLoopBootstrap {
       mode: "visible_on_screen";
     };
   } | null;
+  mapsVisualGate?: {
+    ok: boolean;
+    nonblackPixelCount: number;
+    nonFallbackBluePixelCount: number;
+    frameHash: string;
+    drawSource?: string | null;
+    drawIndexCount: number;
+    drawInstanceCount: number;
+  } | null;
   previewWidth?: number;
   previewHeight?: number;
   previewByteCount?: number;
@@ -160,6 +169,19 @@ export interface RustBangerPresentLoopBootstrap {
     proofHash: string;
   };
 }
+
+type RustBangerNativeHostOptions = {
+  parentWindowHandle?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  sceneKind?: string;
+  target?: string;
+  latitude?: number;
+  longitude?: number;
+  heightMeters?: number;
+};
 
 let cachedProjection: RustBackendProjection | null = shadowProjection("startup snapshot; native bridge refresh pending");
 let cachedAt = 0;
@@ -233,7 +255,7 @@ export async function loadRustBangerPreviewFrame(shellRoot: string): Promise<Rus
 
 export async function loadRustBangerPresentLoopBootstrap(
   shellRoot: string,
-  options: { parentWindowHandle?: string; x?: number; y?: number; width?: number; height?: number; sceneKind?: string } = {}
+  options: RustBangerNativeHostOptions = {}
 ): Promise<RustBangerPresentLoopBootstrap> {
   const repoRoot = join(shellRoot, "..", "..");
   const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
@@ -257,7 +279,11 @@ export async function loadRustBangerPresentLoopBootstrap(
     ...(options.width ? { FORGE_BANGER_VIEWPORT_WIDTH: String(Math.round(options.width)) } : {}),
     ...(options.height ? { FORGE_BANGER_VIEWPORT_HEIGHT: String(Math.round(options.height)) } : {}),
     ...(options.x !== undefined || options.y !== undefined ? { FORGE_BANGER_VIEWPORT_FIXED: "1" } : {}),
-    ...(options.sceneKind ? { FORGE_BANGER_SCENE_KIND: options.sceneKind } : {})
+    ...(options.sceneKind ? { FORGE_BANGER_SCENE_KIND: options.sceneKind } : {}),
+    ...(Number.isFinite(options.latitude) ? { FORGE_BANGER_MAPS_ORIGIN_LATITUDE: String(options.latitude) } : {}),
+    ...(Number.isFinite(options.longitude) ? { FORGE_BANGER_MAPS_ORIGIN_LONGITUDE: String(options.longitude) } : {}),
+    ...(Number.isFinite(options.heightMeters) ? { FORGE_BANGER_MAPS_ORIGIN_HEIGHT_METERS: String(options.heightMeters) } : {}),
+    ...(options.target ? { FORGE_BANGER_MAPS_TARGET: options.target } : {})
   };
   try {
     const stdout =
@@ -278,7 +304,7 @@ export async function loadRustBangerPresentLoopBootstrap(
 
 async function launchRustBangerNativeHost(
   shellRoot: string,
-  options: { parentWindowHandle?: string; x?: number; y?: number; width?: number; height?: number; sceneKind?: string }
+  options: RustBangerNativeHostOptions
 ): Promise<RustBangerPresentLoopBootstrap | null> {
   const parentWindowHandle = options.parentWindowHandle?.trim();
   if (!parentWindowHandle) {
@@ -290,7 +316,28 @@ async function launchRustBangerNativeHost(
   const y = Math.max(0, Math.round(options.y ?? 0));
   const sceneKind = options.sceneKind === "maps_sphere" ? "maps_sphere" : "dense_meshlet_field";
   const fixedViewport = options.x !== undefined || options.y !== undefined;
-  const key = `${parentWindowHandle}:${x}:${y}:${width}:${height}:${sceneKind}`;
+  const latitude = Number.isFinite(options.latitude) ? Number(options.latitude) : undefined;
+  const longitude = Number.isFinite(options.longitude) ? Number(options.longitude) : undefined;
+  const heightMeters = Number.isFinite(options.heightMeters) ? Number(options.heightMeters) : undefined;
+  const target = options.target?.replace(/\s+/g, " ").trim() ?? "";
+  const repoRoot = join(shellRoot, "..", "..");
+  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  const bridgeSignature = bridgeExe && existsSync(bridgeExe)
+    ? `${bridgeExe}:${Math.round(statSync(bridgeExe).mtimeMs)}:${statSync(bridgeExe).size}`
+    : "cargo-backend";
+  const key = [
+    parentWindowHandle,
+    x,
+    y,
+    width,
+    height,
+    sceneKind,
+    latitude?.toFixed(7) ?? "none",
+    longitude?.toFixed(7) ?? "none",
+    heightMeters?.toFixed(2) ?? "0",
+    createHash("sha256").update(target).digest("hex").slice(0, 16),
+    createHash("sha256").update(bridgeSignature).digest("hex").slice(0, 16)
+  ].join(":");
   if (bangerNativeHost && bangerNativeHost.key === key && !bangerNativeHost.child.killed) {
     return bangerNativeHost.ready;
   }
@@ -299,8 +346,6 @@ async function launchRustBangerNativeHost(
     bangerNativeHost = null;
   }
 
-  const repoRoot = join(shellRoot, "..", "..");
-  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
   const env = {
     ...process.env,
     FORGE_BANGER_PARENT_HWND: parentWindowHandle,
@@ -309,7 +354,11 @@ async function launchRustBangerNativeHost(
     FORGE_BANGER_VIEWPORT_WIDTH: String(width),
     FORGE_BANGER_VIEWPORT_HEIGHT: String(height),
     FORGE_BANGER_VIEWPORT_FIXED: fixedViewport ? "1" : "0",
-    FORGE_BANGER_SCENE_KIND: sceneKind
+    FORGE_BANGER_SCENE_KIND: sceneKind,
+    ...(latitude !== undefined ? { FORGE_BANGER_MAPS_ORIGIN_LATITUDE: String(latitude) } : {}),
+    ...(longitude !== undefined ? { FORGE_BANGER_MAPS_ORIGIN_LONGITUDE: String(longitude) } : {}),
+    ...(heightMeters !== undefined ? { FORGE_BANGER_MAPS_ORIGIN_HEIGHT_METERS: String(heightMeters) } : {}),
+    ...(target ? { FORGE_BANGER_MAPS_TARGET: target } : {})
   };
   const spawnSpec =
     bridgeExe && existsSync(bridgeExe)

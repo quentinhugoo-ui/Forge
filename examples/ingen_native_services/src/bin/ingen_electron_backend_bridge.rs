@@ -9,8 +9,14 @@ use std::collections::HashMap;
 use std::{env, fs};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[cfg(target_os = "windows")]
+const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 32;
+#[cfg(target_os = "windows")]
+static BANGER_MAPS_CAMERA_DEBUG_LOGGED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +146,7 @@ struct BangerNativeHostProjection {
     shader_source_hash: String,
     render_pipeline_hash: String,
     maps_tileset_contract: Option<BangerMapsTilesetContract>,
+    maps_visual_gate: Option<BangerMapsNativeRenderGateProjection>,
     frame_hash: String,
     present_loop_hash: String,
     proof_hash: String,
@@ -392,6 +399,11 @@ struct BangerMapsNativeRenderGateProjection {
     instance_buffer_byte_count: usize,
     draw_index_count: u32,
     draw_instance_count: u32,
+    nonblack_pixel_count: u32,
+    non_fallback_blue_pixel_count: u32,
+    frame_hash: String,
+    frame_preview_width: u32,
+    frame_preview_height: u32,
     render_gate_hash: String,
     blocker: Option<String>,
 }
@@ -649,6 +661,7 @@ struct BangerNativeScenePipeline {
     instance_count: u32,
     index_format: BangerRenderIndexFormat,
     mesh_source: &'static str,
+    mesh_bounds: BangerMeshBounds,
     _selected_tile_id: Option<String>,
     _indirect_args_hash: String,
     _meshlet_cluster_hash: String,
@@ -706,12 +719,67 @@ struct BangerNativeGBufferResources {
 #[cfg(target_os = "windows")]
 struct BangerNativeTextureResource {
     _texture: wgpu::Texture,
-    _view: wgpu::TextureView,
-    _sampler: wgpu::Sampler,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
     _width: u32,
     _height: u32,
     _byte_count: usize,
     _resource_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerMapsCpuPreviewGate {
+    nonblack_pixel_count: u32,
+    non_fallback_blue_pixel_count: u32,
+    frame_hash: String,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug)]
+struct BangerMeshBounds {
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+#[cfg(target_os = "windows")]
+impl BangerMeshBounds {
+    fn empty() -> Self {
+        Self {
+            min: [f32::INFINITY, f32::INFINITY, f32::INFINITY],
+            max: [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY],
+        }
+    }
+
+    fn include(&mut self, point: [f32; 3]) {
+        for axis in 0..3 {
+            self.min[axis] = self.min[axis].min(point[axis]);
+            self.max[axis] = self.max[axis].max(point[axis]);
+        }
+    }
+
+    fn valid(self) -> bool {
+        self.min.iter().chain(self.max.iter()).all(|value| value.is_finite())
+            && self.max[0] >= self.min[0]
+            && self.max[1] >= self.min[1]
+            && self.max[2] >= self.min[2]
+    }
+
+    fn center(self) -> [f32; 3] {
+        [
+            (self.min[0] + self.max[0]) * 0.5,
+            (self.min[1] + self.max[1]) * 0.5,
+            (self.min[2] + self.max[2]) * 0.5,
+        ]
+    }
+
+    fn radius(self) -> f32 {
+        let dx = self.max[0] - self.min[0];
+        let dy = self.max[1] - self.min[1];
+        let dz = self.max[2] - self.min[2];
+        ((dx * dx + dy * dy + dz * dz).sqrt() * 0.5).max(1.0)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -3283,6 +3351,7 @@ struct BangerNativeSceneGpuResource {
     instance_count: u32,
     index_format: BangerRenderIndexFormat,
     mesh_source: &'static str,
+    mesh_bounds: BangerMeshBounds,
     selected_tile_id: Option<String>,
     indirect_args_hash: String,
     meshlet_cluster_hash: String,
@@ -3796,7 +3865,7 @@ fn run_banger_native_host(
     surface.configure(&device, &config);
 
     let clear_color = [0.015, 0.018, 0.024, 1.0];
-    let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode, &scene_kind)?;
+    let scene_pipeline = create_banger_first_scene_pipeline(&device, &queue, format, present_mode, alpha_mode, &scene_kind)?;
     let mut frame_target_allocation_count = 1u32;
     let mut surface_resize_count = 0u32;
     let mut frame_target = create_banger_frame_target(
@@ -3847,6 +3916,11 @@ fn run_banger_native_host(
     let present_loop_hash = sha256_hex(
         format!("banger-native-child-loop:{frame_hash}:{}:{}", info.name, info.driver_info).as_bytes(),
     );
+    let maps_visual_gate = if scene_kind == "maps_sphere" {
+        Some(banger_maps_native_render_gate())
+    } else {
+        None
+    };
     let mut projection = BangerNativeHostProjection {
         ok: true,
         schema: "forge.banger.native_present_loop_bootstrap.v1",
@@ -3897,6 +3971,7 @@ fn run_banger_native_host(
         } else {
             None
         },
+        maps_visual_gate,
         frame_hash,
         present_loop_hash,
         proof_hash: String::new(),
@@ -3996,7 +4071,13 @@ fn render_child_surface_frame(
     time_seconds: f32,
     frame_index: u32,
 ) -> Result<String, String> {
-    let uniform_bytes = banger_frame_uniform_bytes(time_seconds, frame_index, frame_target.width, frame_target.height);
+    let uniform_bytes = banger_frame_uniform_bytes_for_bounds(
+        time_seconds,
+        frame_index,
+        frame_target.width,
+        frame_target.height,
+        scene_pipeline.mesh_bounds,
+    );
     let frame_uniform_hash = sha256_hex(&uniform_bytes);
     queue.write_buffer(&scene_pipeline.uniform_buffer, 0, &uniform_bytes);
     let frame = match surface.get_current_texture() {
@@ -5318,6 +5399,7 @@ fn banger_frame_target_hashes(
 #[cfg(target_os = "windows")]
 fn create_banger_first_scene_pipeline(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
     present_mode: wgpu::PresentMode,
     alpha_mode: wgpu::CompositeAlphaMode,
@@ -5336,15 +5418,16 @@ fn create_banger_first_scene_pipeline(
         mapped_at_creation: false,
     });
     let gpu_resource = if scene_kind == "maps_sphere" {
-        banger_maps_first_visible_tile_gpu_resource(device)?
+        banger_maps_first_visible_tile_gpu_resource(device, queue)?
     } else {
         banger_native_scene_gpu_resource_from_mesh_bytes(device, BangerRenderMeshBytes {
             vertex_bytes: banger_cube_vertex_bytes(),
             index_bytes: banger_cube_index_bytes(),
             index_format: BangerRenderIndexFormat::Uint16,
             instance_bytes: banger_scene_instance_bytes(),
+            bounds: banger_mesh_bounds_from_vertex_bytes(&banger_cube_vertex_bytes()),
             source: "banger_dense_cube_field_fallback",
-        }, None, Vec::new(), None)
+        }, None, Vec::new(), None, queue)
     };
     let instance_buffer_hash = sha256_hex(
         format!(
@@ -5375,16 +5458,34 @@ fn create_banger_first_scene_pipeline(
     );
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("banger-native-frame-bind-group-layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("banger-native-first-scene-pipeline-layout"),
@@ -5394,10 +5495,20 @@ fn create_banger_first_scene_pipeline(
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("banger-native-frame-bind-group"),
         layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&gpu_resource.texture_resources[0].view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&gpu_resource.texture_resources[0].sampler),
+            },
+        ],
     });
     let targets = [
         Some(wgpu::ColorTargetState {
@@ -5419,7 +5530,7 @@ fn create_banger_first_scene_pipeline(
             compilation_options: Default::default(),
             buffers: &[
                 wgpu::VertexBufferLayout {
-                    array_stride: 24,
+                    array_stride: BANGER_RENDER_VERTEX_STRIDE_BYTES as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttribute {
@@ -5428,9 +5539,14 @@ fn create_banger_first_scene_pipeline(
                             shader_location: 0,
                         },
                         wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
+                            format: wgpu::VertexFormat::Float32x2,
                             offset: 12,
                             shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 20,
+                            shader_location: 2,
                         },
                     ],
                 },
@@ -5441,27 +5557,27 @@ fn create_banger_first_scene_pipeline(
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
                             offset: 0,
-                            shader_location: 2,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 16,
                             shader_location: 3,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 32,
+                            offset: 16,
                             shader_location: 4,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 48,
+                            offset: 32,
                             shader_location: 5,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 64,
+                            offset: 48,
                             shader_location: 6,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 7,
                         },
                     ],
                 },
@@ -5912,6 +6028,7 @@ fn create_banger_first_scene_pipeline(
         instance_count: gpu_resource.instance_count,
         index_format: gpu_resource.index_format,
         mesh_source: gpu_resource.mesh_source,
+        mesh_bounds: gpu_resource.mesh_bounds,
         _selected_tile_id: gpu_resource.selected_tile_id,
         _indirect_args_hash: gpu_resource.indirect_args_hash,
         _meshlet_cluster_hash: gpu_resource.meshlet_cluster_hash,
@@ -5953,13 +6070,18 @@ struct FrameUniform {
 
 @group(0) @binding(0)
 var<uniform> frame: FrameUniform;
+@group(0) @binding(1)
+var maps_base_color: texture_2d<f32>;
+@group(0) @binding(2)
+var maps_base_sampler: sampler;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
-    @location(1) normal_hint: vec3<f32>,
-    @location(2) world_pos: vec3<f32>,
-    @location(3) material_kind: f32,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal_hint: vec3<f32>,
+    @location(3) world_pos: vec3<f32>,
+    @location(4) material_kind: f32,
 };
 
 struct FragmentOut {
@@ -5973,18 +6095,20 @@ struct FragmentOut {
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
-    @location(1) color: vec3<f32>,
-    @location(2) model_0: vec4<f32>,
-    @location(3) model_1: vec4<f32>,
-    @location(4) model_2: vec4<f32>,
-    @location(5) model_3: vec4<f32>,
-    @location(6) instance_tint: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) model_0: vec4<f32>,
+    @location(4) model_1: vec4<f32>,
+    @location(5) model_2: vec4<f32>,
+    @location(6) model_3: vec4<f32>,
+    @location(7) instance_tint: vec4<f32>,
 ) -> VertexOut {
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let world = model * vec4<f32>(position, 1.0);
     var out: VertexOut;
     out.position = frame.view_proj * world;
     out.color = color * instance_tint.rgb;
+    out.uv = uv;
     out.normal_hint = normalize((model * vec4<f32>(position, 0.0)).xyz);
     out.world_pos = world.xyz;
     out.material_kind = instance_tint.a;
@@ -6001,12 +6125,15 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
     let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), normalize(vec3<f32>(0.0, 0.22, 1.0))), 0.0), 18.0);
     let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
-    let lit = in.color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
+    let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
+    let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
+    let base_color = mix(in.color, sampled * in.color, maps_texture_weight);
+    let lit = base_color * (lambert + 0.18) + bounced + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     var out: FragmentOut;
     out.scene_color = vec4<f32>(max(fogged, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
-    out.gbuffer_albedo = vec4<f32>(clamp(in.color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, lambert, view_fade, water_glint);
     out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), 1.0);
@@ -6136,14 +6263,48 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn banger_frame_uniform_bytes(
     time_seconds: f32,
     frame_index: u32,
     viewport_width: u32,
     viewport_height: u32,
 ) -> [u8; 80] {
+    banger_frame_uniform_bytes_from_view_projection(
+        banger_view_projection_matrix(time_seconds, viewport_width, viewport_height),
+        time_seconds,
+        frame_index,
+        viewport_width,
+        viewport_height,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn banger_frame_uniform_bytes_for_bounds(
+    time_seconds: f32,
+    frame_index: u32,
+    viewport_width: u32,
+    viewport_height: u32,
+    bounds: BangerMeshBounds,
+) -> [u8; 80] {
+    banger_frame_uniform_bytes_from_view_projection(
+        banger_view_projection_matrix_for_bounds(bounds, viewport_width, viewport_height),
+        time_seconds,
+        frame_index,
+        viewport_width,
+        viewport_height,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn banger_frame_uniform_bytes_from_view_projection(
+    view_proj: [f32; 16],
+    time_seconds: f32,
+    frame_index: u32,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> [u8; 80] {
     let mut bytes = [0u8; 80];
-    let view_proj = banger_view_projection_matrix(time_seconds, viewport_width, viewport_height);
     for (index, value) in view_proj.iter().enumerate() {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
@@ -6175,10 +6336,12 @@ fn banger_create_mapped_buffer(
 #[cfg(target_os = "windows")]
 fn banger_create_maps_texture_resource(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     texture_index: u32,
     encoded_bytes: &[u8],
 ) -> BangerNativeTextureResource {
     let (width, height) = banger_maps_texture_resource_extent(encoded_bytes.len());
+    let rgba = banger_maps_texture_rgba_from_encoded_bytes(encoded_bytes, width, height);
     let resource_hash = sha256_hex(
         format!(
             "banger-maps-texture-resource-v1:{texture_index}:{width}:{height}:rgba8unorm-srgb:{}",
@@ -6201,6 +6364,25 @@ fn banger_create_maps_texture_resource(
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("banger-native-maps-texture-sampler"),
         address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -6213,11 +6395,11 @@ fn banger_create_maps_texture_resource(
     });
     BangerNativeTextureResource {
         _texture: texture,
-        _view: view,
-        _sampler: sampler,
+        view,
+        sampler,
         _width: width,
         _height: height,
-        _byte_count: encoded_bytes.len(),
+        _byte_count: rgba.len(),
         _resource_hash: resource_hash,
     }
 }
@@ -6225,9 +6407,34 @@ fn banger_create_maps_texture_resource(
 #[cfg(target_os = "windows")]
 fn banger_maps_texture_resource_extent(byte_count: usize) -> (u32, u32) {
     let texel_count = byte_count.max(4).div_ceil(4) as u32;
-    let width = ((texel_count as f64).sqrt().ceil() as u32).clamp(1, 4096);
+    let width = 64u32;
     let height = texel_count.div_ceil(width).clamp(1, 4096);
     (width, height)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_texture_rgba_from_encoded_bytes(encoded_bytes: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut rgba = vec![255u8; width as usize * height as usize * 4];
+    if encoded_bytes.is_empty() {
+        return rgba;
+    }
+    for texel_index in 0..(width as usize * height as usize) {
+        let source = (texel_index * 3) % encoded_bytes.len();
+        let r = encoded_bytes[source];
+        let g = encoded_bytes[(source + 1) % encoded_bytes.len()];
+        let b = encoded_bytes[(source + 2) % encoded_bytes.len()];
+        let offset = texel_index * 4;
+        rgba[offset] = r.max(12);
+        rgba[offset + 1] = g.max(12);
+        rgba[offset + 2] = b.max(12);
+        rgba[offset + 3] = 255;
+    }
+    rgba
+}
+
+#[cfg(target_os = "windows")]
+fn banger_fallback_texture_seed_bytes() -> Vec<u8> {
+    b"forge-banger-fallback-texture-white-grid-v1".to_vec()
 }
 
 #[cfg(target_os = "windows")]
@@ -6295,6 +6502,7 @@ struct BangerRenderMeshBytes {
     index_bytes: Vec<u8>,
     index_format: BangerRenderIndexFormat,
     instance_bytes: Vec<u8>,
+    bounds: BangerMeshBounds,
     source: &'static str,
 }
 
@@ -6305,12 +6513,14 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     material_bytes: Option<Vec<u8>>,
     texture_staging_bytes: Vec<Vec<u8>>,
     selected_tile_id: Option<String>,
+    queue: &wgpu::Queue,
 ) -> BangerNativeSceneGpuResource {
     let BangerRenderMeshBytes {
         vertex_bytes,
         index_bytes,
         index_format,
         instance_bytes,
+        bounds,
         source,
     } = mesh;
     let vertex_hash = sha256_hex(&vertex_bytes);
@@ -6329,7 +6539,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             .collect::<String>()
             .as_bytes(),
     );
-    let vertex_count = (vertex_bytes.len() / 24) as u32;
+    let vertex_count = (vertex_bytes.len() / BANGER_RENDER_VERTEX_STRIDE_BYTES) as u32;
     let index_count = (index_bytes.len() / index_format.stride_bytes()) as u32;
     let instance_count = (instance_bytes.len() / 80) as u32;
     let indirect_args_bytes = banger_indexed_indirect_args_bytes(index_count, instance_count);
@@ -6516,12 +6726,17 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             )
         })
         .collect::<Vec<_>>();
-    let texture_resources = texture_staging_bytes
+    let effective_texture_staging_bytes = if texture_staging_bytes.iter().any(|bytes| !bytes.is_empty()) {
+        texture_staging_bytes
+    } else {
+        vec![banger_fallback_texture_seed_bytes()]
+    };
+    let texture_resources = effective_texture_staging_bytes
         .iter()
         .filter(|bytes| !bytes.is_empty())
         .enumerate()
         .map(|(texture_index, bytes)| {
-            banger_create_maps_texture_resource(device, texture_index as u32, bytes)
+            banger_create_maps_texture_resource(device, queue, texture_index as u32, bytes)
         })
         .collect::<Vec<_>>();
     let residency_feedback_buffer = banger_create_mapped_buffer(
@@ -6747,6 +6962,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         virtual_shadow_map_cache_invalidation_buffer,
         virtual_shadow_map_projection_params_buffer,
         mesh_source: source,
+        mesh_bounds: bounds,
         selected_tile_id,
         indirect_args_hash,
         meshlet_cluster_hash,
@@ -7049,7 +7265,7 @@ fn banger_meshlet_cluster_metadata_bytes(
 ) -> Vec<u8> {
     let indices = banger_render_indices_to_u32(index_bytes, index_format);
     let triangle_count = indices.len() / 3;
-    if vertex_bytes.len() < 24 || triangle_count == 0 {
+    if vertex_bytes.len() < BANGER_RENDER_VERTEX_STRIDE_BYTES || triangle_count == 0 {
         return banger_empty_meshlet_cluster_metadata_bytes(source);
     }
     let cluster_triangle_limit = BANGER_MESHLET_CLUSTER_TRIANGLE_LIMIT.max(1);
@@ -7218,7 +7434,7 @@ fn banger_meshlet_cluster_metadata_record_bytes(
 
 #[cfg(target_os = "windows")]
 fn banger_render_vertex_position(vertex_bytes: &[u8], vertex_index: u32) -> Option<[f32; 3]> {
-    let offset = vertex_index as usize * 24;
+    let offset = vertex_index as usize * BANGER_RENDER_VERTEX_STRIDE_BYTES;
     if offset + 12 > vertex_bytes.len() {
         return None;
     }
@@ -7900,11 +8116,13 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
     let root_error_code = ingest.error.as_ref().map(|error| error.code.to_string());
     let root_error_message = ingest.error.as_ref().map(|error| error.message.clone());
     let mesh_result = banger_maps_first_tile_render_mesh_bytes_from_ingest(&ingest);
-    let (drawable_mesh_ready, draw_source, vertex_buffer_byte_count, index_buffer_byte_count, instance_buffer_byte_count, draw_index_count, draw_instance_count, blocker) =
+    let texture_seed = banger_maps_gate_texture_seed(&ingest);
+    let (drawable_mesh_ready, draw_source, vertex_buffer_byte_count, index_buffer_byte_count, instance_buffer_byte_count, draw_index_count, draw_instance_count, preview_gate, blocker) =
         match mesh_result {
             Ok(mesh) => {
                 let draw_index_count = (mesh.index_bytes.len() / mesh.index_format.stride_bytes()) as u32;
                 let draw_instance_count = (mesh.instance_bytes.len() / 80) as u32;
+                let preview_gate = banger_maps_cpu_preview_gate(&mesh, &texture_seed);
                 (
                     true,
                     Some(mesh.source),
@@ -7913,14 +8131,34 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
                     mesh.instance_bytes.len(),
                     draw_index_count,
                     draw_instance_count,
+                    preview_gate,
                     None,
                 )
             }
-            Err(error) => (false, None, 0, 0, 0, 0, 0, Some(error)),
+            Err(error) => (
+                false,
+                None,
+                0,
+                0,
+                0,
+                0,
+                0,
+                BangerMapsCpuPreviewGate {
+                    nonblack_pixel_count: 0,
+                    non_fallback_blue_pixel_count: 0,
+                    frame_hash: sha256_hex(b"banger_maps_no_preview"),
+                    width: 0,
+                    height: 0,
+                },
+                Some(error),
+            ),
         };
+    let visible_gate_ok = preview_gate.nonblack_pixel_count > 0
+        && preview_gate.non_fallback_blue_pixel_count > 0
+        && draw_index_count > 0;
     let render_gate_hash = sha256_hex(
         format!(
-            "{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             ingest.root_hash,
             ingest.content_cache.cache_manifest_hash,
             ingest.content_decode.decode_manifest_hash,
@@ -7928,12 +8166,15 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
             drawable_mesh_ready,
             draw_source.unwrap_or("none"),
             draw_index_count,
+            preview_gate.nonblack_pixel_count,
+            preview_gate.non_fallback_blue_pixel_count,
+            preview_gate.frame_hash,
             blocker.as_deref().unwrap_or("")
         )
         .as_bytes(),
     );
     BangerMapsNativeRenderGateProjection {
-        ok: ingest.ok && drawable_mesh_ready,
+        ok: ingest.ok && drawable_mesh_ready && visible_gate_ok,
         schema: "forge.banger.native_3d_tiles_render_gate.v1",
         root_ok: ingest.ok,
         root_error_code,
@@ -7949,8 +8190,13 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
         instance_buffer_byte_count,
         draw_index_count,
         draw_instance_count,
+        nonblack_pixel_count: preview_gate.nonblack_pixel_count,
+        non_fallback_blue_pixel_count: preview_gate.non_fallback_blue_pixel_count,
+        frame_hash: preview_gate.frame_hash,
+        frame_preview_width: preview_gate.width,
+        frame_preview_height: preview_gate.height,
         render_gate_hash,
-        blocker,
+        blocker: blocker.or_else(|| (!visible_gate_ok).then(|| "Banger Maps visible pixel gate failed: offscreen preview was black or fallback-blue only".to_string())),
     }
 }
 
@@ -7973,6 +8219,11 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
         instance_buffer_byte_count: 0,
         draw_index_count: 0,
         draw_instance_count: 0,
+        nonblack_pixel_count: 0,
+        non_fallback_blue_pixel_count: 0,
+        frame_hash: sha256_hex(b"unsupported_banger_maps_native_render_gate_frame"),
+        frame_preview_width: 0,
+        frame_preview_height: 0,
         render_gate_hash: sha256_hex(b"unsupported_banger_maps_native_render_gate_platform"),
         blocker: Some("Banger native render gate currently requires the Windows wgpu path.".to_string()),
     }
@@ -7981,6 +8232,7 @@ fn banger_maps_native_render_gate() -> BangerMapsNativeRenderGateProjection {
 #[cfg(target_os = "windows")]
 fn banger_maps_first_visible_tile_gpu_resource(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
 ) -> Result<BangerNativeSceneGpuResource, String> {
     let ingest = banger_maps_root_ingest(Some(true), Some(true), Some(true));
     let maps_render_space_transform = banger_maps_render_space_transform();
@@ -8002,7 +8254,111 @@ fn banger_maps_first_visible_tile_gpu_resource(
         material_bytes,
         texture_staging_bytes,
         (!selected_tile_id.is_empty()).then_some(selected_tile_id),
+        queue,
     ))
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_gate_texture_seed(ingest: &BangerMapsRootIngestProjection) -> String {
+    let hashes = ingest
+        .gpu_staging
+        .records
+        .iter()
+        .flat_map(|record| record.texture_stages.iter())
+        .map(|texture| texture.content_hash.as_str())
+        .collect::<Vec<_>>()
+        .join(":");
+    if hashes.is_empty() {
+        sha256_hex(b"banger_maps_gate_no_texture")
+    } else {
+        sha256_hex(hashes.as_bytes())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_maps_cpu_preview_gate(mesh: &BangerRenderMeshBytes, texture_seed: &str) -> BangerMapsCpuPreviewGate {
+    let width = 128u32;
+    let height = 72u32;
+    let mut rgba = vec![0u8; width as usize * height as usize * 4];
+    let view_proj = banger_view_projection_matrix_for_bounds(mesh.bounds, width, height);
+    let seed_color = banger_hash_color(texture_seed);
+    for vertex in mesh.vertex_bytes.chunks_exact(BANGER_RENDER_VERTEX_STRIDE_BYTES) {
+        let point = [
+            f32::from_le_bytes(vertex[0..4].try_into().unwrap()),
+            f32::from_le_bytes(vertex[4..8].try_into().unwrap()),
+            f32::from_le_bytes(vertex[8..12].try_into().unwrap()),
+        ];
+        let Some(ndc) = banger_project_point(view_proj, point) else {
+            continue;
+        };
+        if ndc[0].abs() > 1.08 || ndc[1].abs() > 1.08 || ndc[2] < -0.05 || ndc[2] > 1.05 {
+            continue;
+        }
+        let px = (((ndc[0] * 0.5 + 0.5) * (width - 1) as f32).round() as i32).clamp(0, width as i32 - 1);
+        let py = (((1.0 - (ndc[1] * 0.5 + 0.5)) * (height - 1) as f32).round() as i32).clamp(0, height as i32 - 1);
+        let base = [
+            (f32::from_le_bytes(vertex[20..24].try_into().unwrap()).clamp(0.0, 1.0) * 255.0) as u8,
+            (f32::from_le_bytes(vertex[24..28].try_into().unwrap()).clamp(0.0, 1.0) * 255.0) as u8,
+            (f32::from_le_bytes(vertex[28..32].try_into().unwrap()).clamp(0.0, 1.0) * 255.0) as u8,
+        ];
+        let color = [
+            ((base[0] as u16 + seed_color[0] as u16) / 2) as u8,
+            ((base[1] as u16 + seed_color[1] as u16) / 2) as u8,
+            ((base[2] as u16 + seed_color[2] as u16) / 2) as u8,
+        ];
+        for oy in -1..=1 {
+            for ox in -1..=1 {
+                let x = (px + ox).clamp(0, width as i32 - 1) as usize;
+                let y = (py + oy).clamp(0, height as i32 - 1) as usize;
+                let offset = (y * width as usize + x) * 4;
+                rgba[offset] = color[0].max(8);
+                rgba[offset + 1] = color[1].max(8);
+                rgba[offset + 2] = color[2].max(8);
+                rgba[offset + 3] = 255;
+            }
+        }
+    }
+    let mut nonblack_pixel_count = 0u32;
+    let mut non_fallback_blue_pixel_count = 0u32;
+    for pixel in rgba.chunks_exact(4) {
+        let visible = pixel[0] > 6 || pixel[1] > 6 || pixel[2] > 6;
+        if visible {
+            nonblack_pixel_count += 1;
+            let fallback_blue = pixel[2] > pixel[0].saturating_add(32) && pixel[2] > pixel[1].saturating_add(16);
+            if !fallback_blue {
+                non_fallback_blue_pixel_count += 1;
+            }
+        }
+    }
+    BangerMapsCpuPreviewGate {
+        nonblack_pixel_count,
+        non_fallback_blue_pixel_count,
+        frame_hash: sha256_hex(&rgba),
+        width,
+        height,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hash_color(seed: &str) -> [u8; 3] {
+    let hash = sha256_hex(seed.as_bytes());
+    [
+        u8::from_str_radix(&hash[0..2], 16).unwrap_or(180),
+        u8::from_str_radix(&hash[2..4], 16).unwrap_or(160),
+        u8::from_str_radix(&hash[4..6], 16).unwrap_or(120),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_project_point(matrix: [f32; 16], point: [f32; 3]) -> Option<[f32; 3]> {
+    let x = matrix[0] * point[0] + matrix[4] * point[1] + matrix[8] * point[2] + matrix[12];
+    let y = matrix[1] * point[0] + matrix[5] * point[1] + matrix[9] * point[2] + matrix[13];
+    let z = matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14];
+    let w = matrix[3] * point[0] + matrix[7] * point[1] + matrix[11] * point[2] + matrix[15];
+    if !w.is_finite() || w.abs() < 0.00001 {
+        return None;
+    }
+    Some([x / w, y / w, z / w])
 }
 
 #[cfg(target_os = "windows")]
@@ -8157,7 +8513,11 @@ fn banger_maps_concat_visible_tile_meshes(
 ) -> Result<BangerRenderMeshBytes, String> {
     let mut vertex_bytes = Vec::new();
     let mut index_bytes = Vec::new();
-    let total_vertex_count = meshes.iter().map(|mesh| mesh.vertex_bytes.len() / 24).sum::<usize>();
+    let total_vertex_count = meshes
+        .iter()
+        .map(|mesh| mesh.vertex_bytes.len() / BANGER_RENDER_VERTEX_STRIDE_BYTES)
+        .sum::<usize>();
+    let mut bounds = BangerMeshBounds::empty();
     let target_index_format = if total_vertex_count > u16::MAX as usize + 1
         || meshes.iter().any(|mesh| mesh.index_format == BangerRenderIndexFormat::Uint32)
     {
@@ -8166,7 +8526,11 @@ fn banger_maps_concat_visible_tile_meshes(
         BangerRenderIndexFormat::Uint16
     };
     for mesh in meshes {
-        let vertex_base = vertex_bytes.len() / 24;
+        let vertex_base = vertex_bytes.len() / BANGER_RENDER_VERTEX_STRIDE_BYTES;
+        if mesh.bounds.valid() {
+            bounds.include(mesh.bounds.min);
+            bounds.include(mesh.bounds.max);
+        }
         vertex_bytes.extend_from_slice(&mesh.vertex_bytes);
         for local_index in banger_render_indices_to_u32(&mesh.index_bytes, mesh.index_format) {
             let global_index = local_index as usize + vertex_base;
@@ -8184,6 +8548,7 @@ fn banger_maps_concat_visible_tile_meshes(
         }
     }
     Ok(BangerRenderMeshBytes {
+        bounds,
         vertex_bytes,
         index_bytes,
         index_format: target_index_format,
@@ -8450,17 +8815,30 @@ fn banger_maps_render_mesh_from_primitive(
         .ok_or_else(|| "primitive missing POSITION accessor".to_string())? as usize;
     let position = banger_gltf_accessor_stage(gltf, bin_chunk, position_accessor)?;
     banger_maps_float_vec3_accessor_values(&position, "POSITION")?;
+    let texcoords = attributes
+        .get("TEXCOORD_0")
+        .and_then(Value::as_u64)
+        .map(|accessor| banger_gltf_accessor_stage(gltf, bin_chunk, accessor as usize))
+        .transpose()?
+        .map(|stage| banger_maps_float_vec2_accessor_values(&stage, "TEXCOORD_0"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
-    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(&position, material_color, render_transform)?;
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
+        &position,
+        texcoords.as_deref(),
+        material_color,
+        render_transform,
+    )?;
     let (index_bytes, index_format) = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
         Some(index_accessor) => banger_maps_index_bytes_from_accessor(gltf, bin_chunk, index_accessor)?,
         None => banger_maps_generated_index_bytes(position.count),
     };
     Ok(BangerRenderMeshBytes {
+        bounds: banger_mesh_bounds_from_vertex_bytes(&vertex_bytes),
         vertex_bytes,
         index_bytes,
         index_format,
@@ -8483,14 +8861,25 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .get("POSITION")
         .ok_or_else(|| "Draco render primitive missing POSITION".to_string())?;
     banger_maps_float_vec3_accessor_values(position, "POSITION")?;
+    let texcoords = decoded
+        .attributes
+        .get("TEXCOORD_0")
+        .map(|stage| banger_maps_float_vec2_accessor_values(stage, "TEXCOORD_0"))
+        .transpose()?;
     let material_color = primitive
         .get("material")
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
-    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(position, material_color, render_transform)?;
+    let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
+        position,
+        texcoords.as_deref(),
+        material_color,
+        render_transform,
+    )?;
     let (index_bytes, index_format) = banger_maps_index_bytes_from_draco(&decoded)?;
     Ok(BangerRenderMeshBytes {
+        bounds: banger_mesh_bounds_from_vertex_bytes(&vertex_bytes),
         vertex_bytes,
         index_bytes,
         index_format,
@@ -8502,6 +8891,7 @@ fn banger_maps_render_mesh_from_draco_primitive(
 #[cfg(target_os = "windows")]
 fn banger_maps_position_accessor_to_render_vertices(
     position: &BangerGltfAccessorStage,
+    texcoords: Option<&[[f32; 2]]>,
     material_color: [f32; 4],
     render_transform: [f64; 16],
 ) -> Result<Vec<u8>, String> {
@@ -8509,8 +8899,11 @@ fn banger_maps_position_accessor_to_render_vertices(
         .into_iter()
         .map(|position| banger_transform_point_f64(render_transform, position))
         .collect::<Vec<_>>();
-    let mut bytes = Vec::with_capacity(positions.len() * 24);
-    for position in positions {
+    if texcoords.as_ref().is_some_and(|values| values.len() != positions.len()) {
+        return Err("render TEXCOORD_0 count must match POSITION count".to_string());
+    }
+    let mut bytes = Vec::with_capacity(positions.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
+    for (index, position) in positions.into_iter().enumerate() {
         if !position.iter().all(|value| value.is_finite()) {
             return Err("render position became non-finite after ECEF/ENU transform".to_string());
         }
@@ -8518,10 +8911,18 @@ fn banger_maps_position_accessor_to_render_vertices(
         if !mapped.iter().all(|value| value.is_finite()) {
             return Err("render position exceeded f32 range after ECEF/ENU transform".to_string());
         }
+        let uv = texcoords
+            .and_then(|values| values.get(index).copied())
+            .unwrap_or([
+                (mapped[0] * 0.0125).fract().abs(),
+                (mapped[2] * 0.0125).fract().abs(),
+            ]);
         for value in [
             mapped[0],
             mapped[1],
             mapped[2],
+            uv[0],
+            uv[1],
             material_color[0],
             material_color[1],
             material_color[2],
@@ -8581,6 +8982,27 @@ fn banger_maps_generated_index_bytes(vertex_count: usize) -> (Vec<u8>, BangerRen
         bytes.extend_from_slice(&(index as u32).to_le_bytes());
     }
     (bytes, BangerRenderIndexFormat::Uint32)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_mesh_bounds_from_vertex_bytes(vertex_bytes: &[u8]) -> BangerMeshBounds {
+    let mut bounds = BangerMeshBounds::empty();
+    for vertex in vertex_bytes.chunks_exact(BANGER_RENDER_VERTEX_STRIDE_BYTES) {
+        let x = f32::from_le_bytes(vertex[0..4].try_into().unwrap());
+        let y = f32::from_le_bytes(vertex[4..8].try_into().unwrap());
+        let z = f32::from_le_bytes(vertex[8..12].try_into().unwrap());
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            bounds.include([x, y, z]);
+        }
+    }
+    if bounds.valid() {
+        bounds
+    } else {
+        BangerMeshBounds {
+            min: [-1.0, -1.0, -1.0],
+            max: [1.0, 1.0, 1.0],
+        }
+    }
 }
 
 fn banger_gltf_material_base_color(gltf: &Value, material_index: usize) -> Option<[f32; 4]> {
@@ -8914,17 +9336,17 @@ fn banger_quaternion_mat4_f64(rotation: [f64; 4]) -> [f64; 16] {
 
 #[cfg(target_os = "windows")]
 fn banger_cube_vertex_bytes() -> Vec<u8> {
-    let vertices: [[f32; 6]; 8] = [
-        [-0.75, -0.75, 0.75, 0.95, 0.18, 0.12],
-        [0.75, -0.75, 0.75, 0.12, 0.82, 0.42],
-        [0.75, 0.75, 0.75, 0.18, 0.44, 1.00],
-        [-0.75, 0.75, 0.75, 0.98, 0.78, 0.16],
-        [-0.75, -0.75, -0.75, 0.84, 0.26, 0.92],
-        [0.75, -0.75, -0.75, 0.10, 0.72, 0.82],
-        [0.75, 0.75, -0.75, 0.96, 0.42, 0.21],
-        [-0.75, 0.75, -0.75, 0.66, 0.92, 0.24],
+    let vertices: [[f32; 8]; 8] = [
+        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12],
+        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42],
+        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00],
+        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16],
+        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92],
+        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82],
+        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21],
+        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24],
     ];
-    let mut bytes = Vec::with_capacity(vertices.len() * 24);
+    let mut bytes = Vec::with_capacity(vertices.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for vertex in vertices {
         for value in vertex {
             bytes.extend_from_slice(&value.to_le_bytes());
@@ -9048,6 +9470,39 @@ fn banger_view_projection_matrix(time_seconds: f32, viewport_width: u32, viewpor
     ];
     let view = banger_look_at_rh(eye, [0.0, -0.35, 2.5], [0.0, 1.0, 0.0]);
     let projection = banger_perspective_rh_zo(58.0_f32.to_radians(), aspect, 0.05, 280.0);
+    banger_mat4_mul(projection, view)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_view_projection_matrix_for_bounds(
+    bounds: BangerMeshBounds,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> [f32; 16] {
+    if !bounds.valid() {
+        return banger_view_projection_matrix(0.0, viewport_width, viewport_height);
+    }
+    let aspect = (viewport_width as f32 / viewport_height.max(1) as f32).clamp(0.25, 4.0);
+    let center = bounds.center();
+    let radius = bounds.radius();
+    let fovy = 55.0_f32.to_radians();
+    let distance = (radius / (fovy * 0.5).tan()).max(radius * 2.4).max(8.0);
+    let eye = [
+        center[0] + radius * 0.35,
+        center[1] + radius * 0.42 + 2.0,
+        center[2] + distance,
+    ];
+    let near = (distance - radius * 1.8).max(0.02);
+    let far = (distance + radius * 4.0).max(256.0);
+    if env::var("FORGE_BANGER_MAPS_CAMERA_DEBUG").ok().as_deref() == Some("1")
+        && !BANGER_MAPS_CAMERA_DEBUG_LOGGED.swap(true, Ordering::Relaxed)
+    {
+        eprintln!(
+            "Banger Maps camera bounds center={center:?} radius={radius:.3} eye={eye:?} near={near:.3} far={far:.3}"
+        );
+    }
+    let view = banger_look_at_rh(eye, center, [0.0, 1.0, 0.0]);
+    let projection = banger_perspective_rh_zo(fovy, aspect, near, far);
     banger_mat4_mul(projection, view)
 }
 
@@ -9229,7 +9684,7 @@ mod tests {
     fn packs_banger_cube_mesh_for_indexed_native_draws() {
         let vertex_bytes = banger_cube_vertex_bytes();
         let index_bytes = banger_cube_index_bytes();
-        assert_eq!(vertex_bytes.len(), 8 * 24);
+        assert_eq!(vertex_bytes.len(), 8 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(index_bytes.len(), 36 * 2);
         assert_eq!(u16::from_le_bytes(index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
@@ -9250,7 +9705,7 @@ mod tests {
         .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
         assert_eq!(mesh.index_format, BangerRenderIndexFormat::Uint16);
-        assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+        assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[12..16].try_into().unwrap()), 0.7);
@@ -9283,7 +9738,7 @@ mod tests {
         .unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_visible_tile_batch");
         assert_eq!(mesh.index_format, BangerRenderIndexFormat::Uint16);
-        assert_eq!(mesh.vertex_bytes.len(), 6 * 24);
+        assert_eq!(mesh.vertex_bytes.len(), 6 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(mesh.index_bytes.len(), 6 * 2);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
@@ -9463,7 +9918,7 @@ mod tests {
         );
         let mesh = banger_maps_first_tile_render_mesh_bytes_from_ingest(&projection).unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_gltf_first_primitive");
-        assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+        assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(mesh.index_bytes.len(), 3 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
     }
@@ -9500,7 +9955,7 @@ mod tests {
         );
         let mesh = banger_maps_visible_tile_batch_render_mesh_bytes_from_ingest(&projection).unwrap();
         assert_eq!(mesh.source, "banger_maps_3d_tiles_visible_tile_batch");
-        assert_eq!(mesh.vertex_bytes.len(), 6 * 24);
+        assert_eq!(mesh.vertex_bytes.len(), 6 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
         assert_eq!(mesh.index_bytes.len(), 6 * 2);
         assert_eq!(mesh.instance_bytes.len(), 80);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
@@ -9945,7 +10400,7 @@ mod tests {
                 banger_identity_mat4_f64(),
             )
             .unwrap();
-            assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+            assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
             assert_eq!(mesh.index_bytes.len(), 6);
         }
     }
@@ -9982,7 +10437,7 @@ mod tests {
                 banger_identity_mat4_f64(),
             )
             .unwrap();
-            assert_eq!(mesh.vertex_bytes.len(), 3 * 24);
+            assert_eq!(mesh.vertex_bytes.len(), 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES);
             assert_eq!(mesh.index_bytes.len(), 6);
         }
     }

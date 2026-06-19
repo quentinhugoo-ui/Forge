@@ -54,6 +54,16 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
   const [status, setStatus] = useState("Banger native Maps surface pending");
   const [nativeHostLive, setNativeHostLive] = useState(false);
   const label = searchQuery?.replace(/\s+/g, " ").trim() || target?.target?.replace(/\s+/g, " ").trim() || "Map";
+  const nativeMapsTarget = useMemo(() => {
+    const latitude = Number.isFinite(target?.latitude) ? target?.latitude : undefined;
+    const longitude = Number.isFinite(target?.longitude) ? target?.longitude : undefined;
+    return {
+      target: label,
+      latitude,
+      longitude,
+      heightMeters: latitude !== undefined && longitude !== undefined ? 0 : undefined
+    };
+  }, [label, target?.latitude, target?.longitude]);
 
   useEffect(() => {
     const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig as
@@ -117,7 +127,8 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
         y: Math.round(rect.y),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
-        sceneKind: "maps_sphere" as const
+        sceneKind: "maps_sphere" as const,
+        ...nativeMapsTarget
       };
       const command = firstSync ? showNativeMaps : updateNativeMapsBounds;
       firstSync = false;
@@ -163,7 +174,7 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
       window.removeEventListener("resize", scheduleSync);
       void hideNativeMaps?.();
     };
-  }, []);
+  }, [nativeMapsTarget]);
 
   const tilesetEndpoint = redactedTilesetEndpoint(tilesConfig?.rootTilesetUrl);
   const georeference = tilesConfig
