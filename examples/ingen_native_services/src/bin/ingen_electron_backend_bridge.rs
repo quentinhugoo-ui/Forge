@@ -456,6 +456,8 @@ struct BangerMapsMaterialStage {
     metallic_factor: f32,
     roughness_factor: f32,
     base_color_texture: Option<usize>,
+    normal_texture: Option<usize>,
+    normal_scale: f32,
     material_hash: String,
 }
 
@@ -2625,9 +2627,19 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                         .and_then(|value| value.get("index"))
                         .and_then(Value::as_u64)
                         .map(|value| value as usize);
+                    let normal_texture = material
+                        .get("normalTexture")
+                        .and_then(|value| value.get("index"))
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    let normal_scale = material
+                        .get("normalTexture")
+                        .and_then(|value| value.get("scale"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(1.0) as f32;
                     let material_hash = sha256_hex(
                         format!(
-                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}"
+                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}:{normal_texture:?}:{normal_scale}"
                         )
                         .as_bytes(),
                     );
@@ -2637,6 +2649,8 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                         metallic_factor,
                         roughness_factor,
                         base_color_texture,
+                        normal_texture,
+                        normal_scale,
                         material_hash,
                     }
                 })
@@ -3142,11 +3156,15 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
 
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
+const BANGER_MATERIAL_RECORD_STRIDE: usize = 48;
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) -> Option<Vec<u8>> {
     if materials.is_empty() {
         return None;
     }
-    let mut bytes = Vec::with_capacity(materials.len() * 32);
+    let mut bytes = Vec::with_capacity(materials.len() * BANGER_MATERIAL_RECORD_STRIDE);
     for material in materials {
         for value in material.base_color_factor {
             bytes.extend_from_slice(&value.to_le_bytes());
@@ -3155,6 +3173,10 @@ fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) ->
         bytes.extend_from_slice(&material.roughness_factor.to_le_bytes());
         bytes.extend_from_slice(&(material.base_color_texture.unwrap_or(u32::MAX as usize) as u32).to_le_bytes());
         bytes.extend_from_slice(&(material.material_index as u32).to_le_bytes());
+        bytes.extend_from_slice(&(material.normal_texture.unwrap_or(u32::MAX as usize) as u32).to_le_bytes());
+        bytes.extend_from_slice(&material.normal_scale.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
     }
     Some(bytes)
 }
@@ -3167,9 +3189,11 @@ fn banger_default_material_resource_bytes() -> Vec<u8> {
         metallic_factor: 0.0,
         roughness_factor: 0.72,
         base_color_texture: None,
+        normal_texture: None,
+        normal_scale: 1.0,
         material_hash: "banger_default_material_resource".to_string(),
     }])
-    .expect("default Banger material must produce one 32-byte record")
+    .expect("default Banger material must produce one material record")
 }
 
 #[cfg(target_os = "windows")]
@@ -6751,6 +6775,10 @@ struct BangerMaterialRecord {
     roughness_factor: f32,
     base_color_texture: u32,
     material_index: u32,
+    normal_texture: u32,
+    normal_scale: f32,
+    pad0: u32,
+    pad1: u32,
 };
 
 @group(0) @binding(4)
@@ -6839,10 +6867,11 @@ fn banger_transform_tangent(model: mat4x4<f32>, tangent: vec4<f32>, normal: vec3
     return vec4<f32>(orthogonal, tangent.w);
 }
 
-fn banger_tangent_space_detail_normal(normal: vec3<f32>, tangent: vec4<f32>, uv: vec2<f32>, material_kind: f32, roughness: f32) -> vec3<f32> {
+fn banger_tangent_space_detail_normal(normal: vec3<f32>, tangent: vec4<f32>, uv: vec2<f32>, material_kind: f32, roughness: f32, normal_scale: f32, normal_texture: u32) -> vec3<f32> {
     let t = normalize(tangent.xyz);
     let b = normalize(cross(normal, t) * tangent.w);
-    let detail_strength = smoothstep(0.18, 0.86, roughness) * (0.025 + 0.025 * smoothstep(1.5, 4.0, material_kind));
+    let declared_normal_map = select(0.45, 1.0, normal_texture != 0xFFFFFFFFu);
+    let detail_strength = smoothstep(0.18, 0.86, roughness) * (0.025 + 0.025 * smoothstep(1.5, 4.0, material_kind)) * clamp(normal_scale, 0.0, 4.0) * declared_normal_map;
     let wave_x = sin(uv.x * 74.0 + uv.y * 19.0 + frame.time_seconds * 0.04);
     let wave_y = cos(uv.y * 61.0 - uv.x * 23.0 + frame.time_seconds * 0.03);
     return normalize(normal + t * wave_x * detail_strength + b * wave_y * detail_strength);
@@ -6903,7 +6932,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let view_fade = clamp(length(in.world_pos.xz) / 58.0, 0.0, 1.0);
     let material_record = banger_material_record_for_kind(in.material_slot);
     let material_roughness = clamp(material_record.roughness_factor * mix(1.0, 0.45, smoothstep(2.4, 3.4, in.material_kind)), 0.045, 1.0);
-    let normal = banger_tangent_space_detail_normal(normalize(in.normal_hint), in.tangent_hint, in.uv, in.material_kind, material_roughness);
+    let normal = banger_tangent_space_detail_normal(normalize(in.normal_hint), in.tangent_hint, in.uv, in.material_kind, material_roughness, material_record.normal_scale, material_record.normal_texture);
     let lambert = clamp(dot(normal, sun_dir) * 0.62 + 0.38, 0.18, 1.0);
     let sky = mix(vec3<f32>(0.02, 0.035, 0.065), vec3<f32>(0.95, 0.48, 0.18), clamp(in.world_pos.y * 0.04 + 0.35, 0.0, 1.0));
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
@@ -8198,7 +8227,7 @@ fn banger_material_bin_bytes(
     texture_manifest_bytes: &[u8],
 ) -> Vec<u8> {
     let material_count = material_bytes
-        .map(|bytes| (bytes.len() / 32).max(1))
+        .map(|bytes| (bytes.len() / BANGER_MATERIAL_RECORD_STRIDE).max(1))
         .unwrap_or(1)
         .min(1024);
     let mut bins = vec![(u32::MAX, 0u32, u32::MAX, 0u32); material_count];
@@ -8221,7 +8250,10 @@ fn banger_material_bin_bytes(
     let mut bytes = Vec::with_capacity(material_count * BANGER_MATERIAL_BIN_RECORD_STRIDE);
     for (material_bin, (first_cluster, cluster_count, first_index, index_count)) in bins.into_iter().enumerate() {
         let material_hash = material_bytes
-            .and_then(|bytes| bytes.get(material_bin * 32..material_bin * 32 + 32))
+            .and_then(|bytes| {
+                let start = material_bin * BANGER_MATERIAL_RECORD_STRIDE;
+                bytes.get(start..start + BANGER_MATERIAL_RECORD_STRIDE)
+            })
             .map(sha256_hex)
             .unwrap_or_else(|| sha256_hex(b"banger_default_material_bin"));
         for value in [
@@ -10759,6 +10791,8 @@ mod tests {
         assert!(source.contains("banger_virtual_shadow_visibility"));
         assert!(source.contains("shadow_visibility"));
         assert!(source.contains("BangerMaterialRecord"));
+        assert!(source.contains("normal_texture"));
+        assert!(source.contains("normal_scale"));
         assert!(source.contains("material_records"));
         assert!(source.contains("banger_material_record_for_kind"));
         assert!(source.contains("contact_ao"));
@@ -11740,19 +11774,25 @@ mod tests {
             metallic_factor: 0.2,
             roughness_factor: 0.8,
             base_color_texture: Some(3),
+            normal_texture: Some(5),
+            normal_scale: 0.65,
             material_hash: "test".to_string(),
         }])
         .unwrap();
-        assert_eq!(bytes.len(), 32);
+        assert_eq!(bytes.len(), BANGER_MATERIAL_RECORD_STRIDE);
         assert!((f32::from_le_bytes(bytes[0..4].try_into().unwrap()) - 0.25).abs() < 0.0001);
         assert!((f32::from_le_bytes(bytes[16..20].try_into().unwrap()) - 0.2).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(bytes[28..32].try_into().unwrap()), 7);
+        assert_eq!(u32::from_le_bytes(bytes[32..36].try_into().unwrap()), 5);
+        assert!((f32::from_le_bytes(bytes[36..40].try_into().unwrap()) - 0.65).abs() < 0.0001);
         let fallback = banger_default_material_resource_bytes();
-        assert_eq!(fallback.len(), 32);
+        assert_eq!(fallback.len(), BANGER_MATERIAL_RECORD_STRIDE);
         assert_eq!(f32::from_le_bytes(fallback[0..4].try_into().unwrap()), 1.0);
         assert_eq!(f32::from_le_bytes(fallback[16..20].try_into().unwrap()), 0.0);
         assert!((f32::from_le_bytes(fallback[20..24].try_into().unwrap()) - 0.72).abs() < 0.0001);
+        assert_eq!(u32::from_le_bytes(fallback[32..36].try_into().unwrap()), u32::MAX);
+        assert_eq!(f32::from_le_bytes(fallback[36..40].try_into().unwrap()), 1.0);
     }
 
     #[cfg(target_os = "windows")]
@@ -11825,7 +11865,7 @@ mod tests {
             BangerRenderIndexFormat::Uint16,
             "material_bin_test",
         );
-        let material_bytes = vec![7u8; 64];
+        let material_bytes = vec![7u8; 2 * BANGER_MATERIAL_RECORD_STRIDE];
         let texture_manifest = banger_maps_texture_resource_manifest_bytes(&[vec![1, 2, 3, 4]]);
         let bins = banger_material_bin_bytes(&clusters, Some(&material_bytes), &texture_manifest);
         assert_eq!(bins.len(), 2 * BANGER_MATERIAL_BIN_RECORD_STRIDE);
@@ -12274,13 +12314,15 @@ mod tests {
         assert_eq!(materials[0].base_color_factor, [0.7, 0.82, 0.9, 1.0]);
         assert_eq!(materials[0].metallic_factor, 0.0);
         assert_eq!(materials[0].roughness_factor, 0.45);
+        assert_eq!(materials[0].normal_texture, Some(0));
+        assert!((materials[0].normal_scale - 0.75).abs() < 0.0001);
         assert_eq!(textures.len(), 1);
         assert_eq!(textures[0].byte_count, 4);
         assert_eq!(textures[0].content_hash, sha256_hex(&[137, 80, 78, 71]));
     }
 
     fn test_glb_bytes() -> Vec<u8> {
-        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0}}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.75}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
         let mut json_chunk = json.to_vec();
         while json_chunk.len() % 4 != 0 {
             json_chunk.push(0x20);
