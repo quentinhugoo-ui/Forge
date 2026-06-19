@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
   BangerPresentLoopBootstrapResult,
   HeaderSurfaceContract,
@@ -19,6 +19,17 @@ function SurfaceProof({ surface }: { surface: HeaderSurfaceContract }) {
       <code>{surface.proofHash.slice(0, 16)}</code>
     </div>
   );
+}
+
+function shortProof(value?: string | null): string {
+  return value ? value.slice(0, 16) : "pending";
+}
+
+function bangerGateLabel(presentLoop: BangerPresentLoopBootstrapResult | null): string {
+  if (!presentLoop) return "pending";
+  if (!presentLoop.ok) return presentLoop.error?.code ?? "blocked";
+  if (!presentLoop.mapsVisualGate) return "no gate";
+  return presentLoop.mapsVisualGate.ok ? "visible" : "blocked";
 }
 
 function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] }) {
@@ -47,7 +58,59 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const requestIdRef = useRef(0);
   const [presentLoop, setPresentLoop] = useState<BangerPresentLoopBootstrapResult | null>(null);
+  const [slotBounds, setSlotBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [bootstrapStatus, setBootstrapStatus] = useState("pending");
+
+  const measureSlot = useCallback(() => {
+    const rect = slotRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const next = {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+    if (next.width < 80 || next.height < 80) return;
+    setSlotBounds((current) => {
+      if (
+        current &&
+        current.x === next.x &&
+        current.y === next.y &&
+        current.width === next.width &&
+        current.height === next.height
+      ) {
+        return current;
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return undefined;
+    let animationFrame = 0;
+    const scheduleMeasure = () => {
+      if (animationFrame !== 0) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        measureSlot();
+      });
+    };
+    scheduleMeasure();
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(slot);
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      if (animationFrame !== 0) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    };
+  }, [measureSlot]);
 
   useEffect(() => {
     const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
@@ -60,26 +123,43 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         }) => Promise<BangerPresentLoopBootstrapResult>)
       | undefined;
     let active = true;
-    const rect = slotRef.current?.getBoundingClientRect();
+    const requestId = ++requestIdRef.current;
+    if (!getBootstrap) {
+      setBootstrapStatus("bridge unavailable");
+      return () => {
+        active = false;
+      };
+    }
+    if (!slotBounds) {
+      setBootstrapStatus("measuring");
+      return () => {
+        active = false;
+      };
+    }
+    setBootstrapStatus("booting");
     void getBootstrap?.({
-      x: rect ? Math.round(rect.x) : undefined,
-      y: rect ? Math.round(rect.y) : undefined,
-      width: rect ? Math.round(rect.width) : undefined,
-      height: rect ? Math.round(rect.height) : undefined,
+      x: slotBounds.x,
+      y: slotBounds.y,
+      width: slotBounds.width,
+      height: slotBounds.height,
       sceneKind: "maps_sphere"
     })
       .then((result) => {
-        if (active) {
+        if (active && requestId === requestIdRef.current) {
           setPresentLoop(result ?? null);
+          setBootstrapStatus(result?.ok ? "live" : result?.error?.code ?? "blocked");
         }
       })
       .catch((error) => {
         console.error("Banger native present loop failed to bootstrap.", error);
+        if (active && requestId === requestIdRef.current) {
+          setBootstrapStatus("failed");
+        }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshTick, slotBounds]);
 
   const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
   const nativeFrameDataUrl = presentLoopFrameDataUrl;
@@ -111,6 +191,36 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           </div>
         )}
       </div>
+      <aside className="bangerFrameLedger" aria-label="Banger native frame ledger">
+        <div>
+          <span>route</span>
+          <code>{presentLoop?.routeStatus ?? bootstrapStatus}</code>
+        </div>
+        <div>
+          <span>gate</span>
+          <code>{bangerGateLabel(presentLoop)}</code>
+        </div>
+        <div>
+          <span>draw</span>
+          <code>
+            {presentLoop?.drawCallCount ?? 0}/{presentLoop?.indexCount ?? 0}/{presentLoop?.instanceCount ?? 0}
+          </code>
+        </div>
+        <div>
+          <span>frame</span>
+          <code>{shortProof(presentLoop?.mapsVisualGate?.frameHash ?? presentLoop?.frameHash)}</code>
+        </div>
+        <div>
+          <span>mesh</span>
+          <code>{shortProof(presentLoop?.sceneMeshHash)}</code>
+        </div>
+      </aside>
+      <div className="surfaceActionRow">
+        <button type="button" onClick={() => setRefreshTick((tick) => tick + 1)}>
+          Refresh
+        </button>
+      </div>
+      <SurfaceProof surface={surface} />
     </section>
   );
 }
