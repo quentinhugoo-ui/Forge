@@ -5715,6 +5715,16 @@ fn create_banger_first_scene_pipeline(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5737,6 +5747,10 @@ fn create_banger_first_scene_pipeline(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(&gpu_resource.texture_resources[0].sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&gpu_resource.virtual_shadow_map_projection_view),
             },
         ],
     });
@@ -6674,6 +6688,8 @@ var<uniform> frame: FrameUniform;
 var maps_base_color: texture_2d<f32>;
 @group(0) @binding(2)
 var maps_base_sampler: sampler;
+@group(0) @binding(3)
+var virtual_shadow_projection: texture_2d<u32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -6738,6 +6754,19 @@ fn banger_microfacet_brdf(base_color: vec3<f32>, normal: vec3<f32>, view_dir: ve
     return (diffuse + specular) * nol;
 }
 
+fn banger_virtual_shadow_visibility(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
+    let projection_extent = vec2<i32>(textureDimensions(virtual_shadow_projection));
+    let shadow_uv = fract(world_pos.xz * 0.018 + vec2<f32>(0.31, 0.57));
+    let shadow_pixel = clamp(vec2<i32>(shadow_uv * vec2<f32>(projection_extent)), vec2<i32>(0), projection_extent - vec2<i32>(1));
+    let packed_projection = textureLoad(virtual_shadow_projection, shadow_pixel, 0).r;
+    let projected_page = f32(packed_projection & 255u) / 255.0;
+    let receiver_bias = smoothstep(0.08, 0.62, dot(normal, light_dir));
+    let contact_band = smoothstep(0.18, 0.84, projected_page);
+    let temporal_dither = fract(sin(dot(world_pos.xz, vec2<f32>(43.13, 17.71))) * 4096.0);
+    let cached_shadow = smoothstep(0.22, 0.72, contact_band + temporal_dither * 0.08);
+    return mix(0.58, 1.0, max(cached_shadow, receiver_bias * 0.72));
+}
+
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
@@ -6776,11 +6805,12 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
     let base_color = mix(in.color, sampled * in.color, maps_texture_weight);
     let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
+    let shadow_visibility = banger_virtual_shadow_visibility(in.world_pos, normal, sun_dir);
     let material_roughness = mix(0.78, 0.18, smoothstep(2.4, 3.4, in.material_kind));
     let material_metallic = smoothstep(4.5, 6.0, in.material_kind) * 0.45;
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
     let diffuse_light = lambert * contact_ao + 0.12 * contact_ao;
-    let lit = pbr_direct * (2.45 * contact_ao) + base_color * diffuse_light + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
+    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -6790,7 +6820,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), 1.0);
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
-    out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint);
+    out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint * shadow_visibility);
     out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35), contact_ao);
     return out;
 }
@@ -10484,6 +10514,9 @@ mod tests {
         assert!(source.contains("banger_distribution_ggx"));
         assert!(source.contains("banger_visibility_smith_ggx_fast"));
         assert!(source.contains("banger_fresnel_schlick"));
+        assert!(source.contains("virtual_shadow_projection"));
+        assert!(source.contains("banger_virtual_shadow_visibility"));
+        assert!(source.contains("shadow_visibility"));
         assert!(source.contains("contact_ao"));
         assert!(source.contains("material_roughness"));
         assert!(source.contains("exposure"));
