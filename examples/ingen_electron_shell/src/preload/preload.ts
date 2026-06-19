@@ -56,6 +56,15 @@ const forgeShell: ForgeShellApi = {
   getBangerGoogleTilesConfig() {
     return ipcRenderer.invoke("forge:get-banger-google-tiles-config");
   },
+  showNativeBanger(bounds: NativeWebExplorerBounds) {
+    return ipcRenderer.invoke("forge:banger-show", bounds);
+  },
+  updateNativeBangerBounds(bounds: NativeWebExplorerBounds) {
+    return ipcRenderer.invoke("forge:banger-bounds", bounds);
+  },
+  hideNativeBanger() {
+    return ipcRenderer.invoke("forge:banger-hide");
+  },
   dispatchCanvasSurfacesCommand(command: CanvasSurfacesCommand) {
     return ipcRenderer.invoke("forge:dispatch-canvas-surfaces-command", command);
   },

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import type {
   BangerPresentLoopBootstrapResult,
   HeaderSurfaceContract,
-  HeaderSurfaceSnapshot
+  HeaderSurfaceSnapshot,
+  NativeWebExplorerResult
 } from "../shared/ipc-contract";
 
 function statusLabel(surface: HeaderSurfaceContract): string {
@@ -63,6 +64,8 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const [slotBounds, setSlotBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [bootstrapStatus, setBootstrapStatus] = useState("pending");
+  const [nativeSurfaceStatus, setNativeSurfaceStatus] = useState("pending");
+  const nativeSurfaceShowTickRef = useRef(-1);
 
   const measureSlot = useCallback(() => {
     const rect = slotRef.current?.getBoundingClientRect();
@@ -111,6 +114,61 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       window.removeEventListener("resize", scheduleMeasure);
     };
   }, [measureSlot]);
+
+  useEffect(() => {
+    const showNativeBanger = globalThis.window?.forgeShell?.showNativeBanger;
+    const updateNativeBangerBounds = globalThis.window?.forgeShell?.updateNativeBangerBounds;
+    let active = true;
+    if (!showNativeBanger) {
+      setNativeSurfaceStatus("bridge unavailable");
+      return () => {
+        active = false;
+      };
+    }
+    if (!slotBounds) {
+      setNativeSurfaceStatus("measuring");
+      return () => {
+        active = false;
+      };
+    }
+
+    const bounds = {
+      x: slotBounds.x,
+      y: slotBounds.y,
+      width: slotBounds.width,
+      height: slotBounds.height,
+      sceneKind: "maps_sphere" as const
+    };
+    const canUpdateExistingSurface = nativeSurfaceShowTickRef.current === refreshTick && updateNativeBangerBounds;
+    const request = canUpdateExistingSurface ? updateNativeBangerBounds(bounds) : showNativeBanger(bounds);
+    setNativeSurfaceStatus(canUpdateExistingSurface ? "positioning" : "opening");
+    void request
+      .then((result: NativeWebExplorerResult) => {
+        if (!active) return;
+        if (result.accepted) {
+          nativeSurfaceShowTickRef.current = refreshTick;
+          setNativeSurfaceStatus("native live");
+          return;
+        }
+        setNativeSurfaceStatus(result.error?.code ?? "blocked");
+      })
+      .catch((error) => {
+        console.error("Banger native surface failed.", error);
+        if (active) {
+          setNativeSurfaceStatus("failed");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [refreshTick, slotBounds]);
+
+  useEffect(() => {
+    return () => {
+      void globalThis.window?.forgeShell?.hideNativeBanger?.();
+    };
+  }, []);
 
   useEffect(() => {
     const getBootstrap = globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap as
@@ -163,6 +221,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
 
   const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
   const nativeFrameDataUrl = presentLoopFrameDataUrl;
+  const hasNativeSurface = nativeSurfaceStatus === "native live";
   const hasNativeFrame = nativeFrameDataUrl.length > 0;
   const renderPath = presentLoopFrameDataUrl
     ? "rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url"
@@ -172,13 +231,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     <section className="surface surface--banger" aria-label={surface.label}>
       <div
         ref={slotRef}
-        className={hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
+        className={hasNativeSurface || hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
         aria-label="Banger native renderer surface"
         data-native-contract={surface.nativeContract}
         data-present-loop={presentLoop?.routeStatus ?? "pending"}
         data-render-path={renderPath}
       >
-        {hasNativeFrame ? (
+        {hasNativeFrame && !hasNativeSurface ? (
           <img
             className="nativeViewportSlot__frame"
             src={nativeFrameDataUrl}
@@ -194,7 +253,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       <aside className="bangerFrameLedger" aria-label="Banger native frame ledger">
         <div>
           <span>route</span>
-          <code>{presentLoop?.routeStatus ?? bootstrapStatus}</code>
+          <code>{presentLoop?.routeStatus ?? nativeSurfaceStatus ?? bootstrapStatus}</code>
         </div>
         <div>
           <span>gate</span>

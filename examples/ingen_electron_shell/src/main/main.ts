@@ -343,6 +343,10 @@ let nativeMapsPendingUrl = "";
 let nativeMapsTargetUrl = GOOGLE_EARTH_DEFAULT_URL;
 let nativeMapsSessionConfigured = false;
 let nativeMapsBoundsKey = "";
+let nativeBangerView: WebContentsView | null = null;
+let nativeBangerOwner: BrowserWindow | null = null;
+let nativeBangerBoundsKey = "";
+let nativeBangerFrameKey = "";
 let mapsDomWebviewGuest: Electron.WebContents | null = null;
 let mapsDomWebviewGuestUrl = "";
 type GoogleEarthSearchLock = {
@@ -10478,6 +10482,19 @@ function nativeMapsResult(accepted: boolean, error?: IpcError): NativeWebExplore
   return result;
 }
 
+function nativeBangerResult(accepted: boolean, error?: IpcError): NativeWebExplorerResult {
+  const result: NativeWebExplorerResult = {
+    accepted,
+    url: "banger://native-surface",
+    proofHash: ""
+  };
+  if (error) {
+    result.error = error;
+  }
+  result.proofHash = hashJson({ nativeBanger: result, proofHash: "" });
+  return result;
+}
+
 const DOM_RAM_ARTIFACT_CONTRACTS: Array<Omit<NativeDomRamArtifactSummary, "liveSliceHash" | "byteLength" | "recordCount">> = [
   {
     kind: "dom_graph_page",
@@ -11575,6 +11592,36 @@ function buildNativeMapsBoundsKey(bounds: NativeWebExplorerBounds): string {
   return `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:maps_sphere:${latitude}:${longitude}:${heightMeters}:${targetHash}`;
 }
 
+function buildNativeBangerBoundsKey(bounds: NativeWebExplorerBounds): string {
+  return `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${bounds.sceneKind ?? "dense_meshlet_field"}`;
+}
+
+function nativeBangerSurfaceUrl(bootstrap: RustBangerPresentLoopBootstrap): string {
+  const frameDataUrl = bootstrap.previewFrameDataUrl?.startsWith("data:image/") ? bootstrap.previewFrameDataUrl : "";
+  const visualGate = bootstrap.mapsVisualGate?.ok === true ? "visible" : "pending";
+  const frame = frameDataUrl
+    ? `<img class="frame" src="${frameDataUrl}" alt="" draggable="false">`
+    : `<div class="fallback" aria-hidden="true"><span></span></div>`;
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';">
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070a;}
+body{display:grid;place-items:stretch;}
+.frame{width:100%;height:100%;object-fit:cover;image-rendering:auto;background:#05070a;}
+.fallback{width:100%;height:100%;display:grid;place-items:center;background:radial-gradient(circle at 50% 50%,#253547 0,#0b1018 58%,#05070a 100%);}
+.fallback span{display:block;width:min(42vmin,420px);aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 34% 28%,#d7f7ff 0,#46a7d6 28%,#12223a 62%,#05070a 100%);box-shadow:0 0 72px rgba(58,171,215,.32);}
+body::after{content:"";position:fixed;inset:0;border:1px solid rgba(189,231,255,.14);box-shadow:inset 0 0 80px rgba(26,93,139,.22);pointer-events:none;}
+body[data-gate="${visualGate}"]::after{border-color:rgba(127,218,169,.2);}
+</style>
+</head>
+<body data-gate="${visualGate}">${frame}</body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
 function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): void {
   if (!owner.getBrowserViews().includes(view)) {
     owner.addBrowserView(view);
@@ -11583,6 +11630,14 @@ function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): v
 }
 
 function attachNativeMapsView(owner: BrowserWindow, view: WebContentsView): void {
+  const currentIndex = owner.contentView.children.indexOf(view);
+  if (currentIndex >= 0) {
+    owner.contentView.removeChildView(view);
+  }
+  owner.contentView.addChildView(view);
+}
+
+function attachNativeBangerView(owner: BrowserWindow, view: WebContentsView): void {
   const currentIndex = owner.contentView.children.indexOf(view);
   if (currentIndex >= 0) {
     owner.contentView.removeChildView(view);
@@ -11667,6 +11722,7 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
   }
   hideNativeMapsView();
   hideNativeWebExplorerView();
+  hideNativeBangerView();
   configureNativeMapsSession();
   const view = new WebContentsView({
     webPreferences: {
@@ -11730,6 +11786,51 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
   return view;
 }
 
+function ensureNativeBangerView(owner: BrowserWindow): WebContentsView {
+  if (nativeBangerView && nativeBangerOwner === owner && !nativeBangerView.webContents.isDestroyed()) {
+    attachNativeBangerView(owner, nativeBangerView);
+    return nativeBangerView;
+  }
+  hideNativeBangerView();
+  hideNativeMapsView();
+  hideNativeWebExplorerView();
+  const view = new WebContentsView({
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false
+    }
+  });
+  view.setBackgroundColor("#05070a");
+  nativeBangerView = view;
+  nativeBangerOwner = owner;
+  nativeBangerBoundsKey = "";
+  nativeBangerFrameKey = "";
+  attachNativeBangerView(owner, view);
+  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  view.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("data:text/html")) {
+      event.preventDefault();
+    }
+  });
+  view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (isMainFrame) {
+      console.warn("Native Banger view load failed.", { errorCode, errorDescription, validatedUrl });
+    }
+  });
+  view.webContents.once("destroyed", () => {
+    if (nativeBangerView === view) {
+      nativeBangerView = null;
+      nativeBangerOwner = null;
+      nativeBangerBoundsKey = "";
+      nativeBangerFrameKey = "";
+    }
+  });
+  return view;
+}
+
 function hideNativeWebExplorerView(): void {
   const view = nativeWebExplorerView;
   const owner = nativeWebExplorerOwner;
@@ -11772,6 +11873,26 @@ function hideNativeMapsView(): void {
   }
 }
 
+function hideNativeBangerView(): void {
+  const view = nativeBangerView;
+  const owner = nativeBangerOwner;
+  nativeBangerView = null;
+  nativeBangerOwner = null;
+  nativeBangerBoundsKey = "";
+  nativeBangerFrameKey = "";
+  if (!view) {
+    return;
+  }
+  try {
+    owner?.contentView.removeChildView(view);
+  } catch (error) {
+    console.warn("Native Banger view detach failed.", error);
+  }
+  if (!view.webContents.isDestroyed()) {
+    view.webContents.close();
+  }
+}
+
 function showNativeWebExplorer(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): NativeWebExplorerResult {
   if (!validateSender(event)) {
     return nativeWebExplorerResult(false, {
@@ -11797,6 +11918,7 @@ function showNativeWebExplorer(event: Electron.IpcMainInvokeEvent, bounds: Nativ
     });
   }
   hideNativeMapsView();
+  hideNativeBangerView();
   const view = ensureNativeWebExplorerView(owner);
   view.setBounds(normalized);
   nativeWebExplorerBoundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}`;
@@ -11930,6 +12052,104 @@ async function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds
   return showNativeMaps(event, bounds);
 }
 
+async function loadNativeBangerSurface(view: WebContentsView, bootstrap: RustBangerPresentLoopBootstrap): Promise<void> {
+  if (view.webContents.isDestroyed()) {
+    return;
+  }
+  const frameKey = `${bootstrap.previewProofHash ?? bootstrap.frameHash}:${bootstrap.previewWidth ?? 0}:${bootstrap.previewHeight ?? 0}`;
+  if (nativeBangerFrameKey === frameKey) {
+    return;
+  }
+  nativeBangerFrameKey = frameKey;
+  await view.webContents.loadURL(nativeBangerSurfaceUrl(bootstrap));
+}
+
+async function showNativeBanger(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> {
+  if (!validateSender(event)) {
+    return nativeBangerResult(false, {
+      code: "bad_sender",
+      message: "Native Banger rejected by sender validation.",
+      proofHash: hashJson({ bounds, sender: event.senderFrame?.url ?? "" })
+    });
+  }
+  const normalized = normalizeNativeWebExplorerBounds(bounds);
+  if (!normalized) {
+    return nativeBangerResult(false, {
+      code: "bad_payload",
+      message: "Native Banger bounds are invalid.",
+      proofHash: hashJson(bounds)
+    });
+  }
+  const owner = senderNativeWindow(event);
+  if (!owner || owner.isDestroyed()) {
+    return nativeBangerResult(false, {
+      code: "rust_unavailable",
+      message: "Native Banger owner window is unavailable.",
+      proofHash: hashJson({ bounds })
+    });
+  }
+  hideNativeMapsView();
+  hideNativeWebExplorerView();
+  const view = ensureNativeBangerView(owner);
+  const boundsKey = buildNativeBangerBoundsKey(normalized);
+  view.setBounds(normalized);
+  nativeBangerBoundsKey = boundsKey;
+  const bootstrap = await loadRustBangerPresentLoopBootstrap(shellRoot, {
+    parentWindowHandle: nativeWindowHandleDecimal(owner),
+    x: normalized.x,
+    y: normalized.y,
+    width: normalized.width,
+    height: normalized.height,
+    sceneKind: normalized.sceneKind ?? "maps_sphere",
+    target: normalized.target,
+    latitude: normalized.latitude,
+    longitude: normalized.longitude,
+    heightMeters: normalized.heightMeters
+  });
+  if (!bootstrap.ok) {
+    return nativeBangerResult(false, {
+      code: "rust_unavailable",
+      message: bootstrap.error?.message ?? "Banger native surface did not start.",
+      proofHash: bootstrap.error?.proofHash ?? bootstrap.proofHash
+    });
+  }
+  await loadNativeBangerSurface(view, bootstrap);
+  console.info("Native Banger view shown.", {
+    bounds: normalized,
+    routeStatus: bootstrap.routeStatus,
+    renderLoopPolicy: bootstrap.renderLoopPolicy,
+    frameHash: bootstrap.frameHash,
+    sceneMeshHash: bootstrap.sceneMeshHash
+  });
+  return nativeBangerResult(true);
+}
+
+async function updateNativeBangerBounds(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> {
+  if (!nativeBangerView) {
+    return showNativeBanger(event, bounds);
+  }
+  if (!validateSender(event)) {
+    return nativeBangerResult(false, {
+      code: "bad_sender",
+      message: "Native Banger bounds update rejected by sender validation.",
+      proofHash: hashJson({ bounds, sender: event.senderFrame?.url ?? "" })
+    });
+  }
+  const normalized = normalizeNativeWebExplorerBounds(bounds);
+  if (!normalized) {
+    return nativeBangerResult(false, {
+      code: "bad_payload",
+      message: "Native Banger bounds are invalid.",
+      proofHash: hashJson(bounds)
+    });
+  }
+  const boundsKey = buildNativeBangerBoundsKey(normalized);
+  if (nativeBangerBoundsKey === boundsKey) {
+    return nativeBangerResult(true);
+  }
+  return showNativeBanger(event, bounds);
+}
+
 function installNativeWebExplorerIpc(): void {
   ipcMain.handle("forge:webexplorer-show", (event, bounds: NativeWebExplorerBounds): NativeWebExplorerResult => {
     return showNativeWebExplorer(event, bounds);
@@ -11964,6 +12184,23 @@ function installNativeWebExplorerIpc(): void {
     }
     hideNativeMapsView();
     return nativeMapsResult(true);
+  });
+  ipcMain.handle("forge:banger-show", async (event, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> => {
+    return showNativeBanger(event, bounds);
+  });
+  ipcMain.handle("forge:banger-bounds", async (event, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> => {
+    return updateNativeBangerBounds(event, bounds);
+  });
+  ipcMain.handle("forge:banger-hide", (event): NativeWebExplorerResult => {
+    if (!validateSender(event)) {
+      return nativeBangerResult(false, {
+        code: "bad_sender",
+        message: "Native Banger hide rejected by sender validation.",
+        proofHash: hashJson(event.senderFrame?.url ?? "")
+      });
+    }
+    hideNativeBangerView();
+    return nativeBangerResult(true);
   });
   ipcMain.handle("forge:maps-dom-ram-cartography-capture", async (event): Promise<NativeDomRamCartographyResult> => {
     return captureMapsDomRamCartography(event);

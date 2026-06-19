@@ -1935,8 +1935,11 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   executeAgentAction?: (request: AgentActionRequest) => Promise<AgentActionResult>;
   getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
   getBangerPreviewFrame?: () => Promise<BangerPreviewFrameResult>;
-  getBangerPresentLoopBootstrap?: () => Promise<BangerPresentLoopBootstrapResult>;
+  getBangerPresentLoopBootstrap?: (request?: unknown) => Promise<BangerPresentLoopBootstrapResult>;
   getBangerGoogleTilesConfig?: () => Promise<BangerGoogleTilesConfigResult>;
+  showNativeBanger?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
+  updateNativeBangerBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
+  hideNativeBanger?: () => Promise<NativeWebExplorerResult>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;
   copyWorkspaceBranchName?: () => Promise<WorkspaceActionResult>;
