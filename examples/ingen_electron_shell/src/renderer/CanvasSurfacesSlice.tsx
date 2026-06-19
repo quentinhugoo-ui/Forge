@@ -52,6 +52,7 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
   const [tilesConfigLoaded, setTilesConfigLoaded] = useState(false);
   const [status, setStatus] = useState("Banger native Maps surface pending");
+  const [nativeHostLive, setNativeHostLive] = useState(false);
   const label = searchQuery?.replace(/\s+/g, " ").trim() || target?.target?.replace(/\s+/g, " ").trim() || "Map";
 
   useEffect(() => {
@@ -122,11 +123,14 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
       firstSync = false;
       void command(bounds).then((result) => {
         if (result?.accepted === false) {
+          setNativeHostLive(false);
           setStatus(result.error?.message ?? "Banger native Maps rejected");
           return;
         }
+        setNativeHostLive(true);
         setStatus("Banger native Maps surface live");
       }).catch((error: unknown) => {
+        setNativeHostLive(false);
         setStatus(error instanceof Error ? error.message : String(error));
       });
     };
@@ -172,7 +176,7 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
       className={[
         "googleEarthDomFrame",
         "bangerSphereNativeFrame",
-        tilesConfig?.accepted ? "bangerSphereNativeFrame--nativeRequested" : ""
+        tilesConfig?.accepted && nativeHostLive ? "bangerSphereNativeFrame--nativeRequested" : ""
       ].filter(Boolean).join(" ")}
       aria-label={`${label} - ${tilesConfigLoaded ? status : "Banger native Maps config loading"}`}
       data-tileset-schema={tilesConfig?.schema ?? "forge.banger.google_photorealistic_tiles_config.v1"}

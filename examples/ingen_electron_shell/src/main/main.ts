@@ -11780,7 +11780,7 @@ function showNativeWebExplorer(event: Electron.IpcMainInvokeEvent, bounds: Nativ
   return nativeWebExplorerResult(true);
 }
 
-function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): NativeWebExplorerResult {
+async function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> {
   if (!validateSender(event)) {
     return nativeMapsResult(false, {
       code: "bad_sender",
@@ -11805,8 +11805,31 @@ function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExp
     });
   }
   hideNativeMapsView();
-  nativeMapsBoundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
-  console.info("Native Maps routed to Banger sphere viewport.", { bounds: normalized, url: nativeMapsTargetUrl });
+  const boundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}:banger_sphere`;
+  const bootstrap = await loadRustBangerPresentLoopBootstrap(shellRoot, {
+    parentWindowHandle: nativeWindowHandleDecimal(owner),
+    x: normalized.x,
+    y: normalized.y,
+    width: normalized.width,
+    height: normalized.height,
+    sceneKind: "maps_sphere"
+  });
+  if (!bootstrap.ok) {
+    return nativeMapsResult(false, {
+      code: "rust_unavailable",
+      message: bootstrap.error?.message ?? "Banger native Maps host did not start.",
+      proofHash: bootstrap.error?.proofHash ?? bootstrap.proofHash
+    });
+  }
+  nativeMapsOwner = owner;
+  nativeMapsBoundsKey = boundsKey;
+  console.info("Native Maps routed to Banger native viewport.", {
+    bounds: normalized,
+    url: nativeMapsTargetUrl,
+    routeStatus: bootstrap.routeStatus,
+    renderLoopPolicy: bootstrap.renderLoopPolicy,
+    sceneMeshHash: bootstrap.sceneMeshHash
+  });
   return nativeMapsResult(true);
 }
 
@@ -11838,7 +11861,7 @@ function updateNativeWebExplorerBounds(event: Electron.IpcMainInvokeEvent, bound
   return nativeWebExplorerResult(true);
 }
 
-function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): NativeWebExplorerResult {
+async function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> {
   if (!validateSender(event)) {
     return nativeMapsResult(false, {
       code: "bad_sender",
@@ -11867,8 +11890,7 @@ function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: Nati
   if (nativeMapsBoundsKey === boundsKey) {
     return nativeMapsResult(true);
   }
-  nativeMapsBoundsKey = boundsKey;
-  return nativeMapsResult(true);
+  return showNativeMaps(event, bounds);
 }
 
 function installNativeWebExplorerIpc(): void {
@@ -11889,10 +11911,10 @@ function installNativeWebExplorerIpc(): void {
     hideNativeWebExplorerView();
     return nativeWebExplorerResult(true);
   });
-  ipcMain.handle("forge:maps-show", (event, bounds: NativeWebExplorerBounds): NativeWebExplorerResult => {
+  ipcMain.handle("forge:maps-show", async (event, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> => {
     return showNativeMaps(event, bounds);
   });
-  ipcMain.handle("forge:maps-bounds", (event, bounds: NativeWebExplorerBounds): NativeWebExplorerResult => {
+  ipcMain.handle("forge:maps-bounds", async (event, bounds: NativeWebExplorerBounds): Promise<NativeWebExplorerResult> => {
     return updateNativeMapsBounds(event, bounds);
   });
   ipcMain.handle("forge:maps-hide", (event): NativeWebExplorerResult => {
