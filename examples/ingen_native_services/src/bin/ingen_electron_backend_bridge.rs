@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
-const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 32;
+const BANGER_RENDER_VERTEX_STRIDE_BYTES: usize = 36;
 #[cfg(target_os = "windows")]
 static BANGER_MAPS_CAMERA_DEBUG_LOGGED: AtomicBool = AtomicBool::new(false);
 
@@ -5823,6 +5823,11 @@ fn create_banger_first_scene_pipeline(
                             offset: 20,
                             shader_location: 2,
                         },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32,
+                            offset: 32,
+                            shader_location: 3,
+                        },
                     ],
                 },
                 wgpu::VertexBufferLayout {
@@ -5832,27 +5837,27 @@ fn create_banger_first_scene_pipeline(
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
                             offset: 0,
-                            shader_location: 3,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 16,
                             shader_location: 4,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 32,
+                            offset: 16,
                             shader_location: 5,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 48,
+                            offset: 32,
                             shader_location: 6,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 64,
+                            offset: 48,
                             shader_location: 7,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 8,
                         },
                     ],
                 },
@@ -6740,6 +6745,7 @@ struct VertexOut {
     @location(2) normal_hint: vec3<f32>,
     @location(3) world_pos: vec3<f32>,
     @location(4) material_kind: f32,
+    @location(5) material_slot: f32,
 };
 
 struct FragmentOut {
@@ -6820,11 +6826,12 @@ fn vs_main(
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) color: vec3<f32>,
-    @location(3) model_0: vec4<f32>,
-    @location(4) model_1: vec4<f32>,
-    @location(5) model_2: vec4<f32>,
-    @location(6) model_3: vec4<f32>,
-    @location(7) instance_tint: vec4<f32>,
+    @location(3) material_slot: f32,
+    @location(4) model_0: vec4<f32>,
+    @location(5) model_1: vec4<f32>,
+    @location(6) model_2: vec4<f32>,
+    @location(7) model_3: vec4<f32>,
+    @location(8) instance_tint: vec4<f32>,
 ) -> VertexOut {
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let world = model * vec4<f32>(position, 1.0);
@@ -6835,6 +6842,7 @@ fn vs_main(
     out.normal_hint = normalize((model * vec4<f32>(position, 0.0)).xyz);
     out.world_pos = world.xyz;
     out.material_kind = instance_tint.a;
+    out.material_slot = material_slot;
     return out;
 }
 
@@ -6849,7 +6857,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let bounced = vec3<f32>(0.05, 0.13, 0.16) * (1.0 - clamp(normal.y, -0.15, 0.85));
     let water_glint = smoothstep(2.5, 3.5, in.material_kind) * pow(max(dot(reflect(-sun_dir, normal), view_dir), 0.0), 18.0);
     let voxel_heat = 0.08 * sin(in.world_pos.x * 0.35 + in.world_pos.z * 0.21 + frame.time_seconds);
-    let material_record = banger_material_record_for_kind(in.material_kind);
+    let material_record = banger_material_record_for_kind(in.material_slot);
     let sampled = textureSample(maps_base_color, maps_base_sampler, fract(in.uv)).rgb;
     let maps_texture_weight = smoothstep(1.4, 2.1, in.material_kind);
     let pbr_base_factor = clamp(material_record.base_color_factor.rgb, vec3<f32>(0.0), vec3<f32>(8.0));
@@ -9652,10 +9660,12 @@ fn banger_maps_render_mesh_from_primitive(
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
+    let material_index = primitive.get("material").and_then(Value::as_u64).unwrap_or(0) as f32;
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
         &position,
         texcoords.as_deref(),
         material_color,
+        material_index,
         render_transform,
     )?;
     let (index_bytes, index_format) = match primitive.get("indices").and_then(Value::as_u64).map(|value| value as usize) {
@@ -9696,10 +9706,12 @@ fn banger_maps_render_mesh_from_draco_primitive(
         .and_then(Value::as_u64)
         .and_then(|index| banger_gltf_material_base_color(gltf, index as usize))
         .unwrap_or([0.54, 0.78, 0.92, 1.0]);
+    let material_index = primitive.get("material").and_then(Value::as_u64).unwrap_or(0) as f32;
     let vertex_bytes = banger_maps_position_accessor_to_render_vertices(
         position,
         texcoords.as_deref(),
         material_color,
+        material_index,
         render_transform,
     )?;
     let (index_bytes, index_format) = banger_maps_index_bytes_from_draco(&decoded)?;
@@ -9718,6 +9730,7 @@ fn banger_maps_position_accessor_to_render_vertices(
     position: &BangerGltfAccessorStage,
     texcoords: Option<&[[f32; 2]]>,
     material_color: [f32; 4],
+    material_index: f32,
     render_transform: [f64; 16],
 ) -> Result<Vec<u8>, String> {
     let positions = banger_maps_float_vec3_accessor_values(position, "POSITION")?
@@ -9751,6 +9764,7 @@ fn banger_maps_position_accessor_to_render_vertices(
             material_color[0],
             material_color[1],
             material_color[2],
+            material_index,
         ] {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
@@ -10161,15 +10175,15 @@ fn banger_quaternion_mat4_f64(rotation: [f64; 4]) -> [f64; 16] {
 
 #[cfg(target_os = "windows")]
 fn banger_cube_vertex_bytes() -> Vec<u8> {
-    let vertices: [[f32; 8]; 8] = [
-        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12],
-        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42],
-        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00],
-        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16],
-        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92],
-        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82],
-        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21],
-        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24],
+    let vertices: [[f32; 9]; 8] = [
+        [-0.75, -0.75, 0.75, 0.0, 0.0, 0.95, 0.18, 0.12, 0.0],
+        [0.75, -0.75, 0.75, 1.0, 0.0, 0.12, 0.82, 0.42, 0.0],
+        [0.75, 0.75, 0.75, 1.0, 1.0, 0.18, 0.44, 1.00, 0.0],
+        [-0.75, 0.75, 0.75, 0.0, 1.0, 0.98, 0.78, 0.16, 0.0],
+        [-0.75, -0.75, -0.75, 0.0, 0.0, 0.84, 0.26, 0.92, 0.0],
+        [0.75, -0.75, -0.75, 1.0, 0.0, 0.10, 0.72, 0.82, 0.0],
+        [0.75, 0.75, -0.75, 1.0, 1.0, 0.96, 0.42, 0.21, 0.0],
+        [-0.75, 0.75, -0.75, 0.0, 1.0, 0.66, 0.92, 0.24, 0.0],
     ];
     let mut bytes = Vec::with_capacity(vertices.len() * BANGER_RENDER_VERTEX_STRIDE_BYTES);
     for vertex in vertices {
@@ -10553,10 +10567,12 @@ mod tests {
         assert!(source.contains("@location(0) position"));
         assert!(source.contains("@location(1) uv"));
         assert!(source.contains("@location(2) color"));
-        assert!(source.contains("@location(3) model_0"));
-        assert!(source.contains("@location(7) instance_tint"));
+        assert!(source.contains("@location(3) material_slot"));
+        assert!(source.contains("@location(4) model_0"));
+        assert!(source.contains("@location(8) instance_tint"));
         assert!(source.contains("world_pos"));
         assert!(source.contains("material_kind"));
+        assert!(source.contains("material_slot"));
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
@@ -10638,6 +10654,7 @@ mod tests {
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[20..24].try_into().unwrap()), 0.7);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[24..28].try_into().unwrap()), 0.82);
         assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[28..32].try_into().unwrap()), 0.9);
+        assert_eq!(f32::from_le_bytes(mesh.vertex_bytes[32..36].try_into().unwrap()), 0.0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&mesh.vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&mesh.index_bytes).len(), 64);
@@ -10646,7 +10663,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn converts_all_tile_gltf_primitives_into_one_native_draw_mesh() {
-        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4},{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0]}}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963}],"buffers":[{"byteLength":42}]}"#;
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4},{"attributes":{"POSITION":0},"indices":1,"material":1,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0]}},{"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.4,0.6,1.0]}}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963}],"buffers":[{"byteLength":42}]}"#;
         let mut bin_chunk = Vec::new();
         for value in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
             bin_chunk.extend_from_slice(&value.to_le_bytes());
@@ -10670,6 +10687,11 @@ mod tests {
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[6..8].try_into().unwrap()), 3);
         assert_eq!(u16::from_le_bytes(mesh.index_bytes[10..12].try_into().unwrap()), 5);
+        let second_primitive_vertex = 3 * BANGER_RENDER_VERTEX_STRIDE_BYTES;
+        assert_eq!(
+            f32::from_le_bytes(mesh.vertex_bytes[second_primitive_vertex + 32..second_primitive_vertex + 36].try_into().unwrap()),
+            1.0
+        );
     }
 
     #[cfg(target_os = "windows")]
