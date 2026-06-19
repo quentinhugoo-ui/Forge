@@ -12,7 +12,7 @@ sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 wgpu = { version = "29", default-features = false, features = ["wgsl", "vulkan", "metal"] }
 pollster = "0.4"
-draco_decoder = "0.0.28"
+draco_decoder = { version = "0.0.28", optional = true }
 meshopt = "0.6.2"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = [
@@ -21,3 +21,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_LibraryLoader",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[features]
+default = []
+banger-draco = ["dep:draco_decoder"]

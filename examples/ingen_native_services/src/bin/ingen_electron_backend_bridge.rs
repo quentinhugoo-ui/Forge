@@ -2175,6 +2175,13 @@ fn banger_decode_draco_primitive(
     primitive: &Value,
     draco: &Value,
 ) -> Result<BangerDecodedDracoPrimitive, String> {
+    #[cfg(not(feature = "banger-draco"))]
+    {
+        let _ = (gltf, bin_chunk, primitive, draco);
+        return Err("KHR_draco_mesh_compression decode unavailable: rebuild ingen-native-services with feature banger-draco".to_string());
+    }
+    #[cfg(feature = "banger-draco")]
+    {
     let buffer_view_index = draco
         .get("bufferView")
         .and_then(Value::as_u64)
@@ -2248,8 +2255,10 @@ fn banger_decode_draco_primitive(
         index_count,
         index_format,
     })
+    }
 }
 
+#[cfg(feature = "banger-draco")]
 fn banger_draco_attribute_component_type(data_type: draco_decoder::AttributeDataType) -> Result<u32, String> {
     match data_type {
         draco_decoder::AttributeDataType::Int8 => Ok(5120),
@@ -2262,6 +2271,7 @@ fn banger_draco_attribute_component_type(data_type: draco_decoder::AttributeData
     }
 }
 
+#[cfg(feature = "banger-draco")]
 fn banger_draco_attribute_accessor_type(dim: u32) -> Result<String, String> {
     match dim {
         1 => Ok("SCALAR".to_string()),
@@ -2709,6 +2719,7 @@ fn banger_gltf_accessor_stage(gltf: &Value, bin_chunk: &[u8], accessor_index: us
     })
 }
 
+#[cfg(feature = "banger-draco")]
 fn banger_gltf_accessor_normalized(gltf: &Value, accessor_index: usize) -> Result<bool, String> {
     let accessors = gltf
         .get("accessors")
@@ -9792,7 +9803,10 @@ mod tests {
             Ok(_) => panic!("invalid Draco fixture unexpectedly staged"),
             Err(error) => error,
         };
+        #[cfg(feature = "banger-draco")]
         assert!(error.contains("KHR_draco_mesh_compression decode failed"));
+        #[cfg(not(feature = "banger-draco"))]
+        assert!(error.contains("decode unavailable"));
     }
 
     #[test]
