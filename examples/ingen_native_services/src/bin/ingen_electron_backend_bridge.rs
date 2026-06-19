@@ -6807,6 +6807,18 @@ fn banger_microfacet_brdf(base_color: vec3<f32>, normal: vec3<f32>, view_dir: ve
     return (diffuse + specular) * nol;
 }
 
+fn banger_transform_normal(model: mat4x4<f32>, normal: vec3<f32>) -> vec3<f32> {
+    let a = model[0].xyz;
+    let b = model[1].xyz;
+    let c = model[2].xyz;
+    let adjugate_normal =
+        normal.x * cross(b, c) +
+        normal.y * cross(c, a) +
+        normal.z * cross(a, b);
+    let handedness = select(1.0, -1.0, dot(a, cross(b, c)) < 0.0);
+    return normalize(adjugate_normal * handedness);
+}
+
 fn banger_material_record_for_kind(material_kind: f32) -> BangerMaterialRecord {
     let material_count = arrayLength(&material_records);
     let material_index = min(u32(max(material_kind, 0.0)), material_count - 1u);
@@ -6845,7 +6857,7 @@ fn vs_main(
     out.position = frame.view_proj * world;
     out.color = color * instance_tint.rgb;
     out.uv = uv;
-    out.normal_hint = normalize((model * vec4<f32>(normal, 0.0)).xyz);
+    out.normal_hint = banger_transform_normal(model, normal);
     out.world_pos = world.xyz;
     out.material_kind = instance_tint.a;
     out.material_slot = material_slot;
@@ -10035,6 +10047,14 @@ fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
+fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
 fn banger_gltf_y_up_to_z_up_matrix_f64() -> [f64; 16] {
     [
         1.0, 0.0, 0.0, 0.0,
@@ -10063,13 +10083,17 @@ fn banger_transform_point_f64(matrix: [f64; 16], point: [f32; 3]) -> [f64; 3] {
 }
 
 fn banger_transform_normal_f64(matrix: [f64; 16], normal: [f32; 3]) -> [f32; 3] {
-    let x = normal[0] as f64;
-    let y = normal[1] as f64;
-    let z = normal[2] as f64;
+    let a = [matrix[0], matrix[1], matrix[2]];
+    let b = [matrix[4], matrix[5], matrix[6]];
+    let c = [matrix[8], matrix[9], matrix[10]];
+    let cross_bc = cross3(b, c);
+    let cross_ca = cross3(c, a);
+    let cross_ab = cross3(a, b);
+    let handedness = if dot3(a, cross_bc) < 0.0 { -1.0 } else { 1.0 };
     banger_normalize_vec3_f64([
-        matrix[0] * x + matrix[4] * y + matrix[8] * z,
-        matrix[1] * x + matrix[5] * y + matrix[9] * z,
-        matrix[2] * x + matrix[6] * y + matrix[10] * z,
+        (normal[0] as f64 * cross_bc[0] + normal[1] as f64 * cross_ca[0] + normal[2] as f64 * cross_ab[0]) * handedness,
+        (normal[0] as f64 * cross_bc[1] + normal[1] as f64 * cross_ca[1] + normal[2] as f64 * cross_ab[1]) * handedness,
+        (normal[0] as f64 * cross_bc[2] + normal[1] as f64 * cross_ca[2] + normal[2] as f64 * cross_ab[2]) * handedness,
     ])
 }
 
@@ -10632,7 +10656,8 @@ mod tests {
         assert!(source.contains("world_pos"));
         assert!(source.contains("material_kind"));
         assert!(source.contains("material_slot"));
-        assert!(source.contains("normal_hint = normalize"));
+        assert!(source.contains("banger_transform_normal"));
+        assert!(source.contains("normal_hint = banger_transform_normal"));
         assert!(source.contains("water_glint"));
         assert!(source.contains("banger_filmic_tonemap"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
@@ -11217,6 +11242,15 @@ mod tests {
         assert!((transformed[0] - 10.0).abs() < 0.0001);
         assert!((transformed[1] - 0.0).abs() < 0.0001);
         assert!((transformed[2] - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn transforms_render_normals_with_inverse_transpose() {
+        let scaled = banger_scale_mat4_f64([2.0, 1.0, 1.0]);
+        let normal = banger_transform_normal_f64(scaled, [1.0, 1.0, 0.0]);
+        assert!((normal[0] - 0.4472136).abs() < 0.0001);
+        assert!((normal[1] - 0.8944272).abs() < 0.0001);
+        assert!(normal[2].abs() < 0.0001);
     }
 
     #[test]
