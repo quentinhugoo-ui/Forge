@@ -96,10 +96,37 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
     };
   }, []);
 
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const payload = event.data as { type?: string; status?: string; webgpu?: boolean; error?: string } | null;
+      if (!payload || payload.type !== "forge:cesium-google-tiles") {
+        return;
+      }
+      if (payload.status === "tiles_loaded") {
+        setNativeHostLive(false);
+        setStatus(payload.webgpu ? "CesiumJS Google 3D Tiles live; WebGPU device available" : "CesiumJS Google 3D Tiles live");
+      } else if (payload.status === "error") {
+        setStatus(payload.error ?? "CesiumJS Google 3D Tiles failed");
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const showNativeMaps = globalThis.window?.forgeShell?.showNativeMaps;
     const updateNativeMapsBounds = globalThis.window?.forgeShell?.updateNativeMapsBounds;
     const hideNativeMaps = globalThis.window?.forgeShell?.hideNativeMaps;
+    if (tilesConfig?.accepted && tilesConfig.rootTilesetUrl) {
+      setNativeHostLive(false);
+      setStatus("CesiumJS Google 3D Tiles loading");
+      void hideNativeMaps?.();
+      return () => {
+        void hideNativeMaps?.();
+      };
+    }
     if (!showNativeMaps || !updateNativeMapsBounds) {
       setStatus("Banger native Maps bridge unavailable");
       return undefined;
@@ -174,12 +201,15 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
       window.removeEventListener("resize", scheduleSync);
       void hideNativeMaps?.();
     };
-  }, [nativeMapsTarget]);
+  }, [nativeMapsTarget, tilesConfig?.accepted, tilesConfig?.rootTilesetUrl]);
 
   const tilesetEndpoint = redactedTilesetEndpoint(tilesConfig?.rootTilesetUrl);
   const georeference = tilesConfig
     ? `${tilesConfig.georeference.ellipsoid}:${tilesConfig.georeference.originLatitude.toFixed(5)}:${tilesConfig.georeference.originLongitude.toFixed(5)}`
     : "WGS84:pending";
+  const cesiumSrcDoc = tilesConfig?.accepted && tilesConfig.rootTilesetUrl
+    ? createCesiumGoogleTilesSrcDoc(tilesConfig.rootTilesetUrl, nativeMapsTarget)
+    : null;
 
   return (
     <div
@@ -201,12 +231,127 @@ function BangerMapsNativeViewport({ searchQuery, target }: { searchQuery?: strin
       data-native-streamer={tilesConfig?.nativeStreamer.schema ?? "forge.banger.native_3d_tiles_streamer.v1"}
       data-native-streamer-status={tilesConfig?.nativeStreamer.status ?? "pending"}
       data-native-streamer-blocker={tilesConfig?.nativeStreamer.blocker ?? "pending"}
+      data-active-renderer={cesiumSrcDoc ? "cesiumjs_google_photorealistic_3d_tiles" : "banger_wgpu_native_maps_sphere"}
+      data-active-graphics-api={cesiumSrcDoc ? "webgl" : "webgpu"}
     >
+      {cesiumSrcDoc ? (
+        <iframe
+          title={`${label} - Cesium Google 3D Tiles`}
+          srcDoc={cesiumSrcDoc}
+          sandbox="allow-scripts allow-same-origin"
+          referrerPolicy="no-referrer"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            border: 0,
+            background: "#05070a",
+            zIndex: 2
+          }}
+        />
+      ) : null}
       <div className="bangerSphereNativeFrame__fallback" aria-hidden="true">
         <span className="bangerSphereNativeFrame__fallbackSphere" />
       </div>
     </div>
   );
+}
+
+function createCesiumGoogleTilesSrcDoc(rootTilesetUrl: string, target: { target: string; latitude?: number; longitude?: number; heightMeters?: number }): string {
+  const targetPayload = {
+    target: target.target,
+    latitude: Number.isFinite(target.latitude) ? target.latitude : null,
+    longitude: Number.isFinite(target.longitude) ? target.longitude : null,
+    heightMeters: Number.isFinite(target.heightMeters) ? target.heightMeters : 0
+  };
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(target.target)} - Cesium Google 3D Tiles</title>
+  <script>window.CESIUM_BASE_URL = "https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/";</script>
+  <script src="https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/Cesium.js"></script>
+  <link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/Widgets/widgets.css" />
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #05070a; }
+    .cesium-viewer-bottom { left: 8px; bottom: 6px; }
+    #status { position: fixed; top: 10px; left: 10px; z-index: 5; padding: 6px 8px; border-radius: 6px; color: #e8eef8; background: rgba(5, 7, 10, 0.72); font: 12px/1.2 system-ui, sans-serif; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="status">Loading 3D tiles</div>
+  <script>
+    (async () => {
+      const rootTilesetUrl = ${JSON.stringify(rootTilesetUrl)};
+      const target = ${JSON.stringify(targetPayload)};
+      const status = document.getElementById("status");
+      const notify = (payload) => parent.postMessage({ type: "forge:cesium-google-tiles", webgpu: Boolean(navigator.gpu), ...payload }, "*");
+      try {
+        Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = 18;
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+          imageryProvider: false,
+          baseLayerPicker: false,
+          geocoder: false,
+          globe: false,
+          homeButton: false,
+          fullscreenButton: false,
+          navigationHelpButton: false,
+          sceneModePicker: false,
+          animation: false,
+          timeline: false,
+          requestRenderMode: true
+        });
+        const tileset = Cesium.Cesium3DTileset.fromUrl
+          ? await Cesium.Cesium3DTileset.fromUrl(rootTilesetUrl, { showCreditsOnScreen: true })
+          : new Cesium.Cesium3DTileset({ url: rootTilesetUrl, showCreditsOnScreen: true });
+        viewer.scene.primitives.add(tileset);
+        const lat = Number(target.latitude);
+        const lon = Number(target.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, Math.max(700, Number(target.heightMeters) + 1100)),
+            orientation: {
+              heading: 0,
+              pitch: Cesium.Math.toRadians(-38),
+              roll: 0
+            },
+            duration: 0.8
+          });
+        } else {
+          await viewer.zoomTo(tileset);
+        }
+        status.textContent = "Google 3D Tiles";
+        window.__forgeCesiumGoogleTiles = { renderer: "cesiumjs", graphicsApi: "webgl", webgpuDeviceAvailable: Boolean(navigator.gpu), target };
+        notify({ status: "tiles_loaded" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        status.textContent = message;
+        notify({ status: "error", error: message });
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return "&#39;";
+    }
+  });
 }
 
 function redactedTilesetEndpoint(value?: string): string {
