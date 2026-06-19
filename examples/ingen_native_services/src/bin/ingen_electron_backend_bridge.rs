@@ -659,6 +659,8 @@ struct BangerNativeScenePipeline {
     single_layer_water_present_bind_group_layout: wgpu::BindGroupLayout,
     single_layer_water_present_pipeline: wgpu::RenderPipeline,
     single_layer_water_present_sampler: wgpu::Sampler,
+    bloom_present_bind_group_layout: wgpu::BindGroupLayout,
+    bloom_present_pipeline: wgpu::RenderPipeline,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -4232,6 +4234,7 @@ fn render_child_surface_frame(
     dispatch_banger_spectral_ocean_compute(device, &mut encoder, scene_pipeline, frame_target);
     dispatch_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target);
     present_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target, &view);
+    present_banger_emissive_bloom(device, &mut encoder, scene_pipeline, frame_target, &view);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -5144,6 +5147,43 @@ fn present_banger_single_layer_water_composite(
         multiview_mask: None,
     });
     pass.set_pipeline(&scene_pipeline.single_layer_water_present_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+#[cfg(target_os = "windows")]
+fn present_banger_emissive_bloom(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+    output_view: &wgpu::TextureView,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-emissive-bloom-present-bind-group"),
+        layout: &scene_pipeline.bloom_present_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.emissive_view),
+        }],
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("banger-native-emissive-bloom-present-pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: output_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&scene_pipeline.bloom_present_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
 }
@@ -6136,9 +6176,70 @@ fn create_banger_first_scene_pipeline(
         mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
+    let bloom_present_shader_source = banger_emissive_bloom_present_wgsl();
+    let bloom_present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-emissive-bloom-present-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(bloom_present_shader_source.into()),
+    });
+    let bloom_present_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-emissive-bloom-present-bind-group-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+    let bloom_present_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-emissive-bloom-present-pipeline-layout"),
+            bind_group_layouts: &[Some(&bloom_present_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let bloom_present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-emissive-bloom-present-pipeline"),
+        layout: Some(&bloom_present_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &bloom_present_shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &bloom_present_shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
             shader_source_hash,
             sha256_hex(meshlet_cull_shader_source.as_bytes()),
             sha256_hex(vsm_mark_shader_source.as_bytes()),
@@ -6147,6 +6248,7 @@ fn create_banger_first_scene_pipeline(
             sha256_hex(spectral_ocean_shader_source.as_bytes()),
             sha256_hex(single_layer_water_shader_source.as_bytes()),
             sha256_hex(single_layer_water_present_shader_source.as_bytes()),
+            sha256_hex(bloom_present_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
             format,
@@ -6210,6 +6312,8 @@ fn create_banger_first_scene_pipeline(
         single_layer_water_present_bind_group_layout,
         single_layer_water_present_pipeline,
         single_layer_water_present_sampler,
+        bloom_present_bind_group_layout,
+        bloom_present_pipeline,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -6450,6 +6554,56 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let sparkle = pow(clamp(mask, 0.0, 1.0), 2.0) * vec3<f32>(0.20, 0.36, 0.45);
     let alpha = smoothstep(0.02, 0.45, mask) * 0.66;
     return vec4<f32>(clamp(color + sparkle, vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_emissive_bloom_present_wgsl() -> &'static str {
+    r#"
+@group(0) @binding(0)
+var gbuffer_emissive: texture_2d<f32>;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    let x = f32((vertex_index << 1u) & 2u);
+    let y = f32(vertex_index & 2u);
+    var out: VertexOut;
+    out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    return out;
+}
+
+fn banger_emissive_tap(pixel: vec2<i32>, offset: vec2<i32>, extent: vec2<i32>) -> vec3<f32> {
+    let clamped_pixel = clamp(pixel + offset, vec2<i32>(0), extent - vec2<i32>(1));
+    let emissive = textureLoad(gbuffer_emissive, clamped_pixel, 0);
+    let luminance = dot(emissive.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let threshold = smoothstep(0.035, 0.18, luminance);
+    let ao_gate = clamp(emissive.a, 0.35, 1.0);
+    return emissive.rgb * threshold * ao_gate;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let extent_u = textureDimensions(gbuffer_emissive);
+    let extent = vec2<i32>(i32(extent_u.x), i32(extent_u.y));
+    let pixel = vec2<i32>(i32(in.position.x), i32(in.position.y));
+    let near_glow =
+        banger_emissive_tap(pixel, vec2<i32>(0, 0), extent) * 0.32 +
+        banger_emissive_tap(pixel, vec2<i32>(2, 0), extent) * 0.14 +
+        banger_emissive_tap(pixel, vec2<i32>(-2, 0), extent) * 0.14 +
+        banger_emissive_tap(pixel, vec2<i32>(0, 2), extent) * 0.14 +
+        banger_emissive_tap(pixel, vec2<i32>(0, -2), extent) * 0.14;
+    let wide_glow =
+        banger_emissive_tap(pixel, vec2<i32>(5, 5), extent) * 0.08 +
+        banger_emissive_tap(pixel, vec2<i32>(-5, 5), extent) * 0.08 +
+        banger_emissive_tap(pixel, vec2<i32>(5, -5), extent) * 0.08 +
+        banger_emissive_tap(pixel, vec2<i32>(-5, -5), extent) * 0.08;
+    let bloom = clamp((near_glow + wide_glow) * vec3<f32>(0.45, 0.58, 0.72), vec3<f32>(0.0), vec3<f32>(0.16));
+    return vec4<f32>(bloom, 0.0);
 }
 "#
 }
@@ -11141,6 +11295,11 @@ mod tests {
         assert!(present_shader.contains("refraction_mask"));
         assert!(present_shader.contains("smoothstep"));
         assert!(present_shader.contains("discard"));
+        let bloom_shader = banger_emissive_bloom_present_wgsl();
+        assert!(bloom_shader.contains("gbuffer_emissive"));
+        assert!(bloom_shader.contains("banger_emissive_tap"));
+        assert!(bloom_shader.contains("smoothstep"));
+        assert!(bloom_shader.contains("luminance"));
     }
 
     #[cfg(target_os = "windows")]
