@@ -3197,6 +3197,13 @@ fn banger_default_material_resource_bytes() -> Vec<u8> {
 }
 
 #[cfg(target_os = "windows")]
+fn banger_first_material_normal_texture_index(material_bytes: &[u8]) -> Option<usize> {
+    let record = material_bytes.get(0..BANGER_MATERIAL_RECORD_STRIDE)?;
+    let value = u32::from_le_bytes(record[32..36].try_into().ok()?);
+    (value != u32::MAX).then_some(value as usize)
+}
+
+#[cfg(target_os = "windows")]
 #[allow(dead_code)]
 fn banger_maps_texture_staging_resource_bytes(
     gltf: &Value,
@@ -3383,6 +3390,7 @@ struct BangerNativeSceneGpuResource {
     material_bin_buffer: wgpu::Buffer,
     texture_staging_buffers: Vec<wgpu::Buffer>,
     texture_resources: Vec<BangerNativeTextureResource>,
+    normal_texture_resource_index: u32,
     residency_feedback_buffer: wgpu::Buffer,
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
@@ -5780,6 +5788,16 @@ fn create_banger_first_scene_pipeline(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5814,6 +5832,12 @@ fn create_banger_first_scene_pipeline(
                     .as_ref()
                     .expect("Banger material buffer must be defaulted before pipeline creation")
                     .as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(
+                    &gpu_resource.texture_resources[gpu_resource.normal_texture_resource_index as usize].view,
+                ),
             },
         ],
     });
@@ -6783,6 +6807,8 @@ struct BangerMaterialRecord {
 
 @group(0) @binding(4)
 var<storage, read> material_records: array<BangerMaterialRecord>;
+@group(0) @binding(5)
+var maps_normal_texture: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -6870,11 +6896,16 @@ fn banger_transform_tangent(model: mat4x4<f32>, tangent: vec4<f32>, normal: vec3
 fn banger_tangent_space_detail_normal(normal: vec3<f32>, tangent: vec4<f32>, uv: vec2<f32>, material_kind: f32, roughness: f32, normal_scale: f32, normal_texture: u32) -> vec3<f32> {
     let t = normalize(tangent.xyz);
     let b = normalize(cross(normal, t) * tangent.w);
-    let declared_normal_map = select(0.45, 1.0, normal_texture != 0xFFFFFFFFu);
-    let detail_strength = smoothstep(0.18, 0.86, roughness) * (0.025 + 0.025 * smoothstep(1.5, 4.0, material_kind)) * clamp(normal_scale, 0.0, 4.0) * declared_normal_map;
+    let has_normal_map = normal_texture != 0xFFFFFFFFu;
+    let normal_strength = clamp(normal_scale, 0.0, 4.0);
+    let sampled = textureSample(maps_normal_texture, maps_base_sampler, fract(uv)).xyz * 2.0 - vec3<f32>(1.0);
+    let sampled_world = normalize(t * sampled.x * normal_strength + b * sampled.y * normal_strength + normal * max(sampled.z, 0.05));
+    let declared_normal_map = select(0.45, 1.0, has_normal_map);
+    let detail_strength = smoothstep(0.18, 0.86, roughness) * (0.025 + 0.025 * smoothstep(1.5, 4.0, material_kind)) * normal_strength * declared_normal_map;
     let wave_x = sin(uv.x * 74.0 + uv.y * 19.0 + frame.time_seconds * 0.04);
     let wave_y = cos(uv.y * 61.0 - uv.x * 23.0 + frame.time_seconds * 0.03);
-    return normalize(normal + t * wave_x * detail_strength + b * wave_y * detail_strength);
+    let procedural = normalize(normal + t * wave_x * detail_strength + b * wave_y * detail_strength);
+    return normalize(mix(procedural, sampled_world, select(0.0, 0.72, has_normal_map)));
 }
 
 fn banger_material_record_for_kind(material_kind: f32) -> BangerMaterialRecord {
@@ -7651,6 +7682,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
             banger_create_maps_texture_resource(device, queue, texture_index as u32, bytes)
         })
         .collect::<Vec<_>>();
+    let normal_texture_resource_index = banger_first_material_normal_texture_index(&effective_material_bytes)
+        .map(|index| index.min(texture_resources.len().saturating_sub(1)) as u32)
+        .unwrap_or(0);
     let residency_feedback_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-maps-residency-feedback-buffer",
@@ -7823,10 +7857,11 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{index_format_label}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            "{source}:{index_format_label}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{normal_texture_resource_index}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
             index_format_label = index_format.label(),
             texture_resource_hash = sha256_hex(&texture_resource_manifest_bytes),
             material_bin_hash = material_bin_hash,
+            normal_texture_resource_index = normal_texture_resource_index,
         )
         .as_bytes(),
     );
@@ -7852,6 +7887,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         material_bin_buffer,
         texture_staging_buffers,
         texture_resources,
+        normal_texture_resource_index,
         residency_feedback_buffer,
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
@@ -10793,6 +10829,9 @@ mod tests {
         assert!(source.contains("BangerMaterialRecord"));
         assert!(source.contains("normal_texture"));
         assert!(source.contains("normal_scale"));
+        assert!(source.contains("maps_normal_texture"));
+        assert!(source.contains("@group(0) @binding(5)"));
+        assert!(source.contains("textureSample(maps_normal_texture"));
         assert!(source.contains("material_records"));
         assert!(source.contains("banger_material_record_for_kind"));
         assert!(source.contains("contact_ao"));
@@ -11786,6 +11825,7 @@ mod tests {
         assert_eq!(u32::from_le_bytes(bytes[28..32].try_into().unwrap()), 7);
         assert_eq!(u32::from_le_bytes(bytes[32..36].try_into().unwrap()), 5);
         assert!((f32::from_le_bytes(bytes[36..40].try_into().unwrap()) - 0.65).abs() < 0.0001);
+        assert_eq!(banger_first_material_normal_texture_index(&bytes), Some(5));
         let fallback = banger_default_material_resource_bytes();
         assert_eq!(fallback.len(), BANGER_MATERIAL_RECORD_STRIDE);
         assert_eq!(f32::from_le_bytes(fallback[0..4].try_into().unwrap()), 1.0);
@@ -11793,6 +11833,7 @@ mod tests {
         assert!((f32::from_le_bytes(fallback[20..24].try_into().unwrap()) - 0.72).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(fallback[32..36].try_into().unwrap()), u32::MAX);
         assert_eq!(f32::from_le_bytes(fallback[36..40].try_into().unwrap()), 1.0);
+        assert_eq!(banger_first_material_normal_texture_index(&fallback), None);
     }
 
     #[cfg(target_os = "windows")]
