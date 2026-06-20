@@ -463,6 +463,8 @@ struct BangerMapsMaterialStage {
     occlusion_strength: f32,
     emissive_texture: Option<usize>,
     emissive_factor: [f32; 3],
+    clearcoat_factor: f32,
+    clearcoat_roughness_factor: f32,
     material_hash: String,
 }
 
@@ -2673,9 +2675,20 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                             factor
                         })
                         .unwrap_or([0.0, 0.0, 0.0]);
+                    let clearcoat = material
+                        .get("extensions")
+                        .and_then(|value| value.get("KHR_materials_clearcoat"));
+                    let clearcoat_factor = clearcoat
+                        .and_then(|value| value.get("clearcoatFactor"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0) as f32;
+                    let clearcoat_roughness_factor = clearcoat
+                        .and_then(|value| value.get("clearcoatRoughnessFactor"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0) as f32;
                     let material_hash = sha256_hex(
                         format!(
-                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}:{metallic_roughness_texture:?}:{normal_texture:?}:{normal_scale}:{occlusion_texture:?}:{occlusion_strength}:{emissive_texture:?}:{emissive_factor:?}"
+                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}:{metallic_roughness_texture:?}:{normal_texture:?}:{normal_scale}:{occlusion_texture:?}:{occlusion_strength}:{emissive_texture:?}:{emissive_factor:?}:{clearcoat_factor}:{clearcoat_roughness_factor}"
                         )
                         .as_bytes(),
                     );
@@ -2692,6 +2705,8 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                         occlusion_strength,
                         emissive_texture,
                         emissive_factor,
+                        clearcoat_factor,
+                        clearcoat_roughness_factor,
                         material_hash,
                     }
                 })
@@ -3197,7 +3212,7 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
 
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
-const BANGER_MATERIAL_RECORD_STRIDE: usize = 80;
+const BANGER_MATERIAL_RECORD_STRIDE: usize = 96;
 
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
@@ -3226,6 +3241,10 @@ fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) ->
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         bytes.extend_from_slice(&0.0f32.to_le_bytes());
+        bytes.extend_from_slice(&material.clearcoat_factor.to_le_bytes());
+        bytes.extend_from_slice(&material.clearcoat_roughness_factor.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
     }
     Some(bytes)
 }
@@ -3245,6 +3264,8 @@ fn banger_default_material_resource_bytes() -> Vec<u8> {
         occlusion_strength: 1.0,
         emissive_texture: None,
         emissive_factor: [0.0, 0.0, 0.0],
+        clearcoat_factor: 0.0,
+        clearcoat_roughness_factor: 0.0,
         material_hash: "banger_default_material_resource".to_string(),
     }])
     .expect("default Banger material must produce one material record")
@@ -6934,6 +6955,10 @@ struct BangerMaterialRecord {
     pad0: u32,
     pad1: u32,
     emissive_factor: vec4<f32>,
+    clearcoat_factor: f32,
+    clearcoat_roughness_factor: f32,
+    pad2: u32,
+    pad3: u32,
 };
 
 @group(0) @binding(4)
@@ -7045,6 +7070,29 @@ fn banger_image_based_lighting(base_color: vec3<f32>, normal: vec3<f32>, view_di
     let specular_brdf = banger_environment_brdf_approx(no_v, roughness, f0);
     let specular_occlusion = clamp(indirect_ao + no_v * (1.0 - roughness) * 0.35, 0.0, 1.0);
     return diffuse + specular_probe * specular_brdf * specular_occlusion;
+}
+
+fn banger_clearcoat_direct(normal: vec3<f32>, view_dir: vec3<f32>, light_dir: vec3<f32>, roughness: f32, clearcoat: f32) -> vec3<f32> {
+    let half_dir = normalize(view_dir + light_dir);
+    let nol = clamp(dot(normal, light_dir), 0.0, 1.0);
+    let nov = clamp(dot(normal, view_dir), 0.0, 1.0);
+    let noh = clamp(dot(normal, half_dir), 0.0, 1.0);
+    let voh = clamp(dot(view_dir, half_dir), 0.0, 1.0);
+    let coat_roughness = clamp(roughness, 0.035, 1.0);
+    let fresnel = banger_fresnel_schlick(vec3<f32>(0.04), voh);
+    let specular = banger_distribution_ggx(noh, coat_roughness) * banger_visibility_smith_ggx_fast(nov, nol, coat_roughness) * fresnel;
+    return specular * nol * clamp(clearcoat, 0.0, 1.0) * vec3<f32>(1.0, 0.96, 0.9);
+}
+
+fn banger_clearcoat_environment(normal: vec3<f32>, view_dir: vec3<f32>, roughness: f32, clearcoat: f32, indirect_ao: f32) -> vec3<f32> {
+    let no_v = clamp(dot(normal, view_dir), 0.0, 1.0);
+    let coat = clamp(clearcoat, 0.0, 1.0);
+    let coat_roughness = clamp(roughness, 0.035, 1.0);
+    let reflection = normalize(reflect(-view_dir, normal));
+    let blurred_reflection = normalize(mix(reflection, normal, coat_roughness * 0.42));
+    let probe = banger_environment_radiance(blurred_reflection, coat_roughness);
+    let fresnel = banger_fresnel_schlick(vec3<f32>(0.04), no_v).r;
+    return probe * fresnel * coat * clamp(indirect_ao + no_v * 0.28, 0.0, 1.0) * vec3<f32>(1.0, 0.96, 0.9);
 }
 
 fn banger_transform_normal(model: mat4x4<f32>, normal: vec3<f32>) -> vec3<f32> {
@@ -7162,8 +7210,14 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let material_metallic = clamp(material_record.metallic_factor * sampled_metallic + smoothstep(4.5, 6.0, in.material_kind) * 0.25, 0.0, 1.0);
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
     let pbr_indirect = banger_image_based_lighting(base_color, normal, view_dir, material_roughness, material_metallic, indirect_ao);
+    let material_clearcoat = clamp(material_record.clearcoat_factor, 0.0, 1.0);
+    let material_clearcoat_roughness = clamp(material_record.clearcoat_roughness_factor, 0.035, 1.0);
+    let clearcoat_fresnel = material_clearcoat * (0.04 + 0.96 * pow(1.0 - clamp(dot(normal, view_dir), 0.0, 1.0), 5.0));
+    let clearcoat_direct = banger_clearcoat_direct(normal, view_dir, sun_dir, material_clearcoat_roughness, material_clearcoat) * contact_ao * shadow_visibility;
+    let clearcoat_indirect = banger_clearcoat_environment(normal, view_dir, material_clearcoat_roughness, material_clearcoat, indirect_ao);
     let diffuse_light = lambert * contact_ao + 0.12 * indirect_ao;
-    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + pbr_indirect + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
+    let base_layer = (pbr_direct * (2.45 * contact_ao * shadow_visibility) + pbr_indirect + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao)) * (1.0 - clearcoat_fresnel * 0.45);
+    let lit = base_layer + clearcoat_direct + clearcoat_indirect + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -11026,6 +11080,11 @@ mod tests {
         assert!(source.contains("banger_environment_brdf_approx"));
         assert!(source.contains("banger_image_based_lighting"));
         assert!(source.contains("pbr_indirect"));
+        assert!(source.contains("clearcoat_factor"));
+        assert!(source.contains("clearcoat_roughness_factor"));
+        assert!(source.contains("banger_clearcoat_direct"));
+        assert!(source.contains("banger_clearcoat_environment"));
+        assert!(source.contains("clearcoat_fresnel"));
         assert!(source.contains("virtual_shadow_projection"));
         assert!(source.contains("banger_virtual_shadow_visibility"));
         assert!(source.contains("shadow_visibility"));
@@ -12040,6 +12099,8 @@ mod tests {
             occlusion_strength: 0.55,
             emissive_texture: Some(8),
             emissive_factor: [0.2, 0.3, 0.4],
+            clearcoat_factor: 0.9,
+            clearcoat_roughness_factor: 0.18,
             material_hash: "test".to_string(),
         }])
         .unwrap();
@@ -12057,6 +12118,8 @@ mod tests {
         assert!((f32::from_le_bytes(bytes[64..68].try_into().unwrap()) - 0.2).abs() < 0.0001);
         assert!((f32::from_le_bytes(bytes[68..72].try_into().unwrap()) - 0.3).abs() < 0.0001);
         assert!((f32::from_le_bytes(bytes[72..76].try_into().unwrap()) - 0.4).abs() < 0.0001);
+        assert!((f32::from_le_bytes(bytes[80..84].try_into().unwrap()) - 0.9).abs() < 0.0001);
+        assert!((f32::from_le_bytes(bytes[84..88].try_into().unwrap()) - 0.18).abs() < 0.0001);
         assert_eq!(banger_first_material_normal_texture_index(&bytes), Some(5));
         assert_eq!(banger_first_material_metallic_roughness_texture_index(&bytes), Some(4));
         assert_eq!(banger_first_material_occlusion_texture_index(&bytes), Some(6));
@@ -12075,6 +12138,8 @@ mod tests {
         assert_eq!(f32::from_le_bytes(fallback[64..68].try_into().unwrap()), 0.0);
         assert_eq!(f32::from_le_bytes(fallback[68..72].try_into().unwrap()), 0.0);
         assert_eq!(f32::from_le_bytes(fallback[72..76].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(fallback[80..84].try_into().unwrap()), 0.0);
+        assert_eq!(f32::from_le_bytes(fallback[84..88].try_into().unwrap()), 0.0);
         assert_eq!(banger_first_material_normal_texture_index(&fallback), None);
         assert_eq!(banger_first_material_metallic_roughness_texture_index(&fallback), None);
         assert_eq!(banger_first_material_occlusion_texture_index(&fallback), None);
@@ -12607,13 +12672,15 @@ mod tests {
         assert!((materials[0].occlusion_strength - 0.5).abs() < 0.0001);
         assert_eq!(materials[0].emissive_texture, Some(0));
         assert_eq!(materials[0].emissive_factor, [0.2, 0.3, 0.4]);
+        assert!((materials[0].clearcoat_factor - 0.9).abs() < 0.0001);
+        assert!((materials[0].clearcoat_roughness_factor - 0.18).abs() < 0.0001);
         assert_eq!(textures.len(), 1);
         assert_eq!(textures[0].byte_count, 4);
         assert_eq!(textures[0].content_hash, sha256_hex(&[137, 80, 78, 71]));
     }
 
     fn test_glb_bytes() -> Vec<u8> {
-        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.75},"occlusionTexture":{"index":0,"strength":0.5},"emissiveTexture":{"index":0},"emissiveFactor":[0.2,0.3,0.4]}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
+        let json = br#"{"asset":{"version":"2.0"},"extensionsUsed":["KHR_materials_clearcoat"],"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.75},"occlusionTexture":{"index":0,"strength":0.5},"emissiveTexture":{"index":0},"emissiveFactor":[0.2,0.3,0.4],"extensions":{"KHR_materials_clearcoat":{"clearcoatFactor":0.9,"clearcoatRoughnessFactor":0.18}}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
         let mut json_chunk = json.to_vec();
         while json_chunk.len() % 4 != 0 {
             json_chunk.push(0x20);
