@@ -459,6 +459,8 @@ struct BangerMapsMaterialStage {
     normal_texture: Option<usize>,
     normal_scale: f32,
     metallic_roughness_texture: Option<usize>,
+    occlusion_texture: Option<usize>,
+    occlusion_strength: f32,
     material_hash: String,
 }
 
@@ -2643,9 +2645,19 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                         .and_then(|value| value.get("scale"))
                         .and_then(Value::as_f64)
                         .unwrap_or(1.0) as f32;
+                    let occlusion_texture = material
+                        .get("occlusionTexture")
+                        .and_then(|value| value.get("index"))
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    let occlusion_strength = material
+                        .get("occlusionTexture")
+                        .and_then(|value| value.get("strength"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(1.0) as f32;
                     let material_hash = sha256_hex(
                         format!(
-                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}:{metallic_roughness_texture:?}:{normal_texture:?}:{normal_scale}"
+                            "{material_index}:{base_color_factor:?}:{metallic_factor}:{roughness_factor}:{base_color_texture:?}:{metallic_roughness_texture:?}:{normal_texture:?}:{normal_scale}:{occlusion_texture:?}:{occlusion_strength}"
                         )
                         .as_bytes(),
                     );
@@ -2658,6 +2670,8 @@ fn stage_banger_gltf_materials(gltf: &Value) -> Vec<BangerMapsMaterialStage> {
                         normal_texture,
                         normal_scale,
                         metallic_roughness_texture,
+                        occlusion_texture,
+                        occlusion_strength,
                         material_hash,
                     }
                 })
@@ -3163,7 +3177,7 @@ fn upload_banger_maps_gltf_payload_to_wgpu(
 
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
-const BANGER_MATERIAL_RECORD_STRIDE: usize = 48;
+const BANGER_MATERIAL_RECORD_STRIDE: usize = 64;
 
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
@@ -3183,6 +3197,10 @@ fn banger_maps_material_resource_bytes(materials: &[BangerMapsMaterialStage]) ->
         bytes.extend_from_slice(&(material.normal_texture.unwrap_or(u32::MAX as usize) as u32).to_le_bytes());
         bytes.extend_from_slice(&material.normal_scale.to_le_bytes());
         bytes.extend_from_slice(&(material.metallic_roughness_texture.unwrap_or(u32::MAX as usize) as u32).to_le_bytes());
+        bytes.extend_from_slice(&(material.occlusion_texture.unwrap_or(u32::MAX as usize) as u32).to_le_bytes());
+        bytes.extend_from_slice(&material.occlusion_strength.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
     }
     Some(bytes)
@@ -3199,6 +3217,8 @@ fn banger_default_material_resource_bytes() -> Vec<u8> {
         normal_texture: None,
         normal_scale: 1.0,
         metallic_roughness_texture: None,
+        occlusion_texture: None,
+        occlusion_strength: 1.0,
         material_hash: "banger_default_material_resource".to_string(),
     }])
     .expect("default Banger material must produce one material record")
@@ -3215,6 +3235,13 @@ fn banger_first_material_normal_texture_index(material_bytes: &[u8]) -> Option<u
 fn banger_first_material_metallic_roughness_texture_index(material_bytes: &[u8]) -> Option<usize> {
     let record = material_bytes.get(0..BANGER_MATERIAL_RECORD_STRIDE)?;
     let value = u32::from_le_bytes(record[40..44].try_into().ok()?);
+    (value != u32::MAX).then_some(value as usize)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_first_material_occlusion_texture_index(material_bytes: &[u8]) -> Option<usize> {
+    let record = material_bytes.get(0..BANGER_MATERIAL_RECORD_STRIDE)?;
+    let value = u32::from_le_bytes(record[44..48].try_into().ok()?);
     (value != u32::MAX).then_some(value as usize)
 }
 
@@ -3407,6 +3434,7 @@ struct BangerNativeSceneGpuResource {
     texture_resources: Vec<BangerNativeTextureResource>,
     normal_texture_resource_index: u32,
     metallic_roughness_texture_resource_index: u32,
+    occlusion_texture_resource_index: u32,
     residency_feedback_buffer: wgpu::Buffer,
     shared_residency_page_table_buffer: wgpu::Buffer,
     shared_residency_compacted_feedback_buffer: wgpu::Buffer,
@@ -5824,6 +5852,16 @@ fn create_banger_first_scene_pipeline(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5869,6 +5907,12 @@ fn create_banger_first_scene_pipeline(
                 binding: 6,
                 resource: wgpu::BindingResource::TextureView(
                     &gpu_resource.texture_resources[gpu_resource.metallic_roughness_texture_resource_index as usize].view,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(
+                    &gpu_resource.texture_resources[gpu_resource.occlusion_texture_resource_index as usize].view,
                 ),
             },
         ],
@@ -6834,7 +6878,11 @@ struct BangerMaterialRecord {
     normal_texture: u32,
     normal_scale: f32,
     metallic_roughness_texture: u32,
+    occlusion_texture: u32,
+    occlusion_strength: f32,
+    pad0: u32,
     pad1: u32,
+    pad2: u32,
 };
 
 @group(0) @binding(4)
@@ -6843,6 +6891,8 @@ var<storage, read> material_records: array<BangerMaterialRecord>;
 var maps_normal_texture: texture_2d<f32>;
 @group(0) @binding(6)
 var maps_metallic_roughness_texture: texture_2d<f32>;
+@group(0) @binding(7)
+var maps_occlusion_texture: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -7013,11 +7063,15 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let alpha_factor = clamp(material_record.base_color_factor.a, 0.0, 1.0);
     let base_color = mix(in.color, sampled * in.color, maps_texture_weight) * pbr_base_factor;
     let contact_ao = banger_contact_ambient_occlusion(normal, in.world_pos, in.material_kind);
+    let has_occlusion_map = material_record.occlusion_texture != 0xFFFFFFFFu;
+    let occlusion_sample = textureSample(maps_occlusion_texture, maps_base_sampler, fract(in.uv)).r;
+    let material_occlusion = select(1.0, clamp(1.0 + clamp(material_record.occlusion_strength, 0.0, 1.0) * (occlusion_sample - 1.0), 0.0, 1.0), has_occlusion_map);
+    let indirect_ao = contact_ao * material_occlusion;
     let shadow_visibility = banger_virtual_shadow_visibility(in.world_pos, normal, sun_dir);
     let material_metallic = clamp(material_record.metallic_factor * sampled_metallic + smoothstep(4.5, 6.0, in.material_kind) * 0.25, 0.0, 1.0);
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
-    let diffuse_light = lambert * contact_ao + 0.12 * contact_ao;
-    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * contact_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * contact_ao;
+    let diffuse_light = lambert * contact_ao + 0.12 * indirect_ao;
+    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -7028,7 +7082,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint * shadow_visibility);
-    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35 + max(alpha_factor - 1.0, 0.0)), contact_ao);
+    out.gbuffer_emissive = vec4<f32>(sky * 0.12 + vec3<f32>(water_glint * 0.35 + max(alpha_factor - 1.0, 0.0)), indirect_ao);
     return out;
 }
 "#
@@ -7726,6 +7780,9 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     let metallic_roughness_texture_resource_index = banger_first_material_metallic_roughness_texture_index(&effective_material_bytes)
         .map(|index| index.min(texture_resources.len().saturating_sub(1)) as u32)
         .unwrap_or(0);
+    let occlusion_texture_resource_index = banger_first_material_occlusion_texture_index(&effective_material_bytes)
+        .map(|index| index.min(texture_resources.len().saturating_sub(1)) as u32)
+        .unwrap_or(0);
     let residency_feedback_buffer = banger_create_mapped_buffer(
         device,
         "banger-native-maps-residency-feedback-buffer",
@@ -7898,12 +7955,13 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
     );
     let resource_hash = sha256_hex(
         format!(
-            "{source}:{index_format_label}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{normal_texture_resource_index}:{metallic_roughness_texture_resource_index}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
+            "{source}:{index_format_label}:{vertex_hash}:{index_hash}:{instance_hash}:{material_hash}:{texture_hash}:{texture_resource_hash}:{material_bin_hash}:{normal_texture_resource_index}:{metallic_roughness_texture_resource_index}:{occlusion_texture_resource_index}:{indirect_args_hash}:{meshlet_cluster_hash}:{meshlet_cluster_cull_param_hash}:{meshlet_cluster_cull_feedback_hash}:{residency_feedback_hash}:{shared_residency_page_table_hash}:{shared_residency_compacted_feedback_hash}:{shared_residency_eviction_plan_hash}:{lumen_surface_card_hash}:{lumen_surface_cache_feedback_hash}:{lumen_screen_probe_hash}:{lumen_radiance_cache_hash}:{virtual_shadow_map_page_table_hash}:{virtual_shadow_map_page_request_hash}:{virtual_shadow_map_projection_hash}:{virtual_shadow_map_physical_pool_hash}:{virtual_shadow_map_cache_invalidation_hash}",
             index_format_label = index_format.label(),
             texture_resource_hash = sha256_hex(&texture_resource_manifest_bytes),
             material_bin_hash = material_bin_hash,
             normal_texture_resource_index = normal_texture_resource_index,
             metallic_roughness_texture_resource_index = metallic_roughness_texture_resource_index,
+            occlusion_texture_resource_index = occlusion_texture_resource_index,
         )
         .as_bytes(),
     );
@@ -7931,6 +7989,7 @@ fn banger_native_scene_gpu_resource_from_mesh_bytes(
         texture_resources,
         normal_texture_resource_index,
         metallic_roughness_texture_resource_index,
+        occlusion_texture_resource_index,
         residency_feedback_buffer,
         shared_residency_page_table_buffer,
         shared_residency_compacted_feedback_buffer,
@@ -10880,6 +10939,12 @@ mod tests {
         assert!(source.contains("@group(0) @binding(6)"));
         assert!(source.contains("metallic_roughness_sample.g"));
         assert!(source.contains("metallic_roughness_sample.b"));
+        assert!(source.contains("occlusion_texture"));
+        assert!(source.contains("occlusion_strength"));
+        assert!(source.contains("maps_occlusion_texture"));
+        assert!(source.contains("@group(0) @binding(7)"));
+        assert!(source.contains("occlusion_sample"));
+        assert!(source.contains("indirect_ao"));
         assert!(source.contains("material_records"));
         assert!(source.contains("banger_material_record_for_kind"));
         assert!(source.contains("contact_ao"));
@@ -11864,6 +11929,8 @@ mod tests {
             normal_texture: Some(5),
             normal_scale: 0.65,
             metallic_roughness_texture: Some(4),
+            occlusion_texture: Some(6),
+            occlusion_strength: 0.55,
             material_hash: "test".to_string(),
         }])
         .unwrap();
@@ -11875,8 +11942,11 @@ mod tests {
         assert_eq!(u32::from_le_bytes(bytes[32..36].try_into().unwrap()), 5);
         assert!((f32::from_le_bytes(bytes[36..40].try_into().unwrap()) - 0.65).abs() < 0.0001);
         assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 4);
+        assert_eq!(u32::from_le_bytes(bytes[44..48].try_into().unwrap()), 6);
+        assert!((f32::from_le_bytes(bytes[48..52].try_into().unwrap()) - 0.55).abs() < 0.0001);
         assert_eq!(banger_first_material_normal_texture_index(&bytes), Some(5));
         assert_eq!(banger_first_material_metallic_roughness_texture_index(&bytes), Some(4));
+        assert_eq!(banger_first_material_occlusion_texture_index(&bytes), Some(6));
         let fallback = banger_default_material_resource_bytes();
         assert_eq!(fallback.len(), BANGER_MATERIAL_RECORD_STRIDE);
         assert_eq!(f32::from_le_bytes(fallback[0..4].try_into().unwrap()), 1.0);
@@ -11885,8 +11955,11 @@ mod tests {
         assert_eq!(u32::from_le_bytes(fallback[32..36].try_into().unwrap()), u32::MAX);
         assert_eq!(f32::from_le_bytes(fallback[36..40].try_into().unwrap()), 1.0);
         assert_eq!(u32::from_le_bytes(fallback[40..44].try_into().unwrap()), u32::MAX);
+        assert_eq!(u32::from_le_bytes(fallback[44..48].try_into().unwrap()), u32::MAX);
+        assert_eq!(f32::from_le_bytes(fallback[48..52].try_into().unwrap()), 1.0);
         assert_eq!(banger_first_material_normal_texture_index(&fallback), None);
         assert_eq!(banger_first_material_metallic_roughness_texture_index(&fallback), None);
+        assert_eq!(banger_first_material_occlusion_texture_index(&fallback), None);
     }
 
     #[cfg(target_os = "windows")]
@@ -12411,13 +12484,15 @@ mod tests {
         assert_eq!(materials[0].normal_texture, Some(0));
         assert!((materials[0].normal_scale - 0.75).abs() < 0.0001);
         assert_eq!(materials[0].metallic_roughness_texture, Some(0));
+        assert_eq!(materials[0].occlusion_texture, Some(0));
+        assert!((materials[0].occlusion_strength - 0.5).abs() < 0.0001);
         assert_eq!(textures.len(), 1);
         assert_eq!(textures[0].byte_count, 4);
         assert_eq!(textures[0].content_hash, sha256_hex(&[137, 80, 78, 71]));
     }
 
     fn test_glb_bytes() -> Vec<u8> {
-        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.75}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
+        let json = br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0,"mode":4}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.7,0.82,0.9,1.0],"metallicFactor":0.0,"roughnessFactor":0.45,"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.75},"occlusionTexture":{"index":0,"strength":0.5}}],"textures":[{"source":0}],"images":[{"bufferView":2,"mimeType":"image/png"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":44,"byteLength":4}],"buffers":[{"byteLength":48}]}"#;
         let mut json_chunk = json.to_vec();
         while json_chunk.len() % 4 != 0 {
             json_chunk.push(0x20);
