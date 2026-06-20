@@ -18,7 +18,13 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"--surface-width": "100vw"');
     expect(routerSource).toContain('"--surface-height": "100vh"');
     expect(routerSource).toContain("getBangerPresentLoopBootstrap");
+    expect(routerSource).toContain("getBangerGoogleTilesConfig");
     expect(routerSource).toContain('sceneKind: "maps_sphere"');
+    expect(routerSource).toContain("Google Photorealistic 3D Tiles");
+    expect(routerSource).toContain("banger_wgpu_native_cesium_3d_tiles_sphere");
+    expect(routerSource).toContain("data-tileset-provider");
+    expect(routerSource).toContain("data-tileset-georeference");
+    expect(routerSource).toContain("data-native-streamer");
     expect(routerSource).toContain("presentLoop.previewFrameDataUrl");
     expect(routerSource).toContain("rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url");
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
@@ -29,19 +35,20 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).not.toContain("native raster frame loading");
   });
 
-  it("keeps the Banger page and Maps viewer on native render paths", () => {
+  it("keeps the Banger page native while Maps can keep its contained CesiumJS fallback", () => {
     expect(routerSource).not.toContain('from "cesium"');
     expect(routerSource).not.toContain('import("cesium")');
     expect(routerSource).not.toContain("new Cesium.Viewer");
-    expect(routerSource).not.toContain("getBangerGoogleTilesConfig");
+    expect(routerSource).toContain("getBangerGoogleTilesConfig");
     expect(canvasSurfacesSource).not.toContain('import("cesium")');
-    expect(canvasSurfacesSource).not.toContain("new Cesium.Viewer");
+    expect(canvasSurfacesSource).toContain("new Cesium.Viewer");
     expect(canvasSurfacesSource).not.toContain("Cesium.GoogleMaps.mapTilesApiEndpoint");
     expect(canvasSurfacesSource).not.toContain("Cesium.createGooglePhotorealistic3DTileset");
     expect(canvasSurfacesSource).not.toContain("onlyUsingWithGoogleGeocoder");
     expect(canvasSurfacesSource).not.toContain("resolveCesiumIonAccessToken");
     expect(canvasSurfacesSource).not.toContain("Cesium.Ion.defaultAccessToken");
-    expect(canvasSurfacesSource).not.toContain("showCreditsOnScreen");
+    expect(canvasSurfacesSource).toContain("showCreditsOnScreen");
+    expect(canvasSurfacesSource).toContain("CesiumJS Google 3D Tiles loading");
     expect(canvasSurfacesSource).not.toContain("Banger Maps Cesium tileset failed.");
     expect(canvasSurfacesSource).not.toContain("Google Map Tiles direct mode requires GOOGLE_MAP_TILES_API_KEY.");
     expect(viteConfigSource).not.toContain("vite-plugin-cesium");

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
+  BangerGoogleTilesConfigResult,
   BangerPresentLoopBootstrapResult,
   HeaderSurfaceContract,
   HeaderSurfaceSnapshot,
@@ -65,7 +66,42 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const [bootstrapStatus, setBootstrapStatus] = useState("pending");
   const [nativeSurfaceStatus, setNativeSurfaceStatus] = useState("pending");
+  const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
   const nativeSurfaceShowTickRef = useRef(-1);
+
+  useEffect(() => {
+    const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig;
+    if (!getTilesConfig) {
+      return undefined;
+    }
+    let active = true;
+    void getTilesConfig()
+      .then((result) => {
+        if (active) {
+          setTilesConfig(result);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setTilesConfig(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const nativeMapsTarget = useMemo(() => {
+    if (!tilesConfig?.accepted) {
+      return { target: "Cesium 3D Tiles sphere" };
+    }
+    return {
+      target: "Google Photorealistic 3D Tiles",
+      latitude: tilesConfig.initialView.latitude,
+      longitude: tilesConfig.initialView.longitude,
+      heightMeters: tilesConfig.initialView.heightMeters
+    };
+  }, [tilesConfig]);
 
   const measureSlot = useCallback(() => {
     const rect = slotRef.current?.getBoundingClientRect();
@@ -137,7 +173,8 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       y: slotBounds.y,
       width: slotBounds.width,
       height: slotBounds.height,
-      sceneKind: "maps_sphere" as const
+      sceneKind: "maps_sphere" as const,
+      ...nativeMapsTarget
     };
     const canUpdateExistingSurface = nativeSurfaceShowTickRef.current === refreshTick && updateNativeBangerBounds;
     const request = canUpdateExistingSurface ? updateNativeBangerBounds(bounds) : showNativeBanger(bounds);
@@ -162,7 +199,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     return () => {
       active = false;
     };
-  }, [refreshTick, slotBounds]);
+  }, [nativeMapsTarget, refreshTick, slotBounds]);
 
   useEffect(() => {
     return () => {
@@ -236,6 +273,15 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         data-native-contract={surface.nativeContract}
         data-present-loop={presentLoop?.routeStatus ?? "pending"}
         data-render-path={renderPath}
+        data-active-renderer="banger_wgpu_native_cesium_3d_tiles_sphere"
+        data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
+        data-tileset-renderer-model={tilesConfig?.rendererModel ?? "cesium_for_unreal_style_3d_tileset"}
+        data-tileset-georeference={
+          tilesConfig
+            ? `${tilesConfig.georeference.ellipsoid}:${tilesConfig.georeference.originLatitude.toFixed(5)}:${tilesConfig.georeference.originLongitude.toFixed(5)}`
+            : "WGS84:pending"
+        }
+        data-native-streamer={tilesConfig?.nativeStreamer.schema ?? "forge.banger.native_3d_tiles_streamer.v1"}
       >
         {hasNativeFrame && !hasNativeSurface ? (
           <img
