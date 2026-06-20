@@ -7012,6 +7012,41 @@ fn banger_microfacet_brdf(base_color: vec3<f32>, normal: vec3<f32>, view_dir: ve
     return (diffuse + specular) * nol;
 }
 
+fn banger_environment_radiance(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let horizon = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
+    let zenith = vec3<f32>(0.045, 0.08, 0.15);
+    let horizon_color = vec3<f32>(0.46, 0.58, 0.68);
+    let ground = vec3<f32>(0.045, 0.038, 0.032);
+    let sky_probe = mix(ground, mix(horizon_color, zenith, horizon * horizon), smoothstep(0.0, 0.22, horizon));
+    let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
+    let solar_disc = pow(max(dot(direction, sun_dir), 0.0), mix(96.0, 10.0, roughness));
+    let solar_glow = pow(max(dot(direction, sun_dir), 0.0), mix(12.0, 3.0, roughness));
+    return sky_probe + vec3<f32>(1.0, 0.78, 0.46) * solar_disc * (1.2 - roughness) + vec3<f32>(0.28, 0.18, 0.08) * solar_glow;
+}
+
+fn banger_environment_brdf_approx(no_v: f32, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, pow(2.0, -9.28 * no_v)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + vec3<f32>(ab.y);
+}
+
+fn banger_image_based_lighting(base_color: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>, roughness: f32, metallic: f32, indirect_ao: f32) -> vec3<f32> {
+    let surface_color = clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    let no_v = clamp(dot(normal, view_dir), 0.0, 1.0);
+    let f0 = mix(vec3<f32>(0.04), surface_color, metallic);
+    let diffuse_probe = banger_environment_radiance(normalize(normal + vec3<f32>(0.0, 0.32, 0.0)), 1.0);
+    let diffuse = surface_color * (1.0 - metallic) * diffuse_probe * (0.28 + 0.42 * indirect_ao);
+    let reflection = normalize(reflect(-view_dir, normal));
+    let blurred_reflection = normalize(mix(reflection, normal, roughness * roughness * 0.72));
+    let specular_probe = banger_environment_radiance(blurred_reflection, roughness);
+    let specular_brdf = banger_environment_brdf_approx(no_v, roughness, f0);
+    let specular_occlusion = clamp(indirect_ao + no_v * (1.0 - roughness) * 0.35, 0.0, 1.0);
+    return diffuse + specular_probe * specular_brdf * specular_occlusion;
+}
+
 fn banger_transform_normal(model: mat4x4<f32>, normal: vec3<f32>) -> vec3<f32> {
     let a = model[0].xyz;
     let b = model[1].xyz;
@@ -7126,8 +7161,9 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let shadow_visibility = banger_virtual_shadow_visibility(in.world_pos, normal, sun_dir);
     let material_metallic = clamp(material_record.metallic_factor * sampled_metallic + smoothstep(4.5, 6.0, in.material_kind) * 0.25, 0.0, 1.0);
     let pbr_direct = banger_microfacet_brdf(base_color, normal, view_dir, sun_dir, material_roughness, material_metallic);
+    let pbr_indirect = banger_image_based_lighting(base_color, normal, view_dir, material_roughness, material_metallic, indirect_ao);
     let diffuse_light = lambert * contact_ao + 0.12 * indirect_ao;
-    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
+    let lit = pbr_direct * (2.45 * contact_ao * shadow_visibility) + pbr_indirect + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao) + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
     let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
@@ -10986,6 +11022,10 @@ mod tests {
         assert!(source.contains("banger_distribution_ggx"));
         assert!(source.contains("banger_visibility_smith_ggx_fast"));
         assert!(source.contains("banger_fresnel_schlick"));
+        assert!(source.contains("banger_environment_radiance"));
+        assert!(source.contains("banger_environment_brdf_approx"));
+        assert!(source.contains("banger_image_based_lighting"));
+        assert!(source.contains("pbr_indirect"));
         assert!(source.contains("virtual_shadow_projection"));
         assert!(source.contains("banger_virtual_shadow_visibility"));
         assert!(source.contains("shadow_visibility"));
