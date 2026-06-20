@@ -23,15 +23,129 @@ function SurfaceProof({ surface }: { surface: HeaderSurfaceContract }) {
   );
 }
 
-function shortProof(value?: string | null): string {
-  return value ? value.slice(0, 16) : "pending";
-}
+const GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID = 2275207;
 
-function bangerGateLabel(presentLoop: BangerPresentLoopBootstrapResult | null): string {
-  if (!presentLoop) return "pending";
-  if (!presentLoop.ok) return presentLoop.error?.code ?? "blocked";
-  if (!presentLoop.mapsVisualGate) return "no gate";
-  return presentLoop.mapsVisualGate.ok ? "visible" : "blocked";
+function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): string {
+  const view = {
+    latitude: config.initialView.latitude ?? 48.8584,
+    longitude: config.initialView.longitude ?? 2.2945,
+    heightMeters: config.initialView.heightMeters ?? 1800
+  };
+  const bootstrapConfig = {
+    rootTilesetUrl: config.rootTilesetUrl,
+    cesiumIonAccessToken: config.cesiumIonAccessToken ?? "",
+    cesiumIonAccessTokenUrl: config.cesiumIonAccessTokenUrl ?? "",
+    ionAssetId: GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID,
+    view
+  };
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>window.CESIUM_BASE_URL = "https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/";</script>
+  <link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/Widgets/widgets.css" />
+  <style>
+    html,
+    body,
+    #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #020508;
+    }
+    .cesium-viewer-toolbar,
+    .cesium-viewer-animationContainer,
+    .cesium-viewer-timelineContainer,
+    .cesium-viewer-fullscreenContainer,
+    .cesium-viewer-bottom {
+      display: none !important;
+    }
+    .cesium-widget-credits {
+      opacity: 0.62;
+      transform: scale(0.82);
+      transform-origin: left bottom;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <script src="https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/Cesium.js"></script>
+  <script>
+    (async () => {
+      const config = ${JSON.stringify(bootstrapConfig)};
+      async function resolveCesiumIonToken() {
+        if (config.cesiumIonAccessToken) {
+          return config.cesiumIonAccessToken;
+        }
+        if (!config.cesiumIonAccessTokenUrl) {
+          return "";
+        }
+        const response = await fetch(config.cesiumIonAccessTokenUrl, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Cesium ion token broker rejected " + response.status);
+        }
+        const payload = await response.json();
+        return payload.token || payload.accessToken || payload.cesiumIonAccessToken || payload.ionToken || "";
+      }
+      const viewer = new Cesium.Viewer("cesiumContainer", {
+        animation: false,
+        baseLayerPicker: false,
+        fullscreenButton: false,
+        geocoder: false,
+        homeButton: false,
+        infoBox: false,
+        navigationHelpButton: false,
+        sceneModePicker: false,
+        selectionIndicator: false,
+        timeline: false,
+        skyBox: false,
+        requestRenderMode: false
+      });
+      viewer.scene.globe.show = false;
+      viewer.scene.fog.enabled = true;
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+      const rootTilesetUrl = config.rootTilesetUrl;
+      const isIonTileset = String(rootTilesetUrl).startsWith("ion://");
+      const token = isIonTileset ? await resolveCesiumIonToken() : "";
+      if (token) {
+        Cesium.Ion.defaultAccessToken = token;
+      }
+      const tileset = isIonTileset
+        ? await Cesium.Cesium3DTileset.fromIonAssetId(config.ionAssetId, { showCreditsOnScreen: true })
+        : Cesium.Cesium3DTileset.fromUrl
+          ? await Cesium.Cesium3DTileset.fromUrl(rootTilesetUrl, { showCreditsOnScreen: true })
+          : new Cesium.Cesium3DTileset({ url: rootTilesetUrl, showCreditsOnScreen: true });
+      viewer.scene.primitives.add(tileset);
+      const latitude = Number(config.view.latitude);
+      const longitude = Number(config.view.longitude);
+      const heightMeters = Number(config.view.heightMeters);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(
+            longitude,
+            latitude,
+            Number.isFinite(heightMeters) ? heightMeters : 1800
+          ),
+          orientation: {
+            heading: Cesium.Math.toRadians(18),
+            pitch: Cesium.Math.toRadians(-38),
+            roll: 0
+          },
+          duration: 0
+        });
+      } else {
+        await viewer.zoomTo(tileset);
+      }
+      window.parent.postMessage({ type: "forge:banger-cesium-tiles", status: "tiles_loaded" }, "*");
+    })().catch((error) => {
+      console.error("Banger Cesium 3D Tiles bootstrap failed.", error);
+      window.parent.postMessage({ type: "forge:banger-cesium-tiles", status: "failed" }, "*");
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] }) {
@@ -63,11 +177,10 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const requestIdRef = useRef(0);
   const [presentLoop, setPresentLoop] = useState<BangerPresentLoopBootstrapResult | null>(null);
   const [slotBounds, setSlotBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
   const [bootstrapStatus, setBootstrapStatus] = useState("pending");
   const [nativeSurfaceStatus, setNativeSurfaceStatus] = useState("pending");
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
-  const nativeSurfaceShowTickRef = useRef(-1);
+  const nativeSurfaceAttachedRef = useRef(false);
 
   useEffect(() => {
     const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig;
@@ -176,14 +289,14 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       sceneKind: "maps_sphere" as const,
       ...nativeMapsTarget
     };
-    const canUpdateExistingSurface = nativeSurfaceShowTickRef.current === refreshTick && updateNativeBangerBounds;
+    const canUpdateExistingSurface = nativeSurfaceAttachedRef.current && updateNativeBangerBounds;
     const request = canUpdateExistingSurface ? updateNativeBangerBounds(bounds) : showNativeBanger(bounds);
     setNativeSurfaceStatus(canUpdateExistingSurface ? "positioning" : "opening");
     void request
       .then((result: NativeWebExplorerResult) => {
         if (!active) return;
         if (result.accepted) {
-          nativeSurfaceShowTickRef.current = refreshTick;
+          nativeSurfaceAttachedRef.current = true;
           setNativeSurfaceStatus("native live");
           return;
         }
@@ -199,7 +312,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     return () => {
       active = false;
     };
-  }, [nativeMapsTarget, refreshTick, slotBounds]);
+  }, [nativeMapsTarget, slotBounds]);
 
   useEffect(() => {
     return () => {
@@ -254,24 +367,32 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     return () => {
       active = false;
     };
-  }, [refreshTick, slotBounds]);
+  }, [slotBounds]);
 
   const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
   const nativeFrameDataUrl = presentLoopFrameDataUrl;
   const hasNativeSurface = nativeSurfaceStatus === "native live";
   const hasNativeFrame = nativeFrameDataUrl.length > 0;
+  const cesiumSrcDoc = !hasNativeSurface && !hasNativeFrame && tilesConfig?.accepted && tilesConfig.rootTilesetUrl
+    ? createBangerCesiumTilesSrcDoc(tilesConfig)
+    : "";
   const renderPath = presentLoopFrameDataUrl
     ? "rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url"
-    : "rust-banger-wgpu-maps-sphere-child-window";
+    : cesiumSrcDoc
+      ? "cesiumjs_google_photorealistic_3d_tiles_full_bleed_fallback"
+      : "rust-banger-wgpu-maps-sphere-child-window";
 
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
       <div
         ref={slotRef}
         className={hasNativeSurface || hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
+        style={cesiumSrcDoc ? { pointerEvents: "auto" } : undefined}
         aria-label="Banger native renderer surface"
         data-native-contract={surface.nativeContract}
         data-present-loop={presentLoop?.routeStatus ?? "pending"}
+        data-bootstrap-status={bootstrapStatus}
+        data-native-surface-status={nativeSurfaceStatus}
         data-render-path={renderPath}
         data-active-renderer="banger_wgpu_native_cesium_3d_tiles_sphere"
         data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
@@ -290,42 +411,18 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
             alt=""
             draggable={false}
           />
+        ) : cesiumSrcDoc ? (
+          <iframe
+            className="nativeViewportSlot__frame"
+            title=""
+            srcDoc={cesiumSrcDoc}
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            style={{ border: 0, display: "block", width: "100%", height: "100%" }}
+          />
         ) : (
-          <div className="bangerSphereNativeFrame__fallback" aria-hidden="true">
-            <span className="bangerSphereNativeFrame__fallbackSphere" />
-          </div>
+          null
         )}
       </div>
-      <aside className="bangerFrameLedger" aria-label="Banger native frame ledger">
-        <div>
-          <span>route</span>
-          <code>{presentLoop?.routeStatus ?? nativeSurfaceStatus ?? bootstrapStatus}</code>
-        </div>
-        <div>
-          <span>gate</span>
-          <code>{bangerGateLabel(presentLoop)}</code>
-        </div>
-        <div>
-          <span>draw</span>
-          <code>
-            {presentLoop?.drawCallCount ?? 0}/{presentLoop?.indexCount ?? 0}/{presentLoop?.instanceCount ?? 0}
-          </code>
-        </div>
-        <div>
-          <span>frame</span>
-          <code>{shortProof(presentLoop?.mapsVisualGate?.frameHash ?? presentLoop?.frameHash)}</code>
-        </div>
-        <div>
-          <span>mesh</span>
-          <code>{shortProof(presentLoop?.sceneMeshHash)}</code>
-        </div>
-      </aside>
-      <div className="surfaceActionRow">
-        <button type="button" onClick={() => setRefreshTick((tick) => tick + 1)}>
-          Refresh
-        </button>
-      </div>
-      <SurfaceProof surface={surface} />
     </section>
   );
 }

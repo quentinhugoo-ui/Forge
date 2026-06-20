@@ -5,6 +5,7 @@ const routerSource = readFileSync("src/renderer/HeaderSurfaceRouter.tsx", "utf8"
 const appSource = readFileSync("src/renderer/App.tsx", "utf8");
 const canvasSurfacesSource = readFileSync("src/renderer/CanvasSurfacesSlice.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
+const indexHtmlSource = readFileSync("index.html", "utf8");
 const launcherSource = readFileSync("run_ingen_electron_shell.cmd", "utf8");
 const mainSource = readFileSync("src/main/main.ts", "utf8");
 const viteConfigSource = readFileSync("vite.config.ts", "utf8");
@@ -12,7 +13,7 @@ const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
 const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
 describe("Banger native viewport contract", () => {
-  it("keeps the Banger page as a full-screen native render surface with no inner frame prose", () => {
+  it("keeps the Banger page as a full-screen render surface with no inner frame prose", () => {
     expect(routerSource).toContain('"--surface-left": "0px"');
     expect(routerSource).toContain('"--surface-top": "0px"');
     expect(routerSource).toContain('"--surface-width": "100vw"');
@@ -27,18 +28,31 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain("data-native-streamer");
     expect(routerSource).toContain("presentLoop.previewFrameDataUrl");
     expect(routerSource).toContain("rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url");
+    expect(routerSource).toContain("cesiumjs_google_photorealistic_3d_tiles_full_bleed_fallback");
+    expect(routerSource).toContain("createBangerCesiumTilesSrcDoc");
+    expect(routerSource).toContain("Cesium.Cesium3DTileset.fromUrl");
+    expect(routerSource).toContain("Cesium.Cesium3DTileset.fromIonAssetId");
+    expect(routerSource).toContain("GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID");
+    expect(routerSource).toContain("resolveCesiumIonToken");
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
-    expect(routerSource).toContain("bangerSphereNativeFrame__fallback");
+    expect(routerSource).toContain('srcDoc={cesiumSrcDoc}');
+    expect(routerSource).toContain('style={cesiumSrcDoc ? { pointerEvents: "auto" } : undefined}');
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
     expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
+    expect(routerSource).not.toContain("bangerFrameLedger");
+    expect(routerSource).not.toContain("bangerSphereNativeFrame__fallback");
+    expect(routerSource).not.toContain("bangerSphereNativeFrame__fallbackSphere");
     expect(routerSource).not.toContain("BangerPreviewFrameResult");
     expect(routerSource).not.toContain("native raster frame loading");
+    expect(indexHtmlSource).toContain("https://ajax.googleapis.com");
+    expect(indexHtmlSource).toContain("frame-src 'self' data: blob:");
+    expect(indexHtmlSource).not.toContain("frame-src 'none'");
   });
 
-  it("keeps the Banger page native while Maps can keep its contained CesiumJS fallback", () => {
+  it("keeps Maps contained while Banger can use CesiumJS only as the full-bleed bridge fallback", () => {
     expect(routerSource).not.toContain('from "cesium"');
     expect(routerSource).not.toContain('import("cesium")');
-    expect(routerSource).not.toContain("new Cesium.Viewer");
+    expect(routerSource).toContain("new Cesium.Viewer");
     expect(routerSource).toContain("getBangerGoogleTilesConfig");
     expect(canvasSurfacesSource).not.toContain('import("cesium")');
     expect(canvasSurfacesSource).toContain("new Cesium.Viewer");
