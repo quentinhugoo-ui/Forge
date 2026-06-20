@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const canvasSource = readFileSync(join(process.cwd(), "src", "renderer", "CanvasSurfacesSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(process.cwd(), "src", "renderer", "styles.css"), "utf8");
 const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "utf8");
+const scrapersSource = readFileSync(join(process.cwd(), "src", "main", "scrapers-codeact.ts"), "utf8");
 
 describe("scraped media transcript rendering", () => {
   it("attaches scraper image and video results to assistant messages", () => {
@@ -38,5 +40,15 @@ describe("scraped media transcript rendering", () => {
     expect(stylesSource).toContain(".transcriptItem:has(.transcriptAttachment--frame-landscape) .transcriptTextFrame");
     expect(stylesSource).toContain(".transcriptItem:has(.transcriptAttachment--frame-nineSixteen) .transcriptTextFrame");
     expect(stylesSource).toContain(".transcriptItem:has(.transcriptAttachment--frame-square) .transcriptTextFrame");
+  });
+
+  it("groups scraped media under Web search in the Files pane", () => {
+    expect(scrapersSource).toContain('"web_search=true"');
+    expect(canvasSource).toContain('type FileKindFilter = "all" | "web_search"');
+    expect(canvasSource).toContain('{ id: "web_search", label: "Web search" }');
+    expect(canvasSource).toContain("function isWebSearchFile");
+    expect(canvasSource).toContain('kindFilter === "web_search"');
+    expect(canvasSource).toContain("canvasFileTile--webSearch");
+    expect(stylesSource).toContain(".canvasFileTile__sourceTag");
   });
 });

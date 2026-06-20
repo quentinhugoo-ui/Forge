@@ -34,7 +34,7 @@ interface PaneTabsProps {
 }
 
 export type CanvasToolPane = "files" | "terminal";
-type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
+type FileKindFilter = "all" | "web_search" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
 interface MapsViewportTarget {
   target?: string;
@@ -379,6 +379,7 @@ interface CanvasSessionFilesTab {
 
 const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: ComposerUploadPreview["kind"][] }> = [
   { id: "all", label: "All files" },
+  { id: "web_search", label: "Web search" },
   { id: "image", label: "Images and photos" },
   { id: "video", label: "Videos" },
   { id: "model3d", label: "3D objects" },
@@ -386,6 +387,30 @@ const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: Comp
   { id: "chart", label: "Charts" },
   { id: "file", label: "Other files" }
 ];
+
+function isWebSearchFile(file: ComposerUploadPreview): boolean {
+  const haystack = `${file.id} ${file.name} ${file.url} ${file.textPreview}`.toLowerCase();
+  return (
+    haystack.includes("web_search=true") ||
+    haystack.includes("scraped_media=true") ||
+    haystack.includes("scraped_artifact=true") ||
+    haystack.includes("remote_media=true") ||
+    haystack.includes("source_url=") ||
+    haystack.includes("media_url=") ||
+    file.id.startsWith("scraped-")
+  );
+}
+
+function WebSearchFilesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="10.8" cy="10.8" r="5.8" />
+      <path d="m15.1 15.1 4.1 4.1" />
+      <path d="M7.2 10.8h7.2" />
+      <path d="M10.8 7.2v7.2" />
+    </svg>
+  );
+}
 function TerminalGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
   return (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
@@ -856,7 +881,7 @@ function EmptyFilesIcon() {
 
 function fileKindIconKind(kind: FileKindFilter): ComposerUploadPreview["kind"] {
   if (kind === "document") return "pdf";
-  if (kind === "all") return "file";
+  if (kind === "all" || kind === "web_search") return "file";
   return kind;
 }
 
@@ -897,6 +922,9 @@ function CanvasFilesPane({
     counts.set("all", activeFiles.length);
     for (const file of activeFiles) {
       counts.set(file.kind, (counts.get(file.kind) ?? 0) + 1);
+      if (isWebSearchFile(file)) {
+        counts.set("web_search", (counts.get("web_search") ?? 0) + 1);
+      }
       if (file.kind === "pdf" || file.kind === "spreadsheet" || file.kind === "text") {
         counts.set("document", (counts.get("document") ?? 0) + 1);
       }
@@ -906,8 +934,11 @@ function CanvasFilesPane({
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return activeFiles.filter((file) => {
+      if (kindFilter === "web_search" && !isWebSearchFile(file)) {
+        return false;
+      }
       const activeFilter = FILE_KIND_FILTERS.find((filter) => filter.id === kindFilter);
-      const acceptedKinds = activeFilter?.kinds ?? (kindFilter === "all" ? undefined : [kindFilter as ComposerUploadPreview["kind"]]);
+      const acceptedKinds = activeFilter?.kinds ?? (kindFilter === "all" || kindFilter === "web_search" ? undefined : [kindFilter as ComposerUploadPreview["kind"]]);
       if (acceptedKinds && !acceptedKinds.includes(file.kind)) {
         return false;
       }
@@ -973,7 +1004,7 @@ function CanvasFilesPane({
                 key={filter.id}
                 onClick={() => setKindFilter(filter.id)}
               >
-                {filter.id === "all" ? <AllFilesIcon /> : <TranscriptAttachmentEventIcon kind={fileKindIconKind(filter.id)} />}
+                {filter.id === "all" ? <AllFilesIcon /> : filter.id === "web_search" ? <WebSearchFilesIcon /> : <TranscriptAttachmentEventIcon kind={fileKindIconKind(filter.id)} />}
                 <span>{count}</span>
               </button>
             );
@@ -986,37 +1017,41 @@ function CanvasFilesPane({
           key={sessionFilesTabActive && selectedSessionFilesGroup ? selectedSessionFilesGroup.sessionId : "current-session-files"}
         >
           {visibleFiles.length > 0 ? (
-            visibleFiles.map((file, index) => (
-              <figure
-                className={`canvasFileTile canvasFileTile--${file.kind} canvasFileTile--shape${index % 5}`}
-                role="listitem"
-                key={file.id}
-                style={{ "--canvas-file-enter-delay": `${Math.min(index, 12) * 46}ms` } as CSSProperties}
-              >
-                <div className="canvasFileTile__preview">
-                  <CanvasFilePreview file={file} />
-                  {file.kind === "image" ? (
-                    <button
-                      type="button"
-                      className="imageEditButton imageEditButton--file"
-                      aria-label={`Edit ${file.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        stageCanvasImageForEdit(file);
-                      }}
-                    >
-                      <EditImageGlyph />
-                    </button>
-                  ) : null}
-                </div>
-                <figcaption className="canvasFileTile__caption">
-                  <strong>{file.name}</strong>
-                  <span className="canvasFileTile__captionIcon" aria-label={file.kind}>
-                    <TranscriptAttachmentEventIcon kind={file.kind} />
-                  </span>
-                </figcaption>
-              </figure>
-            ))
+            visibleFiles.map((file, index) => {
+              const webSearchFile = isWebSearchFile(file);
+              return (
+                <figure
+                  className={`canvasFileTile canvasFileTile--${file.kind} ${webSearchFile ? "canvasFileTile--webSearch" : ""} canvasFileTile--shape${index % 5}`}
+                  role="listitem"
+                  key={file.id}
+                  style={{ "--canvas-file-enter-delay": `${Math.min(index, 12) * 46}ms` } as CSSProperties}
+                >
+                  <div className="canvasFileTile__preview">
+                    <CanvasFilePreview file={file} />
+                    {file.kind === "image" ? (
+                      <button
+                        type="button"
+                        className="imageEditButton imageEditButton--file"
+                        aria-label={`Edit ${file.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          stageCanvasImageForEdit(file);
+                        }}
+                      >
+                        <EditImageGlyph />
+                      </button>
+                    ) : null}
+                  </div>
+                  <figcaption className="canvasFileTile__caption">
+                    <strong>{file.name}</strong>
+                    {webSearchFile ? <span className="canvasFileTile__sourceTag">Web</span> : null}
+                    <span className="canvasFileTile__captionIcon" aria-label={file.kind}>
+                      <TranscriptAttachmentEventIcon kind={file.kind} />
+                    </span>
+                  </figcaption>
+                </figure>
+              );
+            })
           ) : (
             <div className="canvasFilesPane__empty" role="status">
               <EmptyFilesIcon />

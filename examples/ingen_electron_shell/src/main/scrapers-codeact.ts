@@ -355,6 +355,7 @@ function scrapedVisualAttachmentCandidate(value: unknown, source: "media" | "art
   const name = clampText(title || scrapedMediaFilename(url) || `Scraped ${kind}`, 120);
   const textPreview = clampText([
     title,
+    "web_search=true",
     `media_url=${url}`,
     mimeType ? `mime=${mimeType}` : "",
     sourceUrl ? `source_url=${sourceUrl}` : "",

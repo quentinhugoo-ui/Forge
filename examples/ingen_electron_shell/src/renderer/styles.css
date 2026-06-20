@@ -13262,6 +13262,14 @@ ol.assistantText__list li::before {
   overflow: hidden;
 }
 
+.canvasFileTile--webSearch .canvasFileTile__preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in oklab, var(--forge-muted), transparent 54%);
+  pointer-events: none;
+}
+
 .imageEditButton--file {
   position: absolute;
   right: 10px;
@@ -13334,6 +13342,24 @@ ol.assistantText__list li::before {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.canvasFileTile--webSearch .canvasFileTile__caption {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.canvasFileTile__sourceTag {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 4px;
+  color: var(--forge-muted);
+  font-family: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .canvasFileTile__captionIcon {
