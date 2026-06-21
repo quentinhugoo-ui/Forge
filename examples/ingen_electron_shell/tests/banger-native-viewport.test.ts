@@ -28,12 +28,17 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain("data-native-streamer");
     expect(routerSource).toContain("presentLoop.previewFrameDataUrl");
     expect(routerSource).toContain("rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url");
-    expect(routerSource).toContain("cesiumjs_google_photorealistic_3d_tiles_full_bleed_fallback");
+    expect(routerSource).toContain("cesiumjs_google_photorealistic_3d_tiles_centered_sphere_fallback");
     expect(routerSource).toContain("createBangerCesiumTilesSrcDoc");
     expect(routerSource).toContain("Cesium.Cesium3DTileset.fromUrl");
     expect(routerSource).toContain("Cesium.Cesium3DTileset.fromIonAssetId");
     expect(routerSource).toContain("GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID");
     expect(routerSource).toContain("resolveCesiumIonToken");
+    expect(routerSource).toContain("viewer.scene.globe.show = true");
+    expect(routerSource).toContain("Cesium.Math.toRadians(-90)");
+    expect(routerSource).toContain('data-banger-cesium-planet-frame="centered_sphere"');
+    expect(routerSource).toContain('borderRadius: "50%"');
+    expect(routerSource).toContain('transform: "translate3d(-50%, -50%, 0)"');
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
     expect(routerSource).toContain('srcDoc={cesiumSrcDoc}');
     expect(routerSource).toContain('style={cesiumSrcDoc ? { pointerEvents: "auto" } : undefined}');

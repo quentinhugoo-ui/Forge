@@ -103,7 +103,7 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
         skyBox: false,
         requestRenderMode: false
       });
-      viewer.scene.globe.show = false;
+      viewer.scene.globe.show = true;
       viewer.scene.fog.enabled = true;
       viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
       const rootTilesetUrl = config.rootTilesetUrl;
@@ -122,18 +122,17 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
       const longitude = Number(config.view.longitude);
       const heightMeters = Number(config.view.heightMeters);
       if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-        viewer.camera.flyTo({
+        viewer.camera.setView({
           destination: Cesium.Cartesian3.fromDegrees(
             longitude,
             latitude,
-            Number.isFinite(heightMeters) ? heightMeters : 1800
+            Math.max(12000000, Number.isFinite(heightMeters) ? heightMeters * 4200 : 12000000)
           ),
           orientation: {
-            heading: Cesium.Math.toRadians(18),
-            pitch: Cesium.Math.toRadians(-38),
+            heading: 0,
+            pitch: Cesium.Math.toRadians(-90),
             roll: 0
-          },
-          duration: 0
+          }
         });
       } else {
         await viewer.zoomTo(tileset);
@@ -379,7 +378,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const renderPath = presentLoopFrameDataUrl
     ? "rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url"
     : cesiumSrcDoc
-      ? "cesiumjs_google_photorealistic_3d_tiles_full_bleed_fallback"
+      ? "cesiumjs_google_photorealistic_3d_tiles_centered_sphere_fallback"
       : "rust-banger-wgpu-maps-sphere-child-window";
 
   return (
@@ -412,13 +411,29 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
             draggable={false}
           />
         ) : cesiumSrcDoc ? (
-          <iframe
-            className="nativeViewportSlot__frame"
-            title=""
-            srcDoc={cesiumSrcDoc}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-            style={{ border: 0, display: "block", width: "100%", height: "100%" }}
-          />
+          <div
+            data-banger-cesium-planet-frame="centered_sphere"
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: "min(72vw, 72vh, 980px)",
+              height: "min(72vw, 72vh, 980px)",
+              transform: "translate3d(-50%, -50%, 0)",
+              borderRadius: "50%",
+              overflow: "hidden",
+              background: "#020508",
+              boxShadow: "0 0 90px rgba(60, 160, 220, 0.14)"
+            }}
+          >
+            <iframe
+              className="nativeViewportSlot__frame"
+              title=""
+              srcDoc={cesiumSrcDoc}
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              style={{ border: 0, display: "block", width: "100%", height: "100%" }}
+            />
+          </div>
         ) : (
           null
         )}
