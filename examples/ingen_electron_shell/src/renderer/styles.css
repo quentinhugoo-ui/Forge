@@ -3312,7 +3312,12 @@ button {
 }
 
 .shell--banger-page .surfaceRouter {
+  z-index: 37;
   pointer-events: auto;
+}
+
+.shell--banger-page .surface--banger {
+  min-height: 100vh;
 }
 
 .surface {

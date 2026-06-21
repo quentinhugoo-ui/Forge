@@ -55,6 +55,11 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
       overflow: hidden;
       background: #020508;
     }
+    .cesium-widget,
+    .cesium-widget canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
     .cesium-viewer-toolbar,
     .cesium-viewer-animationContainer,
     .cesium-viewer-timelineContainer,
@@ -101,10 +106,13 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
         selectionIndicator: false,
         timeline: false,
         skyBox: false,
+        scene3DOnly: true,
         requestRenderMode: false
       });
       viewer.scene.globe.show = true;
       viewer.scene.fog.enabled = true;
+      viewer.scene.highDynamicRange = true;
+      viewer.scene.globe.depthTestAgainstTerrain = true;
       viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
       const rootTilesetUrl = config.rootTilesetUrl;
       const isIonTileset = String(rootTilesetUrl).startsWith("ion://");
@@ -136,7 +144,7 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
         tileset.show = false;
         viewer.scene.primitives.add(tileset);
         const syncTilesetVisibility = () => {
-          tileset.show = viewer.camera.positionCartographic.height < 1400000;
+          tileset.show = viewer.camera.positionCartographic.height < 9000000;
         };
         viewer.camera.changed.addEventListener(syncTilesetVisibility);
         syncTilesetVisibility();
@@ -150,20 +158,20 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
           destination: Cesium.Cartesian3.fromDegrees(
             longitude,
             latitude,
-            Math.max(16000000, Number.isFinite(heightMeters) ? heightMeters * 6200 : 16000000)
+            Math.max(7200000, Number.isFinite(heightMeters) ? heightMeters * 2800 : 7200000)
           ),
           orientation: {
-            heading: 0,
-            pitch: Cesium.Math.toRadians(-90),
+            heading: Cesium.Math.toRadians(22),
+            pitch: Cesium.Math.toRadians(-62),
             roll: 0
           }
         });
       } else {
         viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(0, 12, 18000000),
+          destination: Cesium.Cartesian3.fromDegrees(0, 12, 8800000),
           orientation: {
-            heading: 0,
-            pitch: Cesium.Math.toRadians(-90),
+            heading: Cesium.Math.toRadians(18),
+            pitch: Cesium.Math.toRadians(-62),
             roll: 0
           }
         });
