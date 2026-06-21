@@ -25,16 +25,16 @@ function SurfaceProof({ surface }: { surface: HeaderSurfaceContract }) {
 
 const GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID = 2275207;
 
-function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): string {
+function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult | null): string {
   const view = {
-    latitude: config.initialView.latitude ?? 48.8584,
-    longitude: config.initialView.longitude ?? 2.2945,
-    heightMeters: config.initialView.heightMeters ?? 1800
+    latitude: config?.initialView.latitude ?? 37.42207,
+    longitude: config?.initialView.longitude ?? -122.08409,
+    heightMeters: config?.initialView.heightMeters ?? 2600
   };
   const bootstrapConfig = {
-    rootTilesetUrl: config.rootTilesetUrl,
-    cesiumIonAccessToken: config.cesiumIonAccessToken ?? "",
-    cesiumIonAccessTokenUrl: config.cesiumIonAccessTokenUrl ?? "",
+    rootTilesetUrl: config?.accepted ? config.rootTilesetUrl : "",
+    cesiumIonAccessToken: config?.accepted ? config.cesiumIonAccessToken ?? "" : "",
+    cesiumIonAccessTokenUrl: config?.accepted ? config.cesiumIonAccessTokenUrl ?? "" : "",
     ionAssetId: GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID,
     view
   };
@@ -122,20 +122,30 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
       }
       viewer.imageryLayers.removeAll();
       async function installGoogleEarthStyleGlobeImagery() {
-        if (Cesium.createWorldImageryAsync) {
-          const provider = await Cesium.createWorldImageryAsync({
-            style: Cesium.IonWorldImageryStyle ? Cesium.IonWorldImageryStyle.AERIAL : undefined
-          });
-          viewer.imageryLayers.addImageryProvider(provider);
-          return;
+        try {
+          if (Cesium.createWorldImageryAsync && (config.cesiumIonAccessToken || config.cesiumIonAccessTokenUrl)) {
+            const provider = await Cesium.createWorldImageryAsync({
+              style: Cesium.IonWorldImageryStyle ? Cesium.IonWorldImageryStyle.AERIAL : undefined
+            });
+            viewer.imageryLayers.addImageryProvider(provider);
+            return;
+          }
+        } catch (imageryError) {
+          console.warn("Banger Cesium ion imagery unavailable; using public world imagery.", imageryError);
         }
-        if (Cesium.IonImageryProvider?.fromAssetId && Cesium.ImageryLayer?.fromProviderAsync) {
-          viewer.imageryLayers.add(
-            Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(2))
-          );
-        }
+        viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+          url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          credit: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+          maximumLevel: 19
+        }));
       }
       async function installPhotorealisticTilesWhenClose() {
+        if (!rootTilesetUrl) {
+          return;
+        }
+        if (isIonTileset && !Cesium.Ion.defaultAccessToken) {
+          return;
+        }
         const tileset = isIonTileset
           ? await Cesium.Cesium3DTileset.fromIonAssetId(config.ionAssetId, { showCreditsOnScreen: true })
           : Cesium.Cesium3DTileset.fromUrl
@@ -260,7 +270,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       heightMeters: tilesConfig.initialView.heightMeters
     };
   }, [tilesConfig]);
-  const shouldRenderCesium = Boolean(tilesConfigLoaded && tilesConfig?.accepted && tilesConfig.rootTilesetUrl);
+  const shouldRenderCesium = true;
 
   const measureSlot = useCallback(() => {
     const rect = slotRef.current?.getBoundingClientRect();
@@ -447,7 +457,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const nativeFrameDataUrl = presentLoopFrameDataUrl;
   const hasNativeSurface = !shouldRenderCesium && nativeSurfaceStatus === "native live";
   const hasNativeFrame = !shouldRenderCesium && nativeFrameDataUrl.length > 0;
-  const cesiumSrcDoc = shouldRenderCesium && tilesConfig?.accepted && tilesConfig.rootTilesetUrl
+  const cesiumSrcDoc = shouldRenderCesium
     ? createBangerCesiumTilesSrcDoc(tilesConfig)
     : "";
   const renderPath = presentLoopFrameDataUrl

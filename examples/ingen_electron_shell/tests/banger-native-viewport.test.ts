@@ -21,7 +21,7 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain("getBangerPresentLoopBootstrap");
     expect(routerSource).toContain("getBangerGoogleTilesConfig");
     expect(routerSource).toContain("tilesConfigLoaded");
-    expect(routerSource).toContain("shouldRenderCesium");
+    expect(routerSource).toContain("const shouldRenderCesium = true");
     expect(routerSource).toContain('setNativeSurfaceStatus("tiles config loading")');
     expect(routerSource).toContain('setNativeSurfaceStatus("cesium dom renderer")');
     expect(routerSource).toContain("void hideNativeBanger?.()");
@@ -44,7 +44,12 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain("installGoogleEarthStyleGlobeImagery");
     expect(routerSource).toContain("Cesium.createWorldImageryAsync");
     expect(routerSource).toContain("Cesium.IonWorldImageryStyle.AERIAL");
+    expect(routerSource).toContain("Cesium.UrlTemplateImageryProvider");
+    expect(routerSource).toContain("services.arcgisonline.com/ArcGIS/rest/services/World_Imagery");
+    expect(routerSource).toContain("using public world imagery");
     expect(routerSource).toContain("installPhotorealisticTilesWhenClose");
+    expect(routerSource).toContain("if (!rootTilesetUrl)");
+    expect(routerSource).toContain("if (isIonTileset && !Cesium.Ion.defaultAccessToken)");
     expect(routerSource).toContain("tileset.show = viewer.camera.positionCartographic.height < 9000000");
     expect(routerSource).toContain("viewer.scene.globe.depthTestAgainstTerrain = true");
     expect(routerSource).toContain("viewer.scene.highDynamicRange = true");
@@ -58,6 +63,7 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('style={cesiumSrcDoc ? { pointerEvents: "auto" } : undefined}');
     expect(routerSource).toContain('const hasNativeSurface = !shouldRenderCesium && nativeSurfaceStatus === "native live"');
     expect(routerSource).toContain("const hasNativeFrame = !shouldRenderCesium && nativeFrameDataUrl.length > 0");
+    expect(routerSource).toContain("createBangerCesiumTilesSrcDoc(tilesConfig)");
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
     expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
     expect(routerSource).not.toContain("bangerFrameLedger");
