@@ -221,11 +221,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const [bootstrapStatus, setBootstrapStatus] = useState("pending");
   const [nativeSurfaceStatus, setNativeSurfaceStatus] = useState("pending");
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
+  const [tilesConfigLoaded, setTilesConfigLoaded] = useState(false);
   const nativeSurfaceAttachedRef = useRef(false);
 
   useEffect(() => {
     const getTilesConfig = globalThis.window?.forgeShell?.getBangerGoogleTilesConfig;
     if (!getTilesConfig) {
+      setTilesConfigLoaded(true);
       return undefined;
     }
     let active = true;
@@ -233,11 +235,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       .then((result) => {
         if (active) {
           setTilesConfig(result);
+          setTilesConfigLoaded(true);
         }
       })
       .catch(() => {
         if (active) {
           setTilesConfig(null);
+          setTilesConfigLoaded(true);
         }
       });
     return () => {
@@ -256,6 +260,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       heightMeters: tilesConfig.initialView.heightMeters
     };
   }, [tilesConfig]);
+  const shouldRenderCesium = Boolean(tilesConfigLoaded && tilesConfig?.accepted && tilesConfig.rootTilesetUrl);
 
   const measureSlot = useCallback(() => {
     const rect = slotRef.current?.getBoundingClientRect();
@@ -308,7 +313,22 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   useEffect(() => {
     const showNativeBanger = globalThis.window?.forgeShell?.showNativeBanger;
     const updateNativeBangerBounds = globalThis.window?.forgeShell?.updateNativeBangerBounds;
+    const hideNativeBanger = globalThis.window?.forgeShell?.hideNativeBanger;
     let active = true;
+    if (!tilesConfigLoaded) {
+      setNativeSurfaceStatus("tiles config loading");
+      return () => {
+        active = false;
+      };
+    }
+    if (shouldRenderCesium) {
+      nativeSurfaceAttachedRef.current = false;
+      setNativeSurfaceStatus("cesium dom renderer");
+      void hideNativeBanger?.();
+      return () => {
+        active = false;
+      };
+    }
     if (!showNativeBanger) {
       setNativeSurfaceStatus("bridge unavailable");
       return () => {
@@ -353,7 +373,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     return () => {
       active = false;
     };
-  }, [nativeMapsTarget, slotBounds]);
+  }, [nativeMapsTarget, shouldRenderCesium, slotBounds, tilesConfigLoaded]);
 
   useEffect(() => {
     return () => {
@@ -373,6 +393,19 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       | undefined;
     let active = true;
     const requestId = ++requestIdRef.current;
+    if (!tilesConfigLoaded) {
+      setBootstrapStatus("tiles config loading");
+      return () => {
+        active = false;
+      };
+    }
+    if (shouldRenderCesium) {
+      setPresentLoop(null);
+      setBootstrapStatus("cesium dom renderer");
+      return () => {
+        active = false;
+      };
+    }
     if (!getBootstrap) {
       setBootstrapStatus("bridge unavailable");
       return () => {
@@ -408,13 +441,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     return () => {
       active = false;
     };
-  }, [slotBounds]);
+  }, [shouldRenderCesium, slotBounds, tilesConfigLoaded]);
 
   const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
   const nativeFrameDataUrl = presentLoopFrameDataUrl;
-  const hasNativeSurface = nativeSurfaceStatus === "native live";
-  const hasNativeFrame = nativeFrameDataUrl.length > 0;
-  const cesiumSrcDoc = !hasNativeSurface && !hasNativeFrame && tilesConfig?.accepted && tilesConfig.rootTilesetUrl
+  const hasNativeSurface = !shouldRenderCesium && nativeSurfaceStatus === "native live";
+  const hasNativeFrame = !shouldRenderCesium && nativeFrameDataUrl.length > 0;
+  const cesiumSrcDoc = shouldRenderCesium && tilesConfig?.accepted && tilesConfig.rootTilesetUrl
     ? createBangerCesiumTilesSrcDoc(tilesConfig)
     : "";
   const renderPath = presentLoopFrameDataUrl

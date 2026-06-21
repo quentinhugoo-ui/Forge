@@ -20,6 +20,12 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"--surface-height": "100vh"');
     expect(routerSource).toContain("getBangerPresentLoopBootstrap");
     expect(routerSource).toContain("getBangerGoogleTilesConfig");
+    expect(routerSource).toContain("tilesConfigLoaded");
+    expect(routerSource).toContain("shouldRenderCesium");
+    expect(routerSource).toContain('setNativeSurfaceStatus("tiles config loading")');
+    expect(routerSource).toContain('setNativeSurfaceStatus("cesium dom renderer")');
+    expect(routerSource).toContain("void hideNativeBanger?.()");
+    expect(routerSource).toContain("setPresentLoop(null)");
     expect(routerSource).toContain('sceneKind: "maps_sphere"');
     expect(routerSource).toContain("Google Photorealistic 3D Tiles");
     expect(routerSource).toContain("banger_wgpu_native_cesium_3d_tiles_sphere");
@@ -50,6 +56,8 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
     expect(routerSource).toContain('srcDoc={cesiumSrcDoc}');
     expect(routerSource).toContain('style={cesiumSrcDoc ? { pointerEvents: "auto" } : undefined}');
+    expect(routerSource).toContain('const hasNativeSurface = !shouldRenderCesium && nativeSurfaceStatus === "native live"');
+    expect(routerSource).toContain("const hasNativeFrame = !shouldRenderCesium && nativeFrameDataUrl.length > 0");
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
     expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
     expect(routerSource).not.toContain("bangerFrameLedger");
