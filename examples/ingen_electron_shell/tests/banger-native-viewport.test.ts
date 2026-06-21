@@ -54,8 +54,11 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain("viewer.scene.globe.depthTestAgainstTerrain = true");
     expect(routerSource).toContain("viewer.scene.highDynamicRange = true");
     expect(routerSource).toContain("scene3DOnly: true");
-    expect(routerSource).toContain("Cesium.Math.toRadians(-62)");
-    expect(routerSource).not.toContain('data-banger-cesium-planet-frame="centered_sphere"');
+    expect(routerSource).toContain("BANGER_GLOBE_ORBIT_HEIGHT_METERS");
+    expect(routerSource).toContain("viewer.resize()");
+    expect(routerSource).toContain("Cesium.Math.toRadians(-90)");
+    expect(routerSource).not.toContain("Cesium.Math.toRadians(-62)");
+    expect(routerSource).toContain('data-banger-cesium-planet-frame="centered_sphere"');
     expect(routerSource).not.toContain('borderRadius: "50%"');
     expect(routerSource).not.toContain('transform: "translate3d(-50%, -50%, 0)"');
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
@@ -77,8 +80,10 @@ describe("Banger native viewport contract", () => {
     expect(indexHtmlSource).toContain("frame-src 'self' data: blob:");
     expect(indexHtmlSource).not.toContain("frame-src 'none'");
     expect(stylesSource).toContain(".shell--banger-page .surfaceRouter");
+    expect(stylesSource).toContain(".surfaceRouter--banger");
     expect(stylesSource).toContain("z-index: 37");
     expect(stylesSource).toContain(".shell--banger-page .surface--banger");
+    expect(stylesSource).toContain("height: 100vh");
     expect(stylesSource).toContain("min-height: 100vh");
   });
 

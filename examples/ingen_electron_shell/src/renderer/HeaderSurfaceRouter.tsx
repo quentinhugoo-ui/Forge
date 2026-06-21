@@ -24,6 +24,7 @@ function SurfaceProof({ surface }: { surface: HeaderSurfaceContract }) {
 }
 
 const GOOGLE_PHOTOREALISTIC_3D_TILES_ION_ASSET_ID = 2275207;
+const BANGER_GLOBE_ORBIT_HEIGHT_METERS = 16000000;
 
 function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult | null): string {
   const view = {
@@ -114,6 +115,8 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult | n
       viewer.scene.highDynamicRange = true;
       viewer.scene.globe.depthTestAgainstTerrain = true;
       viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+      viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2400000;
+      viewer.scene.screenSpaceCameraController.maximumZoomDistance = 42000000;
       const rootTilesetUrl = config.rootTilesetUrl;
       const isIonTileset = String(rootTilesetUrl).startsWith("ion://");
       const token = isIonTileset ? await resolveCesiumIonToken() : "";
@@ -163,29 +166,32 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult | n
       const latitude = Number(config.view.latitude);
       const longitude = Number(config.view.longitude);
       const heightMeters = Number(config.view.heightMeters);
+      const centerLatitude = Number.isFinite(latitude) ? latitude : 12;
+      const centerLongitude = Number.isFinite(longitude) ? longitude : 0;
+      const orbitHeight = Math.max(
+        ${BANGER_GLOBE_ORBIT_HEIGHT_METERS},
+        Number.isFinite(heightMeters) ? heightMeters * 4200 : ${BANGER_GLOBE_ORBIT_HEIGHT_METERS}
+      );
+      const setCenteredGlobeCamera = () => {
+        viewer.resize();
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(centerLongitude, centerLatitude, orbitHeight),
+          orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-90),
+            roll: 0
+          }
+        });
+        viewer.scene.requestRender();
+      };
       if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(
-            longitude,
-            latitude,
-            Math.max(7200000, Number.isFinite(heightMeters) ? heightMeters * 2800 : 7200000)
-          ),
-          orientation: {
-            heading: Cesium.Math.toRadians(22),
-            pitch: Cesium.Math.toRadians(-62),
-            roll: 0
-          }
-        });
+        setCenteredGlobeCamera();
       } else {
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(0, 12, 8800000),
-          orientation: {
-            heading: Cesium.Math.toRadians(18),
-            pitch: Cesium.Math.toRadians(-62),
-            roll: 0
-          }
-        });
+        setCenteredGlobeCamera();
       }
+      window.addEventListener("resize", setCenteredGlobeCamera, { passive: true });
+      setTimeout(setCenteredGlobeCamera, 80);
+      setTimeout(setCenteredGlobeCamera, 360);
       void installPhotorealisticTilesWhenClose().catch((tilesetError) => {
         console.error("Banger Cesium 3D Tiles close-range overlay failed.", tilesetError);
       });
@@ -479,6 +485,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         data-native-surface-status={nativeSurfaceStatus}
         data-render-path={renderPath}
         data-active-renderer="banger_wgpu_native_cesium_3d_tiles_sphere"
+        data-banger-cesium-planet-frame="centered_sphere"
         data-tileset-provider={tilesConfig?.provider ?? "google_photorealistic_3d_tiles"}
         data-tileset-renderer-model={tilesConfig?.rendererModel ?? "cesium_for_unreal_style_3d_tileset"}
         data-tileset-georeference={
@@ -594,7 +601,11 @@ export function HeaderSurfaceRouter({ snapshot }: { snapshot: HeaderSurfaceSnaps
   }
 
   return (
-    <section className="surfaceRouter" style={style} aria-label="Header opened surface router">
+    <section
+      className={primary.kind === "banger_native_child" ? "surfaceRouter surfaceRouter--banger" : "surfaceRouter"}
+      style={style}
+      aria-label="Header opened surface router"
+    >
       {content}
     </section>
   );
