@@ -112,12 +112,36 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
       if (token) {
         Cesium.Ion.defaultAccessToken = token;
       }
-      const tileset = isIonTileset
-        ? await Cesium.Cesium3DTileset.fromIonAssetId(config.ionAssetId, { showCreditsOnScreen: true })
-        : Cesium.Cesium3DTileset.fromUrl
-          ? await Cesium.Cesium3DTileset.fromUrl(rootTilesetUrl, { showCreditsOnScreen: true })
-          : new Cesium.Cesium3DTileset({ url: rootTilesetUrl, showCreditsOnScreen: true });
-      viewer.scene.primitives.add(tileset);
+      viewer.imageryLayers.removeAll();
+      async function installGoogleEarthStyleGlobeImagery() {
+        if (Cesium.createWorldImageryAsync) {
+          const provider = await Cesium.createWorldImageryAsync({
+            style: Cesium.IonWorldImageryStyle ? Cesium.IonWorldImageryStyle.AERIAL : undefined
+          });
+          viewer.imageryLayers.addImageryProvider(provider);
+          return;
+        }
+        if (Cesium.IonImageryProvider?.fromAssetId && Cesium.ImageryLayer?.fromProviderAsync) {
+          viewer.imageryLayers.add(
+            Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(2))
+          );
+        }
+      }
+      async function installPhotorealisticTilesWhenClose() {
+        const tileset = isIonTileset
+          ? await Cesium.Cesium3DTileset.fromIonAssetId(config.ionAssetId, { showCreditsOnScreen: true })
+          : Cesium.Cesium3DTileset.fromUrl
+            ? await Cesium.Cesium3DTileset.fromUrl(rootTilesetUrl, { showCreditsOnScreen: true })
+            : new Cesium.Cesium3DTileset({ url: rootTilesetUrl, showCreditsOnScreen: true });
+        tileset.show = false;
+        viewer.scene.primitives.add(tileset);
+        const syncTilesetVisibility = () => {
+          tileset.show = viewer.camera.positionCartographic.height < 1400000;
+        };
+        viewer.camera.changed.addEventListener(syncTilesetVisibility);
+        syncTilesetVisibility();
+      }
+      await installGoogleEarthStyleGlobeImagery();
       const latitude = Number(config.view.latitude);
       const longitude = Number(config.view.longitude);
       const heightMeters = Number(config.view.heightMeters);
@@ -126,7 +150,7 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
           destination: Cesium.Cartesian3.fromDegrees(
             longitude,
             latitude,
-            Math.max(12000000, Number.isFinite(heightMeters) ? heightMeters * 4200 : 12000000)
+            Math.max(16000000, Number.isFinite(heightMeters) ? heightMeters * 6200 : 16000000)
           ),
           orientation: {
             heading: 0,
@@ -135,8 +159,18 @@ function createBangerCesiumTilesSrcDoc(config: BangerGoogleTilesConfigResult): s
           }
         });
       } else {
-        await viewer.zoomTo(tileset);
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(0, 12, 18000000),
+          orientation: {
+            heading: 0,
+            pitch: Cesium.Math.toRadians(-90),
+            roll: 0
+          }
+        });
       }
+      void installPhotorealisticTilesWhenClose().catch((tilesetError) => {
+        console.error("Banger Cesium 3D Tiles close-range overlay failed.", tilesetError);
+      });
       window.parent.postMessage({ type: "forge:banger-cesium-tiles", status: "tiles_loaded" }, "*");
     })().catch((error) => {
       console.error("Banger Cesium 3D Tiles bootstrap failed.", error);
@@ -378,7 +412,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const renderPath = presentLoopFrameDataUrl
     ? "rust_banger_wgpu_maps_sphere_present_loop_rgba8_to_bmp_data_url"
     : cesiumSrcDoc
-      ? "cesiumjs_google_photorealistic_3d_tiles_centered_sphere_fallback"
+      ? "cesiumjs_google_earth_style_globe_with_photorealistic_tiles_overlay"
       : "rust-banger-wgpu-maps-sphere-child-window";
 
   return (
@@ -411,29 +445,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
             draggable={false}
           />
         ) : cesiumSrcDoc ? (
-          <div
-            data-banger-cesium-planet-frame="centered_sphere"
-            style={{
-              position: "absolute",
-              left: "50%",
-              top: "50%",
-              width: "min(72vw, 72vh, 980px)",
-              height: "min(72vw, 72vh, 980px)",
-              transform: "translate3d(-50%, -50%, 0)",
-              borderRadius: "50%",
-              overflow: "hidden",
-              background: "#020508",
-              boxShadow: "0 0 90px rgba(60, 160, 220, 0.14)"
-            }}
-          >
-            <iframe
-              className="nativeViewportSlot__frame"
-              title=""
-              srcDoc={cesiumSrcDoc}
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-              style={{ border: 0, display: "block", width: "100%", height: "100%" }}
-            />
-          </div>
+          <iframe
+            className="nativeViewportSlot__frame"
+            title=""
+            srcDoc={cesiumSrcDoc}
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            style={{ border: 0, display: "block", width: "100%", height: "100%" }}
+          />
         ) : (
           null
         )}
