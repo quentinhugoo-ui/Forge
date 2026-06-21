@@ -18967,13 +18967,51 @@ function installIpc(): void {
       };
     }
     if (cesiumIonAccessTokenUrl) {
+      let brokeredCesiumIonAccessToken = "";
+      try {
+        const tokenResponse = await net.fetch(cesiumIonAccessTokenUrl, { cache: "no-store" });
+        const tokenPayload = await tokenResponse.json() as unknown;
+        if (tokenPayload && typeof tokenPayload === "object") {
+          const tokenRecord = tokenPayload as Record<string, unknown>;
+          brokeredCesiumIonAccessToken = [
+            tokenRecord.token,
+            tokenRecord.accessToken,
+            tokenRecord.cesiumIonAccessToken,
+            tokenRecord.ionToken
+          ].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+        }
+      } catch (error) {
+        console.error("Banger Cesium ion token broker fetch failed.", error);
+      }
+      if (!brokeredCesiumIonAccessToken) {
+        return {
+          ...base,
+          accepted: false,
+          error: {
+            code: "shadow_only",
+            message: "Render Cesium ion token broker did not return a token.",
+            proofHash: hashJson({
+              schema,
+              broker: hashJson(cesiumIonAccessTokenUrl).slice(0, 16),
+              token: false
+            })
+          },
+          proofHash: hashJson({
+            schema,
+            accepted: false,
+            source: "cesium-ion-token-broker",
+            tokenEndpointFingerprint: hashJson(cesiumIonAccessTokenUrl).slice(0, 16),
+            token: false
+          })
+        };
+      }
       const result = {
         ...base,
         accepted: true,
         source: "cesium-ion-token-broker" as const,
         accessMode: "cesium-ion" as const,
         rootTilesetUrl: "ion://google-photorealistic-3d-tiles",
-        cesiumIonAccessTokenUrl
+        cesiumIonAccessToken: brokeredCesiumIonAccessToken
       };
       return {
         ...result,
@@ -18985,6 +19023,7 @@ function installIpc(): void {
           source: result.source,
           accessMode: result.accessMode,
           tokenEndpointFingerprint: hashJson(cesiumIonAccessTokenUrl).slice(0, 16),
+          tokenFingerprint: hashJson(brokeredCesiumIonAccessToken).slice(0, 16),
           requestBudget: result.requestBudget,
           lod: result.lod,
           georeference: result.georeference,

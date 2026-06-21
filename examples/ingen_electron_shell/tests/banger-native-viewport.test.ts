@@ -288,6 +288,10 @@ describe("Banger native viewport contract", () => {
     expect(mainSource).toContain("source: \"cesium-ion-token-broker\"");
     expect(mainSource).toContain("FORGE_BANGER_CESIUM_ION_TOKEN_URL");
     expect(mainSource).toContain("/api/banger/cesium-ion-token");
+    expect(mainSource).toContain("await net.fetch(cesiumIonAccessTokenUrl");
+    expect(mainSource).toContain("brokeredCesiumIonAccessToken");
+    expect(mainSource).toContain("cesiumIonAccessToken: brokeredCesiumIonAccessToken");
+    expect(mainSource).toContain("Render Cesium ion token broker did not return a token.");
     expect(canvasSurfacesSource).not.toContain("config.cesiumIonAccessTokenUrl");
     expect(mainSource).not.toContain("FORGE_BANGER_GOOGLE_TILES_BACKEND_URL");
     expect(mainSource).toContain("rootRequestTtlHours: 3");
