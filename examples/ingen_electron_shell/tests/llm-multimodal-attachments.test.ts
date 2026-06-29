@@ -746,6 +746,10 @@ describe("LLM multimodal attachments", () => {
   it("restores a persisted chat transcript when a sidebar session is opened", () => {
     expect(mainSource).toContain("function restoreChatSessionToCanvas");
     expect(mainSource).toContain("let chatArchiveLoadPromise");
+    expect(mainSource).toMatch(/ipcMain\.handle\("forge:get-sidebar-snapshot"[\s\S]*if \(!validateSender\(event\)\) \{\s*await loadChatArchive\(\);/);
+    expect(mainSource).toMatch(/await loadChatArchive\(\);\s*void refreshRustBackendProjection\(shellRoot\);\s*return sidebarSnapshot\(\);/);
+    expect(appSource).toContain("Promise.allSettled([headerShadowStore.boot(), sidebarShadowStore.boot(), headerSurfaceStore.refresh()])");
+    expect(appSource).not.toContain("startup-new-session");
     expect(mainSource).toContain("await loadChatArchive()");
     expect(mainSource).toContain("materializeOpenedChatSession(command.sessionId, command.section)");
     expect(mainSource).toContain("restoreChatSessionToCanvas(command.sessionId)");

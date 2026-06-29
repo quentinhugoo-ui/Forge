@@ -806,14 +806,12 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
-    void sidebarShadowStore
-      .dispatch(sidebarShadowStore.command({ kind: "navigate", section: "forge" }), "startup-new-session")
-      .then(async () => {
-        if (!mounted) {
-          return;
-        }
-        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot(), headerSurfaceStore.refresh()]);
-      });
+    void (async () => {
+      await Promise.allSettled([headerShadowStore.boot(), sidebarShadowStore.boot(), headerSurfaceStore.refresh()]);
+      if (!mounted) {
+        return;
+      }
+    })();
     return () => {
       mounted = false;
     };

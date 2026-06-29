@@ -19075,8 +19075,10 @@ function installIpc(): void {
   });
   ipcMain.handle("forge:get-sidebar-snapshot", async (event): Promise<SidebarSnapshot> => {
     if (!validateSender(event)) {
+      await loadChatArchive();
       return { ...sidebarSnapshot(), mode: "electron" };
     }
+    await loadChatArchive();
     void refreshRustBackendProjection(shellRoot);
     return sidebarSnapshot();
   });
