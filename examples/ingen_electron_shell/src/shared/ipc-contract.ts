@@ -5,7 +5,6 @@ import {
   BRAIN_EDITIMAGE_COMMAND,
   BRAIN_IMAGE_RESULT_SCHEMA,
   BRAIN_GMAIL_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GMAIL_RESULT_SCHEMA,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_GOOGLEWEB_RESULT_SCHEMA,
@@ -97,8 +96,6 @@ export {
   BRAIN_FRONTDESIGN_COMMAND_DESCRIPTION,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COMMAND_DESCRIPTION,
-  BRAIN_GMAIL_COM_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND_DESCRIPTION,
   BRAIN_GMAIL_RESULT_SCHEMA,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION,
@@ -1497,7 +1494,7 @@ export interface NativeDomRamCartographyResult {
 
 export interface NativeWebExplorerCodeAct {
   schema: "forge.webexplorer.googleweb.request.v1" | "forge.webexplorer.maps.request.v1" | "forge.webexplorer.gmail.request.v1" | "forge.webexplorer.airbnb.request.v1";
-  command: typeof BRAIN_GOOGLEWEB_COMMAND | typeof BRAIN_MAPS_COMMAND | typeof BRAIN_GMAIL_COMMAND | typeof BRAIN_GMAIL_COM_COMMAND | typeof BRAIN_AIRBNB_COMMAND;
+  command: typeof BRAIN_GOOGLEWEB_COMMAND | typeof BRAIN_MAPS_COMMAND | typeof BRAIN_GMAIL_COMMAND | typeof BRAIN_AIRBNB_COMMAND;
   parallelSessionIndex?: number;
   intent?: "open" | "search" | "inspect" | "summarize" | "draft" | "reply";
   target?: string;

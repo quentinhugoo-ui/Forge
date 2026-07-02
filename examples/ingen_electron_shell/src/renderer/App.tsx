@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BRAIN_AIRBNB_COMMAND,
   BRAIN_GMAIL_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_PLAN_COMMAND,
@@ -94,7 +93,7 @@ function stripTooltipAttributes(root: ParentNode = document): void {
 
 function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModuleId | null {
   if (event.command === BRAIN_AIRBNB_COMMAND) return "airbnb";
-  if (event.command === BRAIN_GMAIL_COMMAND || event.command === BRAIN_GMAIL_COM_COMMAND) return "gmail";
+  if (event.command === BRAIN_GMAIL_COMMAND) return "gmail";
   return null;
 }
 

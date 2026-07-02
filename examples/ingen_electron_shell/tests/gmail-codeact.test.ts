@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GMAIL_COMMAND,
-  GMAIL_COM_COMMAND,
   GMAIL_SIGN_IN_URL,
   extractGmailCodeAct,
   gmailWebExplorerNavigationUrl,
@@ -107,24 +106,8 @@ describe("Gmail CodeAct", () => {
     });
   });
 
-  it("opens the split WebExplorer directly on the Gmail Google Accounts sign-in URL for /gmail_com", () => {
-    const codeAct = readGmailCodeAct("/gmail_com");
-
-    expect(codeAct?.kind).toBe("request");
-    if (codeAct?.kind !== "request") throw new Error("expected request");
-    expect(codeAct.request).toMatchObject({
-      command: GMAIL_COM_COMMAND,
-      intent: "open",
-      url: expect.stringContaining("https://accounts.google.com/v3/signin/identifier")
-    });
-    expect(codeAct.request.url).toContain("continue=https%3A%2F%2Fmail.google.com%2Fmail%2Fu%2F0%2F");
-    expect(codeAct.request.url).toContain("service=mail");
-    expect(codeAct.request.url).toContain("flowEntry=ServiceLogin");
-    expect(codeAct.request.proofHash).toMatch(/^[a-f0-9]{64}$/);
-  });
-
   it("renders only the machine result, not a fixed user-facing sentence", () => {
-    const request = parseGmailCodeAct("/gmail_com");
+    const request = parseGmailCodeAct('/gmail_ intent="open" mode="split_webexplorer"');
     expect(request).toBeDefined();
 
     const rendered = renderGmailCodeActResult(request!);
@@ -197,12 +180,13 @@ describe("Gmail CodeAct", () => {
     expect(rendered).not.toContain("client-secret");
     expect(rendered).not.toContain("ya29.short");
   });
+  it("does not accept the removed /gmail_com CodeAct", () => {
+    expect(parseGmailCodeAct("/gmail_com")).toBeUndefined();
+    expect(readGmailCodeAct("/gmail_com")).toBeUndefined();
+  });
   it("normalizes every open Gmail surface navigation to the Google Accounts sign-in URL", () => {
-    const gmailCom = parseGmailCodeAct("/gmail_com");
     const gmailOpen = parseGmailCodeAct('/gmail_ intent="open" query="gmail" keywords=""');
     const gmailSearch = parseGmailCodeAct('/gmail_ intent="search" query="facture" keywords=""');
-
-    expect(gmailWebExplorerNavigationUrl(gmailCom!)).toBe(GMAIL_SIGN_IN_URL);
     expect(gmailWebExplorerNavigationUrl(gmailOpen!)).toBe(GMAIL_SIGN_IN_URL);
     expect(gmailWebExplorerNavigationUrl(gmailSearch!)).toContain("https://mail.google.com/mail/");
   });

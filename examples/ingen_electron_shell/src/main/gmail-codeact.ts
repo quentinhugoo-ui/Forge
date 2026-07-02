@@ -1,12 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   BRAIN_GMAIL_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GMAIL_RESULT_SCHEMA
 } from "../shared/ipc-contract.js";
 
 export const GMAIL_COMMAND = BRAIN_GMAIL_COMMAND;
-export const GMAIL_COM_COMMAND = BRAIN_GMAIL_COM_COMMAND;
 export const GMAIL_RESULT_SCHEMA = BRAIN_GMAIL_RESULT_SCHEMA;
 
 const MAX_FIELD_CHARS = 420;
@@ -21,7 +19,7 @@ export type GmailSendPolicy = "user_approval_required";
 
 export interface GmailCodeActRequest {
   schema: "forge.webexplorer.gmail.request.v1";
-  command: typeof GMAIL_COMMAND | typeof GMAIL_COM_COMMAND;
+  command: typeof GMAIL_COMMAND;
   templateProofHash: string;
   intent: GmailIntent;
   query: string;
@@ -117,10 +115,6 @@ export function readGmailCodeAct(input: string): GmailCodeAct | undefined {
   if (!command) {
     return undefined;
   }
-  if (command === GMAIL_COM_COMMAND) {
-    const request = parseGmailCodeAct(trimmed);
-    return request ? { kind: "request", request } : undefined;
-  }
   const body = trimmed.slice(command.length).trim();
   if (!body) {
     return { kind: "template", result: gmailTemplateResult("empty_command") };
@@ -143,14 +137,14 @@ export function parseGmailCodeAct(input: string): GmailCodeActRequest | undefine
     return undefined;
   }
   const fields = parseTemplateFields(trimmed.slice(command.length).trim());
-  const intent = command === GMAIL_COM_COMMAND ? "open" : readChoice(fields.get("intent"), GMAIL_INTENTS, "open");
+  const intent = readChoice(fields.get("intent"), GMAIL_INTENTS, "open");
   const query = clampText(fields.get("query") ?? fields.get("q") ?? "", MAX_FIELD_CHARS);
   const keywords = uniqueKeywords(splitKeywords(fields.get("keywords") ?? fields.get("keyword")));
   const recipient = clampText(fields.get("recipient") ?? fields.get("to") ?? "", MAX_FIELD_CHARS);
   const subject = clampText(fields.get("subject") ?? "", MAX_FIELD_CHARS);
   const body = clampText(fields.get("body") ?? "", MAX_FIELD_CHARS);
   const messageId = clampText(fields.get("message_id") ?? fields.get("messageId") ?? fields.get("id") ?? "", 160);
-  const defaultMode: GmailMode = command === GMAIL_COM_COMMAND || intent === "open" ? "split_webexplorer" : "gmail_api";
+  const defaultMode: GmailMode = intent === "open" ? "split_webexplorer" : "gmail_api";
   return buildGmailCodeActRequest({
     command,
     templateProofHash: normalizeProofHash(fields.get("template_proof_hash") ?? fields.get("templateProofHash")),
@@ -202,7 +196,7 @@ export function renderGmailCodeActResult(request: GmailCodeActRequest): string {
 }
 
 export function gmailWebExplorerNavigationUrl(request: GmailCodeActRequest): string {
-  if (request.command === GMAIL_COM_COMMAND || request.intent === "open") {
+  if (request.intent === "open") {
     return GMAIL_SIGN_IN_URL;
   }
   return request.url;
@@ -220,7 +214,7 @@ function buildGmailCodeActRequest(params: Omit<GmailCodeActRequest, "schema" | "
 }
 
 function gmailUrl(params: Pick<GmailCodeActRequest, "command" | "intent" | "query" | "keywords" | "recipient" | "subject" | "body">): string {
-  if (params.command === GMAIL_COM_COMMAND || params.intent === "open") {
+  if (params.intent === "open") {
     return GMAIL_SIGN_IN_URL;
   }
   if (params.intent === "draft" || params.intent === "reply") {
@@ -239,11 +233,8 @@ function gmailUrl(params: Pick<GmailCodeActRequest, "command" | "intent" | "quer
   return url.toString();
 }
 
-function readGmailCommand(value: string): typeof GMAIL_COMMAND | typeof GMAIL_COM_COMMAND | undefined {
+function readGmailCommand(value: string): typeof GMAIL_COMMAND | undefined {
   const trimmed = value.trim();
-  if (trimmed === GMAIL_COM_COMMAND || trimmed.startsWith(`${GMAIL_COM_COMMAND} `)) {
-    return GMAIL_COM_COMMAND;
-  }
   if (trimmed === GMAIL_COMMAND || trimmed.startsWith(`${GMAIL_COMMAND} `)) {
     return GMAIL_COMMAND;
   }
@@ -251,9 +242,7 @@ function readGmailCommand(value: string): typeof GMAIL_COMMAND | typeof GMAIL_CO
 }
 
 function gmailCodeActText(input: string): string {
-  const gmailComIndex = input.indexOf(GMAIL_COM_COMMAND);
-  const gmailIndex = input.indexOf(GMAIL_COMMAND);
-  const commandIndex = [gmailComIndex, gmailIndex].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
+  const commandIndex = input.indexOf(GMAIL_COMMAND);
   if (commandIndex < 0) {
     return "";
   }

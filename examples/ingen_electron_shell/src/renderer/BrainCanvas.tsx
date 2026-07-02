@@ -234,7 +234,7 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
 }
 
 function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
-  if (command === "/gmail_" || command === "/gmail_com") return <GmailIcon />;
+  if (command === "/gmail_") return <GmailIcon />;
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
   if (command === BRAIN_CODEDOCS_COMMAND) return <Glyph kind="database" />;
@@ -334,7 +334,7 @@ const BRAIN_LEARNING_MACRO_PREFIX = "• ";
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
-const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<string>(["/gmail_com", BRAIN_RENAME_SESSION_COMMAND]);
+const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<string>([BRAIN_RENAME_SESSION_COMMAND]);
 
 const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>> = {
   "/sciencebrain_": "Switch to science mode for math, engineering, simulation, 3D, or technical analysis.",

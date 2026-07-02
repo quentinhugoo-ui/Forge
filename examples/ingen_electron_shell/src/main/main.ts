@@ -28,7 +28,6 @@ import {
   BRAIN_EDITIMAGE_COMMAND,
   BRAIN_RENAME_SESSION_COMMAND,
   BRAIN_GMAIL_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND,
   BRAIN_WEBSEARCH_COMMAND,
   BRAIN_CODEDOCS_COMMAND,
   BRAIN_GITHUB_MCP_COMMAND,
@@ -4083,7 +4082,7 @@ function webExplorerCodeActInstructions(moduleId = ""): string {
   if (moduleId === "gmail") {
     return [
       "Active module: Gmail. If a Gmail action is requested, write your own natural sentence adapted to the user's request, then explicitly activate the Gmail CodeAct with its slots.",
-      `To open Gmail directly, activate ${BRAIN_GMAIL_COM_COMMAND} after your natural sentence.`,
+      `To open Gmail directly, activate ${BRAIN_GMAIL_COMMAND} with intent="open" mode="split_webexplorer" after your natural sentence.`,
       "The app automatically displays the event when the CodeAct is active; do not describe the technical event in your sentence.",
       `Template Gmail: ${BRAIN_GMAIL_COMMAND} intent="open|search|inspect|summarize|draft|reply" query="..." keywords="..." recipient="..." subject="..." body="...".`,
       "Never send an email yourself: draft/reply only prepares a draft for user validation.",
@@ -5587,7 +5586,6 @@ function isBrainCodeActSurfaceCommand(command: BrainCodeActCommand): boolean {
     command === BRAIN_GOOGLEWEB_COMMAND ||
     command === BRAIN_MAPS_COMMAND ||
     command === BRAIN_GMAIL_COMMAND ||
-    command === BRAIN_GMAIL_COM_COMMAND ||
     command === BRAIN_AIRBNB_COMMAND ||
     command === BRAIN_WEB_COMMAND
   );

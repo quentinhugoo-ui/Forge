@@ -499,7 +499,7 @@ describe("LLM multimodal attachments", () => {
   it("keeps Gmail CodeAct user-facing text normal and opens WebExplorer from results", () => {
     expect(mainSource).toContain("ecris ta propre phrase naturelle");
     expect(mainSource).toContain("L'application affiche automatiquement l'evenement");
-    expect(mainSource).toContain("BRAIN_GMAIL_COM_COMMAND");
+    expect(mainSource).not.toContain(`BRAIN_GMAIL_${"COM"}_COMMAND`);
     expect(appSource).toContain('latestAssistant?.text.includes("GMAIL_RESULT")');
     expect(rendererSource).not.toContain("stripGmailCodeActLines");
     expect(rendererSource).not.toContain("J'ouvre Gmail dans Web Explorer.");
@@ -614,7 +614,7 @@ describe("LLM multimodal attachments", () => {
   });
 
   it("renders module CodeAct events with their shared sidebar logos", () => {
-    expect(rendererSource).toContain('command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND');
+    expect(rendererSource).toContain('command === BRAIN_GMAIL_COMMAND');
     expect(rendererSource).toContain('<ModuleLogo id="gmail" />');
     expect(rendererSource).toContain('if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />');
     expect(rendererSource).toContain('if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <ModuleLogo id="searcharchive" />');

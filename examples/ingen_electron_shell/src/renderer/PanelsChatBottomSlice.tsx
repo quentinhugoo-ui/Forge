@@ -9,7 +9,6 @@ import {
   BRAIN_CODEACT_COMMANDS,
   BRAIN_FRONTDESIGN_COMMAND,
   BRAIN_GMAIL_COMMAND,
-  BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_MAPS_COMMAND,
   BRAIN_SCRAPERS_COMMAND,
@@ -1372,7 +1371,6 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SCRAPERS_COMMAND, "Collect web sources"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
-  [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
   [BRAIN_AIRBNB_COMMAND, "Use Airbnb"],
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
@@ -3132,7 +3130,7 @@ function agentActionTone(command: AgentActionEventCommand): "read" | "write" | "
 
 function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command: TranscriptCodeActCommand; brainSegmentPhase?: "changing" | "changed" }) {
   if (isAgentActionCommand(command)) return <AgentActionCodeActIcon command={command} />;
-  if (command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND) return <ModuleLogo id="gmail" />;
+  if (command === BRAIN_GMAIL_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
   if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
   if (command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND) return <BrainSegmentCodeActIcon phase="changed" />;
