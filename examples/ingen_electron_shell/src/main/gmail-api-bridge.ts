@@ -163,15 +163,30 @@ export async function runGmailApiBridge(request: GmailCodeActRequest): Promise<G
       warnings: []
     });
   } catch (error) {
+    const message = friendlyError(error);
+    if (gmailApiErrorNeedsAuthorization(message)) {
+      return gmailApiResult(request, {
+        status: "auth_required",
+        operation,
+        requiredScopes,
+        endpoints,
+        warnings: ["Gmail OAuth is connected, but the current token does not include the scope required for this mailbox action. Reconnect Gmail with the requested scope, then retry."],
+        error: message
+      });
+    }
     return gmailApiResult(request, {
       status: "error",
       operation,
       requiredScopes,
       endpoints,
       warnings: [],
-      error: friendlyError(error)
+      error: message
     });
   }
+}
+
+function gmailApiErrorNeedsAuthorization(message: string): boolean {
+  return /metadata scope does not support|insufficient permissions?|insufficient authentication scopes?|PERMISSION_DENIED|Request had insufficient authentication scopes/i.test(message);
 }
 
 export function renderGmailApiBridgeResult(result: GmailApiBridgeResult): string {

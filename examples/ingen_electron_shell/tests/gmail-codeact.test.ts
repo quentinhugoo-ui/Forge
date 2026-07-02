@@ -180,6 +180,32 @@ describe("Gmail CodeAct", () => {
     expect(rendered).not.toContain("client-secret");
     expect(rendered).not.toContain("ya29.short");
   });
+
+  it("maps Gmail insufficient scope errors to auth_required", async () => {
+    process.env.INGEN_GMAIL_ACCESS_TOKEN = "metadata-token";
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.startsWith(`${GMAIL_API_BASE_URL}/users/me/messages`)) {
+        return new Response(JSON.stringify({
+          error: {
+            code: 403,
+            message: "Metadata scope does not support 'q' parameter",
+            status: "PERMISSION_DENIED"
+          }
+        }), { status: 403 });
+      }
+      return new Response(JSON.stringify({ error: "unexpected" }), { status: 500 });
+    }) as typeof fetch;
+
+    const request = parseGmailCodeAct('/gmail_ intent="search" query="newer_than:1d" max_results=2');
+    const result = await runGmailApiBridge(request!);
+
+    expect(result.status).toBe("auth_required");
+    expect(result.requiredScopes).toEqual(["https://www.googleapis.com/auth/gmail.readonly"]);
+    expect(result.warnings.join(" ")).toContain("current token does not include the scope");
+    expect(result.error).toContain("Metadata scope does not support");
+  });
+
   it("does not accept the removed /gmail_com CodeAct", () => {
     expect(parseGmailCodeAct("/gmail_com")).toBeUndefined();
     expect(readGmailCodeAct("/gmail_com")).toBeUndefined();
