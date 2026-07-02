@@ -499,6 +499,8 @@ describe("LLM multimodal attachments", () => {
   it("keeps Gmail CodeAct user-facing text normal and opens WebExplorer from results", () => {
     expect(mainSource).toContain("ecris ta propre phrase naturelle");
     expect(mainSource).toContain("L'application affiche automatiquement l'evenement");
+    expect(mainSource).toContain("checking recent mail");
+    expect(brainSource).toContain("Gmail visible prose must be short and user-facing");
     expect(mainSource).not.toContain(`BRAIN_GMAIL_${"COM"}_COMMAND`);
     expect(appSource).toContain('latestAssistant?.text.includes("GMAIL_RESULT")');
     expect(rendererSource).not.toContain("stripGmailCodeActLines");
@@ -509,6 +511,7 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT"');
     expect(rendererSource).toContain('isGmailGroup');
     expect(rendererSource).toContain('Gmail CodeAct pipeline');
+    expect(rendererSource).toContain('event.command === BRAIN_GMAIL_COMMAND) {');
   });
 
   it("registers Airbnb as a Brain-backed module CodeAct", () => {

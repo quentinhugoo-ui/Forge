@@ -2201,6 +2201,9 @@ function shouldGroupAsCodexCommandEvent(event: TranscriptCodeActEvent): boolean 
   if (isAgentActionCommand(event.command) && isAgentFileModificationCommand(event.command)) {
     return false;
   }
+  if (event.command === BRAIN_GMAIL_COMMAND) {
+    return false;
+  }
   return !isBrainSegmentCommand(event.command);
 }
 

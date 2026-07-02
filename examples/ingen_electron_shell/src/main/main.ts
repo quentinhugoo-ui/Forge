@@ -4081,7 +4081,8 @@ function codexRuntimeReasoning(profile: ProviderRuntimeProfile): string {
 function webExplorerCodeActInstructions(moduleId = ""): string {
   if (moduleId === "gmail") {
     return [
-      "Active module: Gmail. If a Gmail action is requested, write your own natural sentence adapted to the user's request, then explicitly activate the Gmail CodeAct with its slots.",
+      "Active module: Gmail. If a Gmail action is requested, write your own short natural sentence adapted to the user's request, then explicitly activate the Gmail CodeAct with its slots.",
+      "For Gmail visible prose, say only that you are checking recent mail; do not mention dedicated access, templates, API, authorization, or result lists before the Gmail result.",
       `To open Gmail directly, activate ${BRAIN_GMAIL_COMMAND} with intent="open" mode="split_webexplorer" after your natural sentence.`,
       "The app automatically displays the event when the CodeAct is active; do not describe the technical event in your sentence.",
       `Template Gmail: ${BRAIN_GMAIL_COMMAND} intent="open|search|inspect|summarize|draft|reply" query="..." keywords="..." recipient="..." subject="..." body="...".`,
