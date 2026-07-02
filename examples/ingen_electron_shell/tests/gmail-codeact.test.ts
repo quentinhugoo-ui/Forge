@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GMAIL_COMMAND,
   GMAIL_COM_COMMAND,
@@ -10,11 +10,20 @@ import {
   renderGmailCodeActResult,
   renderGmailTemplateResult
 } from "../src/main/gmail-codeact";
-import { gmailApiRequiredScopes, runGmailApiBridge } from "../src/main/gmail-api-bridge";
+import { GMAIL_API_BASE_URL, GMAIL_OAUTH_TOKEN_URL, gmailApiRequiredScopes, runGmailApiBridge } from "../src/main/gmail-api-bridge";
+
+const originalFetch = globalThis.fetch;
 
 describe("Gmail CodeAct", () => {
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     delete process.env.GMAIL_ACCESS_TOKEN;
+    delete process.env.INGEN_GMAIL_ACCESS_TOKEN;
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    delete process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+    delete process.env.FORGE_GMAIL_TOKEN_PROXY_SECRET;
+    delete process.env.GMAIL_TOKEN_PROXY_SECRET;
   });
   it("returns a compact template for bare /gmail_", () => {
     const codeAct = readGmailCodeAct("/gmail_");
@@ -159,6 +168,35 @@ describe("Gmail CodeAct", () => {
     }
   });
 
+  it("exchanges a refresh token for a short Gmail access token without echoing secrets", async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = "client-id";
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "client-secret";
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN = "refresh-secret";
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      calls.push({ url: href, init });
+      if (href === GMAIL_OAUTH_TOKEN_URL) {
+        return new Response(JSON.stringify({ access_token: "ya29.short", expires_in: 3600, token_type: "Bearer" }), { status: 200 });
+      }
+      if (href.startsWith(`${GMAIL_API_BASE_URL}/users/me/messages`)) {
+        return new Response(JSON.stringify({ messages: [], resultSizeEstimate: 0 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "unexpected" }), { status: 500 });
+    }) as typeof fetch;
+
+    const request = parseGmailCodeAct('/gmail_ intent="search" query="from:quent" max_results=2');
+    const result = await runGmailApiBridge(request!);
+
+    expect(result.status).toBe("ok");
+    expect(calls[0].url).toBe(GMAIL_OAUTH_TOKEN_URL);
+    expect(String(calls[0].init?.body)).toContain("refresh_token=refresh-secret");
+    expect(calls[1].init?.headers).toMatchObject({ authorization: "Bearer ya29.short" });
+    const rendered = JSON.stringify(result);
+    expect(rendered).not.toContain("refresh-secret");
+    expect(rendered).not.toContain("client-secret");
+    expect(rendered).not.toContain("ya29.short");
+  });
   it("normalizes every open Gmail surface navigation to the Google Accounts sign-in URL", () => {
     const gmailCom = parseGmailCodeAct("/gmail_com");
     const gmailOpen = parseGmailCodeAct('/gmail_ intent="open" query="gmail" keywords=""');
