@@ -477,7 +477,26 @@ if (!hasSingleInstanceLock) {
   });
 }
 
+function envFlag(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function highPerformanceGpuRequested(): boolean {
+  const policy = process.env.INGEN_GPU_POLICY?.trim().toLowerCase();
+  return envFlag("INGEN_FORCE_HIGH_PERFORMANCE_GPU")
+    || envFlag("INGEN_FORCE_DISCRETE_GPU")
+    || policy === "high-performance"
+    || policy === "discrete";
+}
+
+const highPerformanceGpuMode = highPerformanceGpuRequested();
+const shellBackgroundThrottling = !envFlag("INGEN_DISABLE_BACKGROUND_THROTTLING");
+
 function installDiscreteGpuPreference(): void {
+  if (!highPerformanceGpuMode) {
+    return;
+  }
   process.env.FORGE_PREFERRED_GPU_VENDOR = process.env.FORGE_PREFERRED_GPU_VENDOR ?? "nvidia";
 
   if (process.platform === "win32") {
@@ -511,14 +530,20 @@ function installDiscreteGpuPreference(): void {
 
 installDiscreteGpuPreference();
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
-app.commandLine.appendSwitch("force_high_performance_gpu");
-app.commandLine.appendSwitch("force-high-performance-gpu");
-app.commandLine.appendSwitch("gpu-preferences", "high-performance");
+if (highPerformanceGpuMode) {
+  app.commandLine.appendSwitch("force_high_performance_gpu");
+  app.commandLine.appendSwitch("force-high-performance-gpu");
+  app.commandLine.appendSwitch("gpu-preferences", "high-performance");
+}
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
 app.commandLine.appendSwitch("enable-unsafe-webgpu");
-app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion,HardwareMediaKeyHandling");
+const disabledChromiumFeatures = ["HardwareMediaKeyHandling"];
+if (envFlag("INGEN_DISABLE_NATIVE_OCCLUSION")) {
+  disabledChromiumFeatures.push("CalculateNativeWinOcclusion");
+}
+app.commandLine.appendSwitch("disable-features", disabledChromiumFeatures.join(","));
 
 if (process.platform === "win32") {
   app.commandLine.appendSwitch("use-angle", "d3d11");
@@ -6152,7 +6177,7 @@ async function ensureCodexRuntimeWindow(): Promise<BrowserWindow> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: false
+      backgroundThrottling: shellBackgroundThrottling
     }
   });
   runtimeWindow.webContents.setUserAgent(CHATGPT_USER_AGENT);
@@ -8802,7 +8827,7 @@ async function validatePersistedCodexSession(): Promise<void> {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
-        backgroundThrottling: false
+        backgroundThrottling: shellBackgroundThrottling
       }
     });
     authWindow.webContents.setUserAgent(CHATGPT_USER_AGENT);
@@ -9089,7 +9114,7 @@ function openProviderAuthWindow(provider: LlmProviderConnectId, url: string, tit
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
-        backgroundThrottling: false
+        backgroundThrottling: shellBackgroundThrottling
       }
     });
 
@@ -11664,7 +11689,7 @@ function ensureNativeWebExplorerView(owner: BrowserWindow): BrowserView {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: false,
+      backgroundThrottling: shellBackgroundThrottling,
       partition: "persist:ingen-webexplorer"
     }
   });
@@ -11736,7 +11761,7 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: false,
+      backgroundThrottling: shellBackgroundThrottling,
       partition: "persist:ingen-maps"
     }
   });
@@ -11806,7 +11831,7 @@ function ensureNativeBangerView(owner: BrowserWindow): WebContentsView {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: false
+      backgroundThrottling: shellBackgroundThrottling
     }
   });
   view.setBackgroundColor("#05070a");
@@ -19401,7 +19426,7 @@ async function createWindow(): Promise<void> {
       sandbox: true,
       webSecurity: true,
       webviewTag: true,
-      backgroundThrottling: false,
+      backgroundThrottling: shellBackgroundThrottling,
       offscreen: false
     }
   });
