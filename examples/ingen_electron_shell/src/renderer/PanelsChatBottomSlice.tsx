@@ -1370,7 +1370,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
   [BRAIN_SCRAPERS_COMMAND, "Collect web sources"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
-  [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
+  [BRAIN_GMAIL_COMMAND, "Opening Gmail mailbox"],
   [BRAIN_AIRBNB_COMMAND, "Use Airbnb"],
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
@@ -3496,24 +3496,33 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
   const [expanded, setExpanded] = useState(false);
   const treeId = useId();
   const count = events.length;
-  const treeHeight = Math.max(24, count * 28);
+  const isGmailGroup = events.every((event) => event.command === BRAIN_GMAIL_COMMAND);
+  const rowCount = isGmailGroup ? 1 : count;
+  const treeHeight = Math.max(24, rowCount * 28);
+  const summaryLabel = isGmailGroup
+    ? codeActEventText(BRAIN_GMAIL_COMMAND)
+    : `${count} ${count > 1 ? "commands executed" : "command executed"}`;
   return (
     <div className="transcriptCommandSummary">
       <button
         aria-controls={treeId}
         aria-expanded={expanded}
-        className="transcriptCommandSummaryLine"
+        className={`transcriptCommandSummaryLine${isGmailGroup ? " transcriptCommandSummaryLine--gmail" : ""}`}
         onClick={() => setExpanded((value) => !value)}
         type="button"
       >
         <span className="transcriptCommandSummaryLine__icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16">
-            <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
-            <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
-            <path d="M8.7 10h2.4" />
-          </svg>
+          {isGmailGroup ? (
+            <ModuleLogo id="gmail" />
+          ) : (
+            <svg viewBox="0 0 16 16">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+              <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
+              <path d="M8.7 10h2.4" />
+            </svg>
+          )}
         </span>
-        <span>{count} {count > 1 ? "commands executed" : "command executed"}</span>
+        <span>{summaryLabel}</span>
         <span className="transcriptCommandSummaryLine__chevron" aria-hidden="true">
           <svg viewBox="0 0 16 16">
             <path d="m4.5 6.5 3.5 3 3.5-3" />
@@ -3522,20 +3531,29 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
       </button>
       {expanded ? (
         <div
-          aria-label="Executed command tree"
-          className="transcriptCommandTree"
+          aria-label={isGmailGroup ? "Gmail command event" : "Executed command tree"}
+          className={`transcriptCommandTree${isGmailGroup ? " transcriptCommandTree--gmail" : ""}`}
           id={treeId}
           style={{ "--transcript-command-tree-height": `${treeHeight}px` } as CSSProperties}
         >
           <svg className="transcriptCommandTree__rail" viewBox={`0 0 33 ${treeHeight}`} preserveAspectRatio="none" aria-hidden="true">
             <path className="transcriptCommandTree__trunk" d={`M1 0 V${treeHeight}`} />
-            {events.map((_, index) => {
+            {isGmailGroup ? (
+              <path className="transcriptCommandTree__branch" d="M1 12 H32" />
+            ) : events.map((_, index) => {
               const y = 12 + index * 28;
               return <path className="transcriptCommandTree__branch" d={`M1 ${y} H32`} key={index} />;
             })}
           </svg>
           <div className="transcriptCommandTree__rows">
-            {events.map((event, index) => (
+            {isGmailGroup ? (
+              <div className="transcriptCommandTree__row transcriptCommandTree__row--gmail">
+                <span className="transcriptCommandTree__gmailLogo" aria-hidden="true">
+                  <ModuleLogo id="gmail" />
+                </span>
+                <span className="transcriptCommandTree__eventText">{codeActEventText(BRAIN_GMAIL_COMMAND)}</span>
+              </div>
+            ) : events.map((event, index) => (
               <div className="transcriptCommandTree__row" key={`${event.command}-${index}`}>
                 <code>{event.command}</code>
                 <span>

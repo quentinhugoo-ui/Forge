@@ -5264,6 +5264,29 @@ button {
   stroke-width: 1.35px;
 }
 
+.transcriptCommandSummaryLine--gmail {
+  gap: 6px;
+  color: #aeb4b7;
+}
+
+.transcriptCommandSummaryLine--gmail:hover,
+.transcriptCommandSummaryLine--gmail:focus-visible {
+  color: #c2c8cb;
+}
+
+.transcriptCommandSummaryLine--gmail .transcriptCommandSummaryLine__icon {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+}
+
+.transcriptCommandSummaryLine--gmail .transcriptCommandSummaryLine__icon .sidebarModule__logo {
+  width: 15px;
+  min-width: 15px;
+  max-width: 15px;
+  height: 15px;
+}
+
 .transcriptCommandSummaryLine__chevron {
   display: grid;
   place-items: center;
@@ -5370,6 +5393,32 @@ button {
 .transcriptCommandTree__eventText {
   color: #b8bec1;
   font-size: 13px;
+}
+
+.transcriptCommandTree--gmail {
+  min-width: min(420px, calc(100vw - 110px));
+}
+
+.transcriptCommandTree__row--gmail {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.transcriptCommandTree__gmailLogo {
+  display: grid;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+}
+
+.transcriptCommandTree__gmailLogo .sidebarModule__logo {
+  width: 15px;
+  min-width: 15px;
+  max-width: 15px;
+  height: 15px;
 }
 
 .transcriptCommandTree__detail {

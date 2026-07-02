@@ -503,6 +503,8 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain('latestAssistant?.text.includes("GMAIL_RESULT")');
     expect(rendererSource).not.toContain("stripGmailCodeActLines");
     expect(rendererSource).not.toContain("J'ouvre Gmail dans Web Explorer.");
+    expect(rendererSource).toContain('Opening Gmail mailbox');
+    expect(rendererSource).toContain('isGmailGroup');
   });
 
   it("registers Airbnb as a Brain-backed module CodeAct", () => {
@@ -622,6 +624,8 @@ describe("LLM multimodal attachments", () => {
     expect(moduleLogosSource).toContain("export function SearchArchiveIcon");
     expect(moduleLogosSource).toContain('if (id === "searcharchive") return <SearchArchiveIcon />');
     expect(stylesSource).toContain(".transcriptCodeActEvent__icon .sidebarModule__logo");
+    expect(stylesSource).toContain(".transcriptCommandSummaryLine--gmail");
+    expect(stylesSource).toContain(".transcriptCommandTree__gmailLogo");
   });
 
   it("registers Compute as a module that injects formulas into the composer", () => {
