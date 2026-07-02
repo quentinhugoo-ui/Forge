@@ -200,12 +200,14 @@ import {
   type MapsCodeActRequest
 } from "./maps-codeact.js";
 import {
-  extractGmailCodeAct,
   GMAIL_SIGN_IN_URL,
   gmailWebExplorerNavigationUrl,
+  readGmailCodeAct,
   renderGmailCodeActResult,
+  renderGmailTemplateResult,
   type GmailCodeActRequest
 } from "./gmail-codeact.js";
+import { renderGmailApiBridgeResult, runGmailApiBridge } from "./gmail-api-bridge.js";
 import {
   AIRBNB_HOME_URL,
   extractAirbnbCodeAct,
@@ -16312,22 +16314,46 @@ async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelS
   };
 }
 
-function executeAssistantGmailCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): TranscriptMessage {
+async function executeAssistantGmailCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): Promise<TranscriptMessage> {
   if (message.role !== "assistant") {
     return message;
   }
-  const request = extractGmailCodeAct(message.text);
-  if (!request) {
+  const codeAct = readGmailCodeAct(message.text);
+  if (!codeAct) {
     return message;
   }
-  const navigation = navigateNativeWebExplorerToGmail(request, parallelSessionIndex);
-  const executionText = renderGmailCodeActResult(request);
+  if (codeAct.kind === "template") {
+    const executionText = renderGmailTemplateResult(codeAct.result);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeActTemplate: codeAct.result
+      })
+    };
+  }
+  if (codeAct.request.mode === "gmail_api" && codeAct.request.intent !== "open") {
+    const apiResult = await runGmailApiBridge(codeAct.request);
+    const executionText = renderGmailApiBridgeResult(apiResult);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeAct: codeAct.request,
+        gmailApi: apiResult
+      })
+    };
+  }
+  const navigation = navigateNativeWebExplorerToGmail(codeAct.request, parallelSessionIndex);
+  const executionText = renderGmailCodeActResult(codeAct.request);
   return {
     ...message,
     text: `${message.text.trim()}\n\n${executionText}`,
     proofHash: hashJson({
       previousProofHash: message.proofHash,
-      assistantCodeAct: request,
+      assistantCodeAct: codeAct.request,
       navigation
     })
   };
@@ -16670,7 +16696,7 @@ async function executeAssistantModuleCodeActs(
   let next = await executeAssistantSearchArchiveCodeAct(message, session);
   next = await executeAssistantLocalActionsCodeAct(next);
   if (moduleId === "gmail") {
-    return executeAssistantGmailCodeAct(next, parallelSessionIndex);
+    return await executeAssistantGmailCodeAct(next, parallelSessionIndex);
   }
   next = executeAssistantGoogleWebCodeAct(next, parallelSessionIndex);
   next = await executeAssistantWebSearchCodeAct(next);
@@ -16688,7 +16714,7 @@ async function executeAssistantModuleCodeActs(
   if (moduleId === "airbnb") {
     return executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
   }
-  next = executeAssistantGmailCodeAct(next, parallelSessionIndex);
+  next = await executeAssistantGmailCodeAct(next, parallelSessionIndex);
   next = executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
   return next;
 }

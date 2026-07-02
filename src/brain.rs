@@ -88,7 +88,7 @@ pub const BRAIN_SECURITYSCAN_COMMAND_DESCRIPTION: &str = "Use /securityscan_ for
 pub const BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION: &str = "Open contained WebExplorer on a generic Google search when the user wants to visually browse or manually inspect web results. Prefer /websearch_ when the assistant must answer with cited sources, discover URLs, rank sources, verify current information or feed /scrapers_. Do not use for Gmail, Airbnb/travel lodging, image generation/editing, or local workspace work.";
 pub const BRAIN_SCRAPERS_COMMAND_DESCRIPTION: &str = "Use /scrapers_ after URLs are known to collect clean Markdown, structured fields, links, media URLs/captions, screenshots/PDF/MHTML/download refs and provenance. Runs Scrapling MCP + Crawl4AI MCP in parallel and returns one compact SCRAPERS_RESULT/media_manifest for RAG, memory, research, monitoring or visual conversation enrichment. Scrapling selector/session/screenshot needs are handled inside this same command; do not expose a second Scrapling CodeAct. Respect robots/terms/rate limits/privacy; stealth only for authorized targets.";
 pub const BRAIN_MAPS_COMMAND_DESCRIPTION: &str = "Open Google Earth only for explicit map/localization/route/coordinates/where-is/local-weather/Google Earth intent. A place name in a cultural, historical, literary, vocabulary, table or explanation request is not enough; use /websearch_ then /scrapers_ for source/media enrichment. Bare /maps_ opens a neutral Earth view, never the saved home city. For travel/stay intent, open Maps first and Airbnb next. Never read device location without explicit permission.";
-pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use Gmail for mail tasks: open mailbox, search messages, inspect, summarize, draft, or prepare replies. The LLM writes a natural sentence first; never send email automatically and do not use /googleweb_ for Gmail.";
+pub const BRAIN_GMAIL_COMMAND_DESCRIPTION: &str = "Use /gmail_ for Gmail mailbox tasks only: search, inspect, summarize, draft or prepare replies through the Gmail API bridge, or open Gmail only when mode=split_webexplorer. This is a strict two-phase CodeAct: first emit bare /gmail_ to receive GMAIL_TEMPLATE_RESULT, then fill the compact returned template with template_proof_hash before execution. Default mode=gmail_api returns GMAIL_RESULT with auth_required until user OAuth is connected, then bounded Gmail REST results using the narrowest official scope: gmail.metadata for metadata-only listings, gmail.readonly for search/read, gmail.compose for drafts, gmail.send only after explicit user-approved sending. Never send automatically, never use /googleweb_ for Gmail, never expose OAuth tokens, and never expose private mail content unless the user explicitly asked for that mailbox action.";
 pub const BRAIN_GMAIL_COM_COMMAND_DESCRIPTION: &str = "Open the Gmail sign-in/mail entry URL directly in split-screen WebExplorer when the user asks to access or open Gmail. Use only for navigation to Gmail, not for generic mail reasoning or web search.";
 pub const BRAIN_AIRBNB_COMMAND_DESCRIPTION: &str = "Use Airbnb after /maps_ when a geographic place is detected together with travel/vacation/stay language: voyage, vacances, partir, visiter, tourisme, sejour, destination, dates, guests, lodging, accommodation, hotel-like stay, home/apartment rental, vacation rental, booking, budget for stays, or short-term stay search. Do not use for city facts, local weather, geography, maps, or routes without travel/vacation/stay intent.";
 pub const BRAIN_NEWIMAGE_COMMAND_DESCRIPTION: &str = "Generate a brand-new image from a text prompt: draw, create, render, imagine, make a logo/poster/scene/asset. Do not use /workspace_; no local project folder is required.";
@@ -1665,10 +1665,17 @@ pub fn brain_gmail_codeact_template() -> BrainGeneralCodeActTemplate {
     let mut template = BrainGeneralCodeActTemplate {
         command: BRAIN_GMAIL_COMMAND.to_string(),
         section: "webexplorer".to_string(),
-        purpose: "Open the contained WebExplorer on Gmail with a bounded mail intent: search, inspect, summarize, draft or prepare a reply. The LLM must write its own natural user-facing sentence adapted to the user's request; the host must not synthesize that sentence. The LLM then activates this CodeAct with explicit slots, and the application renders the action event automatically. The LLM chooses the intent; the host only executes the explicit CodeAct.".to_string(),
+        purpose: "Strict two-phase Gmail CodeAct for mailbox tasks. First emit bare /gmail_ to receive GMAIL_TEMPLATE_RESULT. Then fill the returned compact template with template_proof_hash, intent, query/keywords/message_id or draft fields. Default mode=gmail_api executes the bounded Gmail REST bridge and returns GMAIL_RESULT; mode=split_webexplorer opens the contained Gmail surface only for visual access. No email is sent automatically. Gmail API execution keeps the narrowest official scope possible: metadata for metadata-only lists, readonly for search/read, compose for drafts, send only after explicit user approval. The LLM writes its own natural user-facing sentence; the host must not synthesize that sentence.".to_string(),
         result_schema: BRAIN_GMAIL_RESULT_SCHEMA.to_string(),
         proof_hash: String::new(),
         slots: vec![
+            BrainCodeActTemplateSlot {
+                name: "template_proof_hash".to_string(),
+                required: true,
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Copy the sha256 value returned by GMAIL_TEMPLATE_RESULT. The host refuses /gmail_ execution without it; bare /gmail_ is only the template request.".to_string(),
+            },
             BrainCodeActTemplateSlot {
                 name: "intent".to_string(),
                 required: true,
@@ -1719,22 +1726,29 @@ pub fn brain_gmail_codeact_template() -> BrainGeneralCodeActTemplate {
                 description: "Draft or reply body prepared by the LLM; host must keep it editable and user-approved before send.".to_string(),
             },
             BrainCodeActTemplateSlot {
-                name: "open_mode".to_string(),
+                name: "message_id".to_string(),
                 required: false,
-                default_value: "split_webexplorer".to_string(),
-                allowed_values: vec!["split_webexplorer".to_string()],
-                description: "Open Gmail inside the contained WebExplorer split; never replace the global product shell.".to_string(),
+                default_value: String::new(),
+                allowed_values: Vec::new(),
+                description: "Gmail message id for inspect/summarize of a precise message; normally obtained from a previous GMAIL_RESULT search.".to_string(),
+            },
+            BrainCodeActTemplateSlot {
+                name: "mode".to_string(),
+                required: false,
+                default_value: "gmail_api".to_string(),
+                allowed_values: vec!["gmail_api".to_string(), "split_webexplorer".to_string()],
+                description: "gmail_api returns bounded Gmail REST results/proofs. split_webexplorer opens Gmail visually in the contained split; never replace the global product shell.".to_string(),
             },
             BrainCodeActTemplateSlot {
                 name: "output".to_string(),
                 required: false,
-                default_value: "conversation_and_navigation".to_string(),
+                default_value: "conversation_and_result".to_string(),
                 allowed_values: vec![
-                    "conversation_and_navigation".to_string(),
+                    "conversation_and_result".to_string(),
                     "navigation_only".to_string(),
                     "draft_manifest".to_string(),
                 ],
-                description: "Default preserves the LLM-authored natural sentence in the left transcript and navigates Gmail on the right; the app must not generate a replacement phrase.".to_string(),
+                description: "Default preserves the LLM-authored natural sentence in the left transcript and appends the Gmail API/WebExplorer proof result; the app must not generate a replacement phrase.".to_string(),
             },
         ],
     };
