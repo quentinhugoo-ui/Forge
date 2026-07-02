@@ -492,6 +492,29 @@ function highPerformanceGpuRequested(): boolean {
 
 const highPerformanceGpuMode = highPerformanceGpuRequested();
 const shellBackgroundThrottling = !envFlag("INGEN_DISABLE_BACKGROUND_THROTTLING");
+let highPerformanceGpuRelaunchScheduled = false;
+
+function highPerformanceGpuRelaunchError(reason: string, proofInput: unknown): IpcError | null {
+  if (highPerformanceGpuMode) {
+    return null;
+  }
+  if (!highPerformanceGpuRelaunchScheduled) {
+    highPerformanceGpuRelaunchScheduled = true;
+    process.env.INGEN_GPU_POLICY = "high-performance";
+    process.env.INGEN_FORCE_HIGH_PERFORMANCE_GPU = "1";
+    console.info("Restarting InGen with high-performance GPU for Banger/WebGPU.", { reason });
+    app.relaunch({ args: process.argv.slice(1) });
+    setTimeout(() => {
+      finalizeWidgetTaskbarState("high-performance-gpu-relaunch");
+      app.exit(0);
+    }, 150);
+  }
+  return {
+    code: "rust_unavailable",
+    message: `${reason} requires high-performance GPU mode. Restarting InGen with INGEN_GPU_POLICY=high-performance.`,
+    proofHash: hashJson({ reason, proofInput, highPerformanceGpuMode })
+  };
+}
 
 function installDiscreteGpuPreference(): void {
   if (!highPerformanceGpuMode) {
@@ -11831,7 +11854,7 @@ function ensureNativeBangerView(owner: BrowserWindow): WebContentsView {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: shellBackgroundThrottling
+      backgroundThrottling: false
     }
   });
   view.setBackgroundColor("#05070a");
@@ -11989,6 +12012,10 @@ async function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: Native
       proofHash: hashJson({ bounds })
     });
   }
+  const gpuRelaunchError = highPerformanceGpuRelaunchError("Native Maps 3D/Banger", { bounds: normalized });
+  if (gpuRelaunchError) {
+    return nativeMapsResult(false, gpuRelaunchError);
+  }
   hideNativeMapsView();
   const boundsKey = buildNativeMapsBoundsKey(normalized);
   const bootstrap = await loadRustBangerPresentLoopBootstrap(shellRoot, {
@@ -12123,6 +12150,10 @@ async function showNativeBanger(event: Electron.IpcMainInvokeEvent, bounds: Nati
       message: "Native Banger owner window is unavailable.",
       proofHash: hashJson({ bounds })
     });
+  }
+  const gpuRelaunchError = highPerformanceGpuRelaunchError("Native Banger/WebGPU", { bounds: normalized });
+  if (gpuRelaunchError) {
+    return nativeBangerResult(false, gpuRelaunchError);
   }
   hideNativeMapsView();
   hideNativeWebExplorerView();
