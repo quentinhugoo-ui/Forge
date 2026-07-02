@@ -6,7 +6,6 @@ import { GMAIL_COMMAND, GMAIL_RESULT_SCHEMA } from "./gmail-codeact.js";
 export const GMAIL_API_RESULT_SCHEMA = "forge.gmail.api_result.v1";
 export const GMAIL_API_BASE_URL = "https://gmail.googleapis.com/gmail/v1";
 export const GMAIL_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-export const GMAIL_DEFAULT_RENDER_TOKEN_URL = "https://forge-6cai.onrender.com/api/gmail/access-token";
 
 export type GmailApiStatus = "ok" | "auth_required" | "blocked" | "error";
 export type GmailApiOperation = "search" | "inspect" | "summarize" | "draft" | "open";
@@ -52,15 +51,25 @@ export interface GmailApiBridgeResult {
   proofHash: string;
 }
 
-interface GmailApiCredentials {
+type GmailApiCredentialSource = "env_access_token" | "env_refresh_token" | "local_connector";
+
+export interface GmailApiCredentials {
   accessToken: string;
-  source: "env_access_token" | "local_refresh_token" | "render_token_proxy";
+  source: GmailApiCredentialSource;
 }
 
-interface GmailApiCredentialsResult {
+export interface GmailApiCredentialsResult {
   credentials?: GmailApiCredentials;
   warnings: string[];
   error?: string;
+}
+
+export type GmailApiCredentialResolver = () => Promise<GmailApiCredentialsResult>;
+
+let gmailApiCredentialResolver: GmailApiCredentialResolver | undefined;
+
+export function setGmailApiCredentialResolver(resolver: GmailApiCredentialResolver | undefined): void {
+  gmailApiCredentialResolver = resolver;
 }
 
 interface GmailApiListResponse {
@@ -119,7 +128,7 @@ export async function runGmailApiBridge(request: GmailCodeActRequest): Promise<G
       requiredScopes,
       endpoints,
       warnings: [
-        "Gmail API OAuth is not connected. Connect Google OAuth outside the LLM, then provide either INGEN_GMAIL_ACCESS_TOKEN, GOOGLE_OAUTH_REFRESH_TOKEN, or FORGE_GMAIL_TOKEN_PROXY_SECRET.",
+        "Gmail API OAuth is not connected. Connect Gmail in InGen with the local Gmail connector.",
         "The LLM receives this proof result only; access and refresh tokens are never echoed.",
         ...credentialsResult.warnings
       ],
@@ -239,13 +248,15 @@ function gmailApiEndpoints(request: GmailCodeActRequest, operation: GmailApiOper
 async function gmailApiCredentials(): Promise<GmailApiCredentialsResult> {
   const direct = gmailApiCredentialsFromEnv();
   if (direct) return { credentials: direct, warnings: [] };
+  if (gmailApiCredentialResolver) {
+    const resolved = await gmailApiCredentialResolver();
+    if (resolved.credentials) return resolved;
+  }
   const localRefresh = await gmailApiCredentialsFromRefreshToken();
   if (localRefresh.credentials) return localRefresh;
-  const renderProxy = await gmailApiCredentialsFromRenderProxy();
-  if (renderProxy.credentials) return renderProxy;
   return {
-    warnings: [...localRefresh.warnings, ...renderProxy.warnings],
-    error: localRefresh.error ?? renderProxy.error
+    warnings: [...(gmailApiCredentialResolver ? [] : ["Gmail local connector is not registered."]), ...localRefresh.warnings],
+    error: localRefresh.error
   };
 }
 
@@ -272,35 +283,9 @@ async function gmailApiCredentialsFromRefreshToken(): Promise<GmailApiCredential
       refresh_token: refreshToken,
       grant_type: "refresh_token"
     }));
-    return { credentials: { accessToken: token, source: "local_refresh_token" }, warnings: [] };
+    return { credentials: { accessToken: token, source: "env_refresh_token" }, warnings: [] };
   } catch (error) {
-    return { warnings: ["Gmail local refresh token exchange failed."], error: friendlyError(error) };
-  }
-}
-
-async function gmailApiCredentialsFromRenderProxy(): Promise<GmailApiCredentialsResult> {
-  const proxySecret = firstEnv(["FORGE_GMAIL_TOKEN_PROXY_SECRET", "GMAIL_TOKEN_PROXY_SECRET"]);
-  if (!proxySecret) return { warnings: [] };
-  const proxyUrl = firstEnv(["FORGE_GMAIL_ACCESS_TOKEN_URL", "INGEN_GMAIL_ACCESS_TOKEN_URL"]) ?? GMAIL_DEFAULT_RENDER_TOKEN_URL;
-  try {
-    const response = await fetch(proxyUrl, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${proxySecret}`
-      }
-    });
-    const text = await response.text();
-    const parsed = text ? readRecord(JSON.parse(text)) : undefined;
-    if (!response.ok) {
-      throw new Error(`Gmail token proxy HTTP ${response.status}: ${compactText(text, 500)}`);
-    }
-    const accessToken = String(parsed?.accessToken ?? "").trim();
-    if (!accessToken) {
-      throw new Error("Gmail token proxy returned no accessToken.");
-    }
-    return { credentials: { accessToken, source: "render_token_proxy" }, warnings: [] };
-  } catch (error) {
-    return { warnings: ["Gmail Render token proxy exchange failed."], error: friendlyError(error) };
+    return { warnings: ["Gmail env refresh token exchange failed."], error: friendlyError(error) };
   }
 }
 

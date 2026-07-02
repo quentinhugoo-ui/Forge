@@ -21,8 +21,6 @@ describe("Gmail CodeAct", () => {
     delete process.env.GOOGLE_OAUTH_CLIENT_ID;
     delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
     delete process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
-    delete process.env.FORGE_GMAIL_TOKEN_PROXY_SECRET;
-    delete process.env.GMAIL_TOKEN_PROXY_SECRET;
   });
   it("returns a compact template for bare /gmail_", () => {
     const codeAct = readGmailCodeAct("/gmail_");

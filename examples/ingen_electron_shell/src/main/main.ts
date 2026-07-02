@@ -206,7 +206,7 @@ import {
   renderGmailTemplateResult,
   type GmailCodeActRequest
 } from "./gmail-codeact.js";
-import { renderGmailApiBridgeResult, runGmailApiBridge } from "./gmail-api-bridge.js";
+import { renderGmailApiBridgeResult, runGmailApiBridge, setGmailApiCredentialResolver, type GmailApiCredentialsResult } from "./gmail-api-bridge.js";
 import {
   AIRBNB_HOME_URL,
   extractAirbnbCodeAct,
@@ -2254,6 +2254,352 @@ function randomBase64Url(bytes = 48): string {
 function sha256Base64Url(value: string): string {
   return createHash("sha256").update(value).digest("base64url");
 }
+type GmailConnectorRuntime = {
+  schema: "ingen.gmail.connector_runtime.v1";
+  refreshToken: string;
+  scope?: string;
+  updatedAt: string;
+};
+
+type EncryptedGmailConnectorEnvelope = {
+  schema: "ingen.gmail.connector_runtime.encrypted.v1";
+  cipher: "electron.safeStorage";
+  encoding: "base64";
+  storageBackend?: string;
+  ciphertext: string;
+  updatedAt: string;
+};
+
+type GmailOAuthWaiter = {
+  callbackUrl: string;
+  state: string;
+  codePromise: Promise<string>;
+  close: () => void;
+};
+
+type GoogleOAuthTokenPayload = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+  error?: string;
+  error_description?: string;
+};
+
+const GMAIL_LOCAL_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GMAIL_LOCAL_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GMAIL_LOCAL_OAUTH_CALLBACK_PATH = "/oauth/google/callback";
+const GMAIL_LOCAL_OAUTH_SCOPES = [
+  "https://www.googleapis.com/auth/gmail.metadata",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose"
+];
+let gmailConnectorRefreshToken = "";
+let gmailConnectorScope = "";
+let gmailConnectorRestorePromise: Promise<void> | null = null;
+let gmailConnectorConnectPromise: Promise<GmailApiCredentialsResult> | null = null;
+let gmailOAuthServer: Server | null = null;
+
+function gmailConnectorStorePath(): string {
+  return join(app.getPath("userData"), "gmail-connector.json");
+}
+
+function gmailConnectorEnv(names: string[]): string | undefined {
+  return names
+    .map((name) => process.env[name]?.trim() ?? "")
+    .find((value) => value.length > 0);
+}
+
+function gmailOAuthClientId(): string | undefined {
+  return gmailConnectorEnv(["INGEN_GMAIL_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_CLIENT_ID", "GMAIL_OAUTH_CLIENT_ID"]);
+}
+
+function gmailOAuthClientSecret(): string | undefined {
+  return gmailConnectorEnv(["INGEN_GMAIL_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET", "GMAIL_OAUTH_CLIENT_SECRET"]);
+}
+
+async function restoreGmailConnectorFromDisk(): Promise<void> {
+  if (gmailConnectorRestorePromise) {
+    return gmailConnectorRestorePromise;
+  }
+  gmailConnectorRestorePromise = (async () => {
+    try {
+      const raw = await readFile(gmailConnectorStorePath(), "utf8");
+      const envelope = JSON.parse(raw) as Partial<EncryptedGmailConnectorEnvelope>;
+      if (
+        envelope.schema !== "ingen.gmail.connector_runtime.encrypted.v1" ||
+        envelope.cipher !== "electron.safeStorage" ||
+        envelope.encoding !== "base64" ||
+        typeof envelope.ciphertext !== "string"
+      ) {
+        return;
+      }
+      const decrypted = await safeStorage.decryptStringAsync(Buffer.from(envelope.ciphertext, "base64"));
+      const runtime = JSON.parse(decrypted.result) as Partial<GmailConnectorRuntime>;
+      if (runtime.schema !== "ingen.gmail.connector_runtime.v1" || typeof runtime.refreshToken !== "string") {
+        return;
+      }
+      gmailConnectorRefreshToken = runtime.refreshToken.trim();
+      gmailConnectorScope = typeof runtime.scope === "string" ? runtime.scope : "";
+      if (decrypted.shouldReEncrypt && gmailConnectorRefreshToken) {
+        void persistGmailConnector().catch((error: unknown) => {
+          console.error("Failed to rotate Gmail connector encryption.", error);
+        });
+      }
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+      if (code !== "ENOENT") {
+        console.error("Failed to restore Gmail connector runtime.", error);
+      }
+    }
+  })();
+  return gmailConnectorRestorePromise;
+}
+
+async function persistGmailConnector(): Promise<void> {
+  if (!gmailConnectorRefreshToken) {
+    return;
+  }
+  if (!(await isProviderRuntimeEncryptionAvailable())) {
+    throw new Error("Gmail connector cannot persist because OS encryption is unavailable.");
+  }
+  const runtime: GmailConnectorRuntime = {
+    schema: "ingen.gmail.connector_runtime.v1",
+    refreshToken: gmailConnectorRefreshToken,
+    scope: gmailConnectorScope,
+    updatedAt: new Date().toISOString()
+  };
+  const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(runtime));
+  let storageBackend: string | undefined;
+  try {
+    storageBackend = safeStorage.getSelectedStorageBackend();
+  } catch {
+    storageBackend = undefined;
+  }
+  const envelope: EncryptedGmailConnectorEnvelope = {
+    schema: "ingen.gmail.connector_runtime.encrypted.v1",
+    cipher: "electron.safeStorage",
+    encoding: "base64",
+    storageBackend,
+    ciphertext: encrypted.toString("base64"),
+    updatedAt: new Date().toISOString()
+  };
+  await writeFile(gmailConnectorStorePath(), JSON.stringify(envelope, null, 2), "utf8");
+}
+
+function stopGmailOAuthServer(): void {
+  if (gmailOAuthServer) {
+    gmailOAuthServer.close();
+    gmailOAuthServer = null;
+  }
+}
+
+function startGmailOAuthWaiter(): Promise<GmailOAuthWaiter> {
+  stopGmailOAuthServer();
+  const state = randomBase64Url(32);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let resolveCode: ((code: string) => void) | undefined;
+    let rejectCode: ((error: Error) => void) | undefined;
+    const codePromise = new Promise<string>((innerResolve, innerReject) => {
+      resolveCode = innerResolve;
+      rejectCode = innerReject;
+    });
+    const server = createServer((request, response) => {
+      const host = request.headers.host ?? "127.0.0.1";
+      const requestUrl = new URL(request.url ?? "/", `http://${host}`);
+      if (requestUrl.pathname !== GMAIL_LOCAL_OAUTH_CALLBACK_PATH) {
+        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end("Not found");
+        return;
+      }
+      const error = requestUrl.searchParams.get("error");
+      const code = requestUrl.searchParams.get("code");
+      const presentedState = requestUrl.searchParams.get("state") ?? "";
+      if (error || !code || presentedState !== state) {
+        response.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        response.end("<!doctype html><title>Gmail</title><body>Gmail connection failed. You can close this window.</body>");
+        rejectCode?.(new Error(error || (presentedState !== state ? "Gmail OAuth state mismatch." : "Gmail OAuth callback did not include a code.")));
+        stopGmailOAuthServer();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end("<!doctype html><title>Gmail</title><body>Gmail connected. You can close this window.</body>");
+      resolveCode?.(code);
+      stopGmailOAuthServer();
+    });
+    server.once("error", (error) => {
+      if (!settled) {
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        reject(error);
+      } else {
+        rejectCode?.(error);
+      }
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Gmail OAuth callback server did not return a TCP port."));
+        return;
+      }
+      gmailOAuthServer = server;
+      timeout = setTimeout(() => {
+        rejectCode?.(new Error("Gmail OAuth callback timed out."));
+        stopGmailOAuthServer();
+      }, 180000);
+      codePromise.finally(() => {
+        if (timeout) clearTimeout(timeout);
+      }).catch(() => undefined);
+      settled = true;
+      resolve({
+        callbackUrl: `http://127.0.0.1:${address.port}${GMAIL_LOCAL_OAUTH_CALLBACK_PATH}`,
+        state,
+        codePromise,
+        close: stopGmailOAuthServer
+      });
+    });
+  });
+}
+
+function gmailOAuthAuthorizeUrl(waiter: GmailOAuthWaiter, clientId: string): string {
+  const url = new URL(GMAIL_LOCAL_OAUTH_AUTHORIZE_URL);
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", waiter.callbackUrl);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", GMAIL_LOCAL_OAUTH_SCOPES.join(" "));
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("include_granted_scopes", "true");
+  url.searchParams.set("state", waiter.state);
+  return url.toString();
+}
+
+async function gmailOAuthTokenRequest(body: URLSearchParams): Promise<GoogleOAuthTokenPayload> {
+  const response = await net.fetch(GMAIL_LOCAL_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body: body.toString()
+  });
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) as GoogleOAuthTokenPayload : {};
+  if (!response.ok || parsed.error) {
+    throw new Error(`Google OAuth HTTP ${response.status}: ${parsed.error ?? "token_error"} ${parsed.error_description ?? ""}`.trim());
+  }
+  return parsed;
+}
+
+async function exchangeGmailOAuthCode(code: string, redirectUri: string): Promise<GoogleOAuthTokenPayload> {
+  const clientId = gmailOAuthClientId();
+  if (!clientId) {
+    throw new Error("Gmail OAuth client id is not configured.");
+  }
+  const body = new URLSearchParams({
+    client_id: clientId,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri
+  });
+  const clientSecret = gmailOAuthClientSecret();
+  if (clientSecret) {
+    body.set("client_secret", clientSecret);
+  }
+  return gmailOAuthTokenRequest(body);
+}
+
+async function refreshGmailConnectorAccessToken(refreshToken: string): Promise<GoogleOAuthTokenPayload> {
+  const clientId = gmailOAuthClientId();
+  if (!clientId) {
+    throw new Error("Gmail OAuth client id is not configured.");
+  }
+  const body = new URLSearchParams({
+    client_id: clientId,
+    refresh_token: refreshToken,
+    grant_type: "refresh_token"
+  });
+  const clientSecret = gmailOAuthClientSecret();
+  if (clientSecret) {
+    body.set("client_secret", clientSecret);
+  }
+  return gmailOAuthTokenRequest(body);
+}
+
+async function connectLocalGmailConnector(): Promise<GmailApiCredentialsResult> {
+  if (gmailConnectorConnectPromise) {
+    return gmailConnectorConnectPromise;
+  }
+  gmailConnectorConnectPromise = (async () => {
+    const clientId = gmailOAuthClientId();
+    if (!clientId) {
+      return {
+        warnings: ["Gmail local connector is installed, but INGEN_GMAIL_OAUTH_CLIENT_ID is missing from the packaged app configuration."],
+        error: "gmail_oauth_client_id_missing"
+      };
+    }
+    const waiter = await startGmailOAuthWaiter();
+    try {
+      const authUrl = gmailOAuthAuthorizeUrl(waiter, clientId);
+      await shell.openExternal(authUrl);
+      const code = await waiter.codePromise;
+      const token = await exchangeGmailOAuthCode(code, waiter.callbackUrl);
+      const refreshToken = token.refresh_token?.trim();
+      if (!refreshToken) {
+        return {
+          warnings: ["Google did not return a Gmail refresh token. Reconnect Gmail and approve offline access."],
+          error: "gmail_refresh_token_missing"
+        };
+      }
+      const accessToken = token.access_token?.trim();
+      gmailConnectorRefreshToken = refreshToken;
+      gmailConnectorScope = token.scope ?? "";
+      await persistGmailConnector();
+      if (accessToken) {
+        return {
+          credentials: { accessToken, source: "local_connector" },
+          warnings: ["Gmail connected locally. Refresh token sealed with OS encryption."]
+        };
+      }
+      const refreshed = await refreshGmailConnectorAccessToken(refreshToken);
+      if (!refreshed.access_token?.trim()) {
+        throw new Error("Google OAuth returned no access token after Gmail connection.");
+      }
+      return {
+        credentials: { accessToken: refreshed.access_token.trim(), source: "local_connector" },
+        warnings: ["Gmail connected locally. Refresh token sealed with OS encryption."]
+      };
+    } finally {
+      waiter.close();
+      gmailConnectorConnectPromise = null;
+    }
+  })();
+  return gmailConnectorConnectPromise;
+}
+
+async function gmailLocalCredentialResolver(): Promise<GmailApiCredentialsResult> {
+  await restoreGmailConnectorFromDisk();
+  if (gmailConnectorRefreshToken) {
+    try {
+      const token = await refreshGmailConnectorAccessToken(gmailConnectorRefreshToken);
+      const accessToken = token.access_token?.trim();
+      if (!accessToken) {
+        throw new Error("Google OAuth returned no Gmail access token.");
+      }
+      gmailConnectorScope = token.scope ?? gmailConnectorScope;
+      return { credentials: { accessToken, source: "local_connector" }, warnings: [] };
+    } catch (error) {
+      console.warn("Stored Gmail connector token failed; reconnecting Gmail.", error);
+      gmailConnectorRefreshToken = "";
+      gmailConnectorScope = "";
+    }
+  }
+  return connectLocalGmailConnector();
+}
+
 
 function stopOpenRouterOAuthServer(): void {
   if (openRouterOAuthServer) {
@@ -19585,6 +19931,7 @@ async function warmRustBackendProjection(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  setGmailApiCredentialResolver(gmailLocalCredentialResolver);
   installProtocol();
   installWindowControlIpc();
   installNativeWebExplorerIpc();
@@ -19600,6 +19947,7 @@ app.whenReady().then(async () => {
     })
   ]);
   await restoreProviderRuntimeFromDisk();
+  await restoreGmailConnectorFromDisk();
   await reconcileCanonicalMemoryStore();
   await restoreBrainIdentityContextFromDisk();
   await restoreWorkspaceDirFromDisk();
