@@ -4042,6 +4042,20 @@ function AssistantMarkdownText({
     <div className="assistantText__body">
       {blocks.map((block, index) => {
         if (block.kind === "event_group") {
+          if (block.events.every((event) => event.command === BRAIN_GMAIL_COMMAND)) {
+            return (
+              <Fragment key={`${messageId}-gmail-events-${index}`}>
+                {block.events.map((event, eventIndex) => (
+                  <TranscriptCodeActEventLine
+                    agentName={agentName}
+                    event={event}
+                    key={`${messageId}-gmail-event-${index}-${event.gmailStage ?? eventIndex}`}
+                    writing={writing}
+                  />
+                ))}
+              </Fragment>
+            );
+          }
           return <TranscriptCommandSummaryLine events={block.events} key={`${messageId}-event-group-${index}`} />;
         }
         if (block.kind === "event") {
