@@ -497,9 +497,9 @@ describe("LLM multimodal attachments", () => {
   });
 
   it("keeps Gmail CodeAct user-facing text normal and opens WebExplorer from results", () => {
-    expect(mainSource).toContain("ecris ta propre phrase naturelle");
-    expect(mainSource).toContain("L'application affiche automatiquement l'evenement");
-    expect(mainSource).toContain("checking recent mail");
+    expect(mainSource).toContain("write your own short natural sentence adapted to the user's request");
+    expect(mainSource).toContain("say only that you are checking recent mail");
+    expect(mainSource).toContain("do not mention dedicated access, templates, API, authorization, or result lists before the Gmail result");
     expect(brainSource).toContain("Gmail visible prose must be short and user-facing");
     expect(mainSource).not.toContain(`BRAIN_GMAIL_${"COM"}_COMMAND`);
     expect(appSource).toContain('latestAssistant?.text.includes("GMAIL_RESULT")');
@@ -509,8 +509,8 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('Gmail template received');
     expect(rendererSource).toContain('Gmail API response received');
     expect(rendererSource).toContain('line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT"');
-    expect(rendererSource).toContain('isGmailGroup');
-    expect(rendererSource).toContain('Gmail CodeAct pipeline');
+    expect(mainSource).toContain('if (commands.includes(BRAIN_GMAIL_COMMAND))');
+    expect(mainSource).toContain('params.assistantText.includes("GMAIL_TEMPLATE_RESULT") && !params.assistantText.includes("GMAIL_RESULT")');
     expect(rendererSource).toContain('event.command === BRAIN_GMAIL_COMMAND) {');
   });
 

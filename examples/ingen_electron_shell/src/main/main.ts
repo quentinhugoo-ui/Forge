@@ -5667,6 +5667,9 @@ function shouldContinueAfterBrainCodeAct(params: {
   if (commands.length === 0) {
     return false;
   }
+  if (commands.includes(BRAIN_GMAIL_COMMAND)) {
+    return params.assistantText.includes("GMAIL_TEMPLATE_RESULT") && !params.assistantText.includes("GMAIL_RESULT");
+  }
   if (commands.every((command) => isBrainCodeActUserPauseCommand(command) || isBrainCodeActSurfaceCommand(command))) {
     return commands.includes(BRAIN_MAPS_COMMAND) && textLooksLikeMapBackedAnswerIntent(params.originalUserText);
   }
