@@ -1343,6 +1343,7 @@ interface TranscriptCodeActEvent {
   text: string;
   line?: string;
   detail?: string;
+  gmailStage?: "template" | "api" | "webexplorer";
   path?: string;
   toPath?: string;
   compactionState?: TranscriptContextCompactionState;
@@ -1490,6 +1491,33 @@ function isDynamicComputeCommand(value: string): value is `/compute_${string}_` 
 
 function isSpecializedBrainActivationCommand(value: string): value is SpecializedBrainActivationCommand {
   return Boolean(brainSpecializedBrainNameFromActivationCommand(value) && readBrainSpecializedBrainByActivationCommand(value));
+}
+
+function gmailEventTextFromResultBlock(resultLines: string[]): { text: string; stage: TranscriptCodeActEvent["gmailStage"] } {
+  const header = resultLines[0]?.trim() ?? "";
+  if (header === "GMAIL_TEMPLATE_RESULT") {
+    return { text: "Gmail template received", stage: "template" };
+  }
+  const execution = resultLines
+    .map((line) => searchArchiveValue(line.trim(), "execution"))
+    .find(Boolean) ?? "";
+  if (execution === "split_webexplorer_navigation") {
+    return { text: "Opening Gmail mailbox", stage: "webexplorer" };
+  }
+  return { text: "Gmail API response received", stage: "api" };
+}
+
+function applyGmailResultToLatestEvent(blocks: AssistantMarkdownBlock[], resultLines: string[]): void {
+  const targetBlock = [...blocks].reverse().find((block) =>
+    block.kind === "event" && block.event.command === BRAIN_GMAIL_COMMAND
+  );
+  if (targetBlock?.kind !== "event") {
+    return;
+  }
+  const result = gmailEventTextFromResultBlock(resultLines);
+  targetBlock.event.text = result.text;
+  targetBlock.event.gmailStage = result.stage;
+  targetBlock.event.detail = "";
 }
 
 function codeActEventText(command: TranscriptCodeActCommand): string {
@@ -1968,6 +1996,19 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       blocks.push({ kind: "search_archive_result", result: parseSearchArchiveResultBlock(resultLines) });
       skippingCodeActMetadata = false;
       lastEvent = null;
+      continue;
+    }
+    if (line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT") {
+      flushParagraph();
+      flushList();
+      const resultLines = [rawLine];
+      while (lineIndex + 1 < lines.length && lines[lineIndex + 1].trim()) {
+        resultLines.push(lines[lineIndex + 1]);
+        lineIndex += 1;
+      }
+      applyGmailResultToLatestEvent(blocks, resultLines);
+      skippingCodeActMetadata = false;
+      sawCodeActMetadata = true;
       continue;
     }
     if (isCodeActMetadataLine(line)) {
@@ -3497,10 +3538,10 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
   const treeId = useId();
   const count = events.length;
   const isGmailGroup = events.every((event) => event.command === BRAIN_GMAIL_COMMAND);
-  const rowCount = isGmailGroup ? 1 : count;
+  const rowCount = count;
   const treeHeight = Math.max(24, rowCount * 28);
   const summaryLabel = isGmailGroup
-    ? codeActEventText(BRAIN_GMAIL_COMMAND)
+    ? count > 1 ? "Gmail CodeAct pipeline" : events[0]?.text ?? codeActEventText(BRAIN_GMAIL_COMMAND)
     : `${count} ${count > 1 ? "commands executed" : "command executed"}`;
   return (
     <div className="transcriptCommandSummary">
@@ -3538,21 +3579,21 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
         >
           <svg className="transcriptCommandTree__rail" viewBox={`0 0 33 ${treeHeight}`} preserveAspectRatio="none" aria-hidden="true">
             <path className="transcriptCommandTree__trunk" d={`M1 0 V${treeHeight}`} />
-            {isGmailGroup ? (
-              <path className="transcriptCommandTree__branch" d="M1 12 H32" />
-            ) : events.map((_, index) => {
+            {events.map((_, index) => {
               const y = 12 + index * 28;
               return <path className="transcriptCommandTree__branch" d={`M1 ${y} H32`} key={index} />;
             })}
           </svg>
           <div className="transcriptCommandTree__rows">
             {isGmailGroup ? (
-              <div className="transcriptCommandTree__row transcriptCommandTree__row--gmail">
-                <span className="transcriptCommandTree__gmailLogo" aria-hidden="true">
-                  <ModuleLogo id="gmail" />
-                </span>
-                <span className="transcriptCommandTree__eventText">{codeActEventText(BRAIN_GMAIL_COMMAND)}</span>
-              </div>
+              events.map((event, index) => (
+                <div className="transcriptCommandTree__row transcriptCommandTree__row--gmail" key={`${event.command}-${event.gmailStage ?? "gmail"}-${index}`}>
+                  <span className="transcriptCommandTree__gmailLogo" aria-hidden="true">
+                    <ModuleLogo id="gmail" />
+                  </span>
+                  <span className="transcriptCommandTree__eventText">{event.text}</span>
+                </div>
+              ))
             ) : events.map((event, index) => (
               <div className="transcriptCommandTree__row" key={`${event.command}-${index}`}>
                 <code>{event.command}</code>

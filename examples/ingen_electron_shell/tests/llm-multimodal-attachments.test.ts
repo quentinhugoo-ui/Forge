@@ -504,7 +504,11 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).not.toContain("stripGmailCodeActLines");
     expect(rendererSource).not.toContain("J'ouvre Gmail dans Web Explorer.");
     expect(rendererSource).toContain('Opening Gmail mailbox');
+    expect(rendererSource).toContain('Gmail template received');
+    expect(rendererSource).toContain('Gmail API response received');
+    expect(rendererSource).toContain('line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT"');
     expect(rendererSource).toContain('isGmailGroup');
+    expect(rendererSource).toContain('Gmail CodeAct pipeline');
   });
 
   it("registers Airbnb as a Brain-backed module CodeAct", () => {
