@@ -43,6 +43,12 @@ describe("WebSearch CodeAct", () => {
     expect(directFilled?.kind === "template" ? directFilled.result.reason : "").toBe("template_required");
 
     const rendered = templateStep?.kind === "template" ? renderWebSearchTemplateResult(templateStep.result) : "";
+    expect(rendered).toContain("domains=[]");
+    expect(rendered).toContain('media="none|images|video_audio"');
+    expect(rendered).toContain('next="answer_only|scrape_urls"');
+    expect(rendered).not.toContain("providers=");
+    expect(rendered).not.toContain("tool_choice=");
+    expect(rendered).not.toContain("search_context_size=");
     const proofHash = rendered.match(/template_proof_hash=sha256:([a-f0-9]{64})/)?.[1];
     expect(proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -60,6 +66,34 @@ describe("WebSearch CodeAct", () => {
       query: "latest OpenAI web search API docs",
       goal: "url_discovery_for_scrapers",
       providers: "both_parallel"
+    });
+  });
+
+  it("maps the compact template aliases to the full runtime request", () => {
+    const templateStep = readWebSearchCodeAct("/websearch_");
+    const rendered = templateStep?.kind === "template" ? renderWebSearchTemplateResult(templateStep.result) : "";
+    const proofHash = rendered.match(/template_proof_hash=sha256:([a-f0-9]{64})/)?.[1];
+
+    const request = readWebSearchCodeAct([
+      `/websearch_ template_proof_hash="sha256:${proofHash}"`,
+      'query="sources officielles The Witcher 3 Hearts of Stone"',
+      'goal="url_discovery_for_scrapers"',
+      'freshness="any_time"',
+      'domains=["thewitcher.com"]',
+      'media="images"',
+      'next="scrape_urls"',
+      'locale="fr"'
+    ].join(" "));
+
+    expect(request?.kind).toBe("request");
+    expect(request?.kind === "request" ? request.request : undefined).toMatchObject({
+      query: "sources officielles The Witcher 3 Hearts of Stone",
+      allowedDomains: ["thewitcher.com"],
+      mediaIntent: "image_enrichment",
+      searchContentTypes: "text_image",
+      extractIntent: "next_loop_scrapers",
+      output: "media_manifest",
+      locale: "fr"
     });
   });
 

@@ -77,7 +77,7 @@ describe("Banger native viewport contract", () => {
     expect(indexHtmlSource).toContain("https://ajax.googleapis.com");
     expect(indexHtmlSource).toContain("https://*.virtualearth.net");
     expect(indexHtmlSource).toContain("https://*.arcgisonline.com");
-    expect(indexHtmlSource).toContain("frame-src 'self' data: blob:");
+    expect(indexHtmlSource).toContain("frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com;");
     expect(indexHtmlSource).not.toContain("frame-src 'none'");
     expect(stylesSource).toContain(".shell--banger-page .surfaceRouter");
     expect(stylesSource).toContain(".surfaceRouter--banger");

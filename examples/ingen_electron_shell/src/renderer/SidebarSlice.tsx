@@ -1,4 +1,4 @@
-﻿import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   closestCenter,
@@ -28,6 +28,7 @@ import type { LlmProviderRuntimeEvent, ProfileCanvas, SidebarSessionItem, Sideba
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 import { headerShadowStore } from "./header-shadow-store";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
+import { BanterActivityLoader } from "./BanterActivityLoader";
 import { BrainCanvas, type BrainSpace } from "./BrainCanvas";
 import { ModuleLogo } from "./module-logos";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
@@ -120,7 +121,7 @@ function SidebarIcon({ tool }: { tool: Pick<SidebarToolControl, "id" | "icon" | 
   );
 }
 
-/* PoolClaw header icons — normalized to the sidebar icon contract:
+/* PoolClaw header icons � normalized to the sidebar icon contract:
    24-unit viewBox, 16px render, 1.65 non-scaling stroke (matches New Session/Modules/etc). */
 function NavIcon({ kind }: { kind: string }) {
   const base = {
@@ -268,6 +269,24 @@ function ParallelSessionIcon({ count, birthAnimationKey = 0, birth = false }: { 
   );
 }
 
+function TradingSessionIcon() {
+  return (
+    <span className="tradingSessionMark" role="img" aria-label="OANDA trading session">
+      <svg
+        className="tradingSessionMark__icon"
+        viewBox="0 0 37.1 36.7"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <polygon className="tradingSessionMark__white" points="8.5,26.4 2.9,26.4 0,15.4 5.6,15.4" />
+        <polygon className="tradingSessionMark__green" points="32.5,16.9 26.9,16.9 31.4,0 37.1,0" />
+        <polygon className="tradingSessionMark__green" points="21.2,8.5 16.4,26.3 13.7,36.7 19.2,36.7 19.3,36.7 26.8,8.5" />
+        <polygon className="tradingSessionMark__white" points="14.6,19.5 9,19.5 13.5,36.7 13.6,36.7 19.2,36.7" />
+      </svg>
+    </span>
+  );
+}
 function WorkspaceFolderIcon() {
   return (
     <svg className="recentsProject__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -432,6 +451,7 @@ function SessionRow({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const laneCount = parallelSessionCount(item);
   const parallel = laneCount > 1;
+  const trading = item.section === "trading";
   const sessionLabel = parallel ? cleanParallelSessionLabel(item.label) : item.label;
   const birth = parallelBirthAnimationKey > 0 && item.sessionId !== "" && item.sessionId === parallelBirthAnimationSessionId;
 
@@ -495,10 +515,13 @@ function SessionRow({
       selected ? "sessionRow--selected" : "",
       item.working ? "sessionRow--working" : "",
       parallel ? "sessionRow--parallel" : "",
+      trading ? "sessionRow--trading" : "",
       renaming ? "sessionRow--renaming" : "",
       archiving ? "sessionRow--archiving" : ""
     ].filter(Boolean).join(" ")} role="listitem">
-      {parallel ? (
+      {trading ? (
+        <TradingSessionIcon />
+      ) : parallel ? (
         <ParallelSessionIcon
           key={birth ? "parallel-icon-birth-" + parallelBirthAnimationKey : "parallel-icon"}
           count={laneCount}
@@ -530,7 +553,7 @@ function SessionRow({
           }}
           aria-label={[
             "Open",
-            parallel ? "parallel session group with " + laneCount + " sessions" : "session",
+            trading ? "OANDA trading session" : parallel ? "parallel session group with " + laneCount + " sessions" : "session",
             sessionLabel,
             item.working ? "working" : ""
           ].filter(Boolean).join(", ")}
@@ -541,7 +564,7 @@ function SessionRow({
       {item.working ? (
         <span className="sessionRow__workStatus" aria-label={sessionLabel + " is working"} role="status">
           <span className="sessionRow__loaderViewbox" aria-hidden="true">
-            <span className="loader" />
+            <BanterActivityLoader />
           </span>
         </span>
       ) : (

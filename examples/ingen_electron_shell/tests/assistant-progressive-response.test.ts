@@ -50,6 +50,10 @@ describe("assistant progressive response feed", () => {
 
   it("keeps pending-response animation live across session materialization", () => {
     expect(animationSource).toContain("const keepDraftResponseLive = previous.hadPending");
+    expect(animationSource).toContain("lengths: Map<string, number>");
+    expect(animationSource).toContain("const assistantTextGrew = assistantAnimationLength > previousAnimationLength");
+    expect(animationSource).toContain("assistantTextGrew && message.id === latestAssistantMessageId");
+    expect(animationSource).not.toContain("kind: \"assistant_write_complete\", value: message.id");
     expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
   });
 
@@ -68,6 +72,8 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("ASSISTANT_LINE_GROWTH_MIN_DELTA_PX");
     expect(animationSource).toContain("ASSISTANT_LINE_GROWTH_TRANSITION_MS");
     expect(animationSource).toContain("const lineGrowthStartHeightRef = useRef<number | null>(null)");
+    expect(animationSource).toContain("if (visibleCharactersRef.current < totalCharacters)");
+    expect(animationSource).toContain("completionReportedRef.current = false");
     expect(animationSource).toContain("lineGrowthStartHeightRef.current = textRef.current?.getBoundingClientRect().height ?? null");
     expect(animationSource).toContain("const targetHeight = node.scrollHeight");
     expect(animationSource).toContain("node.style.transition = `height ${ASSISTANT_LINE_GROWTH_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`");
@@ -125,8 +131,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("voice_source=Follow BRAIN_PERSONALITY_MANIFEST");
     expect(mainSource).toContain("function brainPersonalityContextManifest");
     expect(mainSource).toContain("personalityManifest");
-    expect(mainSource).toContain("visible_step_shape=Each visible paragraph should make the step understandable");
+    expect(mainSource).toContain("visible_step_shape=Write loop progress as small readable chunks");
     expect(mainSource).toContain("event_coupling=When you say an action will be taken");
+    expect(mainSource).toContain("result_summary=After a *_RESULT");
     expect(mainSource).toContain("pedagogy=Name pivots and tradeoffs plainly");
     expect(mainSource).toContain("completion=When no further loop action is needed");
     expect(mainSource).toContain("emitAgentRuntimeToolCallStarted");
@@ -200,7 +207,7 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("function canShowAssistantWorkingStatus");
     expect(animationSource).toContain("assistantWorkingCandidate && canShowAssistantWorkingStatus(assistantWorkingEvent)");
     expect(animationSource).toContain("is continuing in ${brainSegmentName(event.command)}");
-    expect(animationSource).toContain("return true;");
+    expect(animationSource).toContain("return Boolean(event && isAgentActionCommand(event.command));");
     expect(animationSource).toContain("sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox");
     expect(animationSource).toContain("latestTranscriptEvent(message.text)");
     expect(animationSource).toContain("is running a confirmed shell command");
@@ -279,6 +286,23 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function isBrainCodeActUserPauseCommand");
     expect(mainSource).toContain("function isBrainCodeActSurfaceCommand");
     expect(mainSource).toContain("function shouldContinueAfterBrainCodeAct");
+    expect(mainSource).toContain("function hasPendingBrainCodeActTemplateResult");
+    expect(mainSource).toContain("function latestPendingBrainCodeActTemplateResultBlock");
+    expect(mainSource).toContain("function brainCodeActTerminalResultBlocks");
+    expect(mainSource).toContain("function hasBrainCodeActTerminalResult");
+    expect(mainSource).toContain("function brainCodeActLoopContinuationMarker");
+    expect(mainSource).toContain("hasBrainCodeActTerminalResult(params.assistantText)");
+    expect(mainSource).toContain("brainCodeActLoopContinuationMarker(params.pass.assistantMessage.text)");
+    expect(mainSource).toContain("previous_codeact_template_result:");
+    expect(mainSource).toContain("template_action=If previous_codeact_template_result is present");
+    expect(mainSource).toContain("result_action=If the previous message contains a *_RESULT block");
+    expect(mainSource).toContain("function hasBrainCodeActResultHeader");
+    expect(mainSource).toContain("function brainCodeActResultHeaderPattern");
+    expect(mainSource).toContain("_TEMPLATE_RESULT");
+    expect(mainSource).toContain("(?:^|\\\\n)${escapedPrefix}_RESULT\\\\b");
+    expect(mainSource).not.toContain("!text.includes(`${prefix}_RESULT`)");
+    expect(mainSource).toContain("Do not stop with a prose-only intention");
+    expect(mainSource).toContain("emit the chosen CodeAct in this message and wait for its RESULT");
     expect(mainSource).toContain("function brainCodeActLoopContinuationUserText");
     expect(mainSource).toContain("interface UniversalLoopOrchestratorPassResult");
     expect(mainSource).toContain("async function executeUniversalLoopOrchestratorPass");
@@ -291,8 +315,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("pass = continuationPass");
     expect(mainSource).toContain("BRAIN_CODEACT_LOOP_CONTINUATION v1");
     expect(mainSource).toContain("agentLoopNarrationContractManifest()");
-    expect(mainSource).toContain("visible_step_shape=Each visible paragraph should make the step understandable");
+    expect(mainSource).toContain("visible_step_shape=Write loop progress as small readable chunks");
     expect(mainSource).toContain("event_coupling=When you say an action will be taken");
+    expect(mainSource).toContain("result_summary=After a *_RESULT");
     expect(mainSource).toContain("previous_visible_progress=");
     expect(mainSource).toContain("assistant-response-${Date.now()}-${continuation.idSuffix}");
     expect(mainSource).toContain("command === BRAIN_QUESTIONNAIRE_COMMAND");
@@ -325,17 +350,56 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("transcriptCodeActEvent--brainSegment");
   });
 
+  it("renders CodeAct loop stream events between assistant monologues instead of hiding them in command groups", () => {
+    expect(animationSource).toContain("function codeActResultHeaderParts");
+    expect(animationSource).toContain('(?:_(TEMPLATE))?_RESULT');
+    expect(animationSource).toContain('[BRAIN_CHART_COMMAND, "Inspect active chart"]');
+    expect(animationSource).toContain('[BRAIN_EDIT_CHART_COMMAND, "Edit active chart"]');
+    expect(animationSource).toContain('[BRAIN_MARKET_ORDER_COMMAND, "Prepare market order"]');
+    expect(animationSource).toContain("function fallbackCodeActEventText");
+    expect(animationSource).not.toContain("BRAIN_CODEACT_DESCRIPTION_BY_COMMAND");
+    expect(animationSource).toContain("function appendGenericCodeActResultEvent");
+    expect(animationSource).toContain("const TRANSCRIPT_CODEACT_RESULT_TEXT");
+    expect(animationSource).toContain("Chart context ready");
+    expect(animationSource).toContain("Chart annotation applied");
+    expect(animationSource).toContain("Order window updated");
+    expect(animationSource).toContain("function genericCodeActResultText");
+    expect(animationSource).toContain("function codeActStatusDisplayText");
+    expect(animationSource).toContain("return \"Needs retry\"");
+    expect(animationSource).toContain("metadataDetail || undefined");
+    expect(animationSource).toContain("transcriptCommandTree__marker");
+    expect(animationSource).not.toContain("<code>{event.command}</code>");
+    expect(animationSource).not.toContain("detail: detail || (parts.status");
+    expect(animationSource).toContain("ASSISTANT_PARAGRAPH_MAX_CHARS");
+    expect(animationSource).toContain("function splitAssistantParagraphText");
+    expect(animationSource).toContain("for (const chunk of splitAssistantParagraphText(body))");
+    expect(animationSource).toContain("assistantChartEditTagNode");
+    expect(animationSource).toContain("forge:trading-chart-highlight");
+    expect(stylesSource).toContain(".assistantChartEditTag");
+    expect(animationSource).toContain('parts.stage === "template"');
+    expect(animationSource).not.toContain('template received');
+    expect(animationSource).not.toContain('result received');
+    expect(animationSource).toContain("const genericResultParts = codeActResultHeaderParts(line)");
+    expect(animationSource).toContain("lastEvent = appendGenericCodeActResultEvent(blocks, resultLines) ?? null");
+    expect(animationSource).toContain("function shouldGroupAsCodexCommandEvent(_event: TranscriptCodeActEvent): boolean");
+    expect(animationSource).toContain("return false;");
+    expect(animationSource).toContain('transcriptCodeActEvent__detail');
+    expect(stylesSource).toContain(".transcriptCodeActEvent__detail");
+    expect(animationSource).not.toContain('commands executed"');
+  });
   it("gives non-Brain CodeAct events a working and completed visual phase", () => {
     expect(animationSource).toContain("const isGenericCodeActEvent = !isBrainStyled && !agentCommand");
-    expect(animationSource).toContain('useState<"working" | "complete">');
-    expect(animationSource).toContain("setGenericCodeActPhase(\"working\")");
-    expect(animationSource).toContain("setGenericCodeActPhase(\"complete\")");
+    expect(animationSource).toContain("function transcriptEventHasRuntimeProof");
+    expect(animationSource).toContain('const genericCodeActPhase: "working" | "complete"');
+    expect(animationSource).toContain("writing && isGenericCodeActEvent && !transcriptEventHasRuntimeProof(event)");
+    expect(animationSource).not.toContain("setGenericCodeActPhase");
     expect(animationSource).toContain("transcriptCodeActEvent--codeact-${genericCodeActPhase}");
     expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working::before");
+    expect(stylesSource).toContain("transcriptCodeActWorkingSweep");
     expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon");
     expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete");
     expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete .transcriptCodeActEvent__text");
-    expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-working .transcriptCodeActEvent__icon");
     expect(stylesSource).toContain(".transcriptCodeActEvent--codeact-complete,");
   });
 

@@ -104,6 +104,7 @@ describe("Gmail CodeAct", () => {
     });
   });
 
+
   it("renders only the machine result, not a fixed user-facing sentence", () => {
     const request = parseGmailCodeAct('/gmail_ intent="open" mode="split_webexplorer"');
     expect(request).toBeDefined();
@@ -178,7 +179,6 @@ describe("Gmail CodeAct", () => {
     expect(rendered).not.toContain("client-secret");
     expect(rendered).not.toContain("ya29.short");
   });
-
   it("maps Gmail insufficient scope errors to auth_required", async () => {
     process.env.INGEN_GMAIL_ACCESS_TOKEN = "metadata-token";
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
@@ -203,7 +203,6 @@ describe("Gmail CodeAct", () => {
     expect(result.warnings.join(" ")).toContain("current token does not include the scope");
     expect(result.error).toContain("Metadata scope does not support");
   });
-
   it("does not accept the removed /gmail_com CodeAct", () => {
     expect(parseGmailCodeAct("/gmail_com")).toBeUndefined();
     expect(readGmailCodeAct("/gmail_com")).toBeUndefined();
@@ -211,6 +210,7 @@ describe("Gmail CodeAct", () => {
   it("normalizes every open Gmail surface navigation to the Google Accounts sign-in URL", () => {
     const gmailOpen = parseGmailCodeAct('/gmail_ intent="open" query="gmail" keywords=""');
     const gmailSearch = parseGmailCodeAct('/gmail_ intent="search" query="facture" keywords=""');
+
     expect(gmailWebExplorerNavigationUrl(gmailOpen!)).toBe(GMAIL_SIGN_IN_URL);
     expect(gmailWebExplorerNavigationUrl(gmailSearch!)).toContain("https://mail.google.com/mail/");
   });

@@ -5,6 +5,9 @@ import type { BrainCodeActCommand, ComposerUploadPreview, NativeSection, PanelsC
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_AIRBNB_COMMAND,
+  BRAIN_CHART_COMMAND,
+  BRAIN_EDIT_CHART_COMMAND,
+  BRAIN_MARKET_ORDER_COMMAND,
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_CODEACT_COMMANDS,
   BRAIN_FRONTDESIGN_COMMAND,
@@ -35,6 +38,7 @@ import {
   BRAIN_WEB_COMMAND
 } from "../shared/ipc-contract";
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
+import { BanterActivityLoader } from "./BanterActivityLoader";
 import {
   AGENT_COPY_PATH_COMMAND,
   AGENT_CREATE_DIRECTORY_COMMAND,
@@ -88,6 +92,7 @@ import {
 import { ModuleLogo } from "./module-logos";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
+const CONVERSATION_TRANSCRIPT_RENDERING_DISABLED: boolean = false;
 const COMPOSER_MAX_INPUT_HEIGHT = 132;
 const COMPOSER_SINGLE_LINE_HEIGHT_TOLERANCE_PX = 8;
 const CHAT_KEY_COLOR_EVENT = "ingen:chat-key-color";
@@ -1263,6 +1268,10 @@ function latestTranscriptContainerFor(element: Element | null): HTMLElement | nu
   return container;
 }
 
+function transcriptContainerFor(element: Element | null): HTMLElement | null {
+  return element?.closest<HTMLElement>(".chatCanvas__messages") ?? null;
+}
+
 type AssistantMarkdownBlock =
   | { kind: "heading"; level: number; text: string }
   | { kind: "list"; ordered: boolean; items: string[] }
@@ -1343,7 +1352,6 @@ interface TranscriptCodeActEvent {
   text: string;
   line?: string;
   detail?: string;
-  gmailStage?: "template" | "api" | "webexplorer";
   path?: string;
   toPath?: string;
   compactionState?: TranscriptContextCompactionState;
@@ -1352,9 +1360,6 @@ interface TranscriptCodeActEvent {
 const BRAIN_CODEACT_COMMAND_SET = new Set<string>(BRAIN_CODEACT_COMMANDS);
 const BRAIN_CODEACT_COMMANDS_BY_LENGTH = [...BRAIN_CODEACT_COMMANDS].sort((left, right) => right.length - left.length);
 const SILENT_TRANSCRIPT_CODEACT_COMMANDS = new Set<string>([BRAIN_RENAME_SESSION_COMMAND]);
-const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
-  BRAIN_CODEACT_COMMAND_DESCRIPTIONS.map((entry) => [entry.command, entry.description])
-);
 const RENAME_SESSION_TAG_PATTERN = /^\/rename_session_(?:\*?[^_\r\n]{1,120}\*?)_/i;
 const RENAME_SESSION_TAG_FRAGMENT_PATTERN = /\/rename_session_(?:\*?[^_\r\n]{1,120}\*?)_/giu;
 
@@ -1371,7 +1376,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
   [BRAIN_SCRAPERS_COMMAND, "Collect web sources"],
   [BRAIN_MAPS_COMMAND, "Use Map"],
-  [BRAIN_GMAIL_COMMAND, "Opening Gmail mailbox"],
+  [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_AIRBNB_COMMAND, "Use Airbnb"],
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
@@ -1393,8 +1398,73 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_BRAIN_COMMAND, "Brain memory indexed"],
   [BRAIN_NEWMODULE_COMMAND, "module contract prepared"],
   [BRAIN_RUST_PORT_ADAPTER_COMMAND, "Rust adapter template prepared"],
+  [BRAIN_CHART_COMMAND, "Inspect active chart"],
+  [BRAIN_EDIT_CHART_COMMAND, "Edit active chart"],
+  [BRAIN_MARKET_ORDER_COMMAND, "Prepare market order"],
   [BRAIN_RUST_STATE_STORE_COMMAND, "Rust state store contract prepared"]
 ]);
+
+const TRANSCRIPT_CODEACT_RESULT_TEXT = new Map<string, string>([
+  ["CHART_RESULT", "Chart context ready"],
+  ["EDIT_CHART_RESULT", "Chart annotation applied"],
+  ["MARKET_ORDER_RESULT", "Order window updated"],
+  ["CHART_TEMPLATE_RESULT", "Inspect active chart"],
+  ["EDIT_CHART_TEMPLATE_RESULT", "Edit active chart"],
+  ["MARKET_ORDER_TEMPLATE_RESULT", "Prepare market order"]
+]);
+
+interface CodeActResultHeaderParts {
+  schema: string;
+  stage: "template" | "result";
+  command: TranscriptCodeActCommand;
+  status: string;
+}
+
+function codeActResultHeaderParts(line: string): CodeActResultHeaderParts | null {
+  const match = /^([A-Z][A-Z0-9_]*?(?:_(TEMPLATE))?_RESULT)\b(.*)$/i.exec(line.trim());
+  if (!match) return null;
+  const schema = (match[1] ?? "").toUpperCase();
+  const status = codeActSlotValue(match[3] ?? "", "status").toLowerCase();
+  const command = schema.startsWith("CHART_") ? BRAIN_CHART_COMMAND
+    : schema.startsWith("EDIT_CHART_") ? BRAIN_EDIT_CHART_COMMAND
+      : schema.startsWith("MARKET_ORDER_") ? BRAIN_MARKET_ORDER_COMMAND
+        : BRAIN_BRAIN_COMMAND;
+  return { schema, stage: match[2] ? "template" : "result", command, status };
+}
+
+function genericCodeActResultText(parts: CodeActResultHeaderParts): string {
+  if (parts.stage === "template") {
+    return codeActEventText(parts.command);
+  }
+  return TRANSCRIPT_CODEACT_RESULT_TEXT.get(parts.schema) ?? codeActEventText(parts.command);
+}
+
+function codeActStatusDisplayText(status: string): string | undefined {
+  const normalized = status.trim().toLowerCase();
+  if (!normalized || normalized === "filled" || normalized === "applied" || normalized === "template" || normalized === "complete" || normalized === "completed") {
+    return undefined;
+  }
+  if (normalized === "refused" || normalized === "error" || normalized === "timeout" || normalized === "timed_out") {
+    return "Needs retry";
+  }
+  return undefined;
+}
+function appendGenericCodeActResultEvent(blocks: AssistantMarkdownBlock[], resultLines: string[]): TranscriptCodeActEvent | null {
+  const parts = codeActResultHeaderParts(resultLines[0] ?? "");
+  if (!parts) return null;
+  const detail = resultLines.slice(1).map((line) => codeActMetadataDisplayText(line.trim())).find(Boolean);
+  if (parts.stage === "template") {
+    return null;
+  }
+  const event: TranscriptCodeActEvent = {
+    command: parts.command,
+    text: genericCodeActResultText(parts),
+    line: resultLines.join("\n"),
+    detail: detail || codeActStatusDisplayText(parts.status)
+  };
+  blocks.push({ kind: "event", event });
+  return event;
+}
 
 function contextCompactionStateFromLine(line: string): TranscriptContextCompactionState {
   const match = /(?:^|\s)state\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(line);
@@ -1493,34 +1563,7 @@ function isSpecializedBrainActivationCommand(value: string): value is Specialize
   return Boolean(brainSpecializedBrainNameFromActivationCommand(value) && readBrainSpecializedBrainByActivationCommand(value));
 }
 
-function gmailEventTextFromResultBlock(resultLines: string[]): { text: string; stage: TranscriptCodeActEvent["gmailStage"] } {
-  const header = resultLines[0]?.trim() ?? "";
-  if (header === "GMAIL_TEMPLATE_RESULT") {
-    return { text: "Gmail template received", stage: "template" };
-  }
-  const execution = resultLines
-    .map((line) => searchArchiveValue(line.trim(), "execution"))
-    .find(Boolean) ?? "";
-  if (execution === "split_webexplorer_navigation") {
-    return { text: "Opening Gmail mailbox", stage: "webexplorer" };
-  }
-  return { text: "Gmail API response received", stage: "api" };
-}
-
-function applyGmailResultToLatestEvent(blocks: AssistantMarkdownBlock[], resultLines: string[]): void {
-  const targetBlock = [...blocks].reverse().find((block) =>
-    block.kind === "event" && block.event.command === BRAIN_GMAIL_COMMAND
-  );
-  if (targetBlock?.kind !== "event") {
-    return;
-  }
-  const result = gmailEventTextFromResultBlock(resultLines);
-  targetBlock.event.text = result.text;
-  targetBlock.event.gmailStage = result.stage;
-  targetBlock.event.detail = "";
-}
-
-function codeActEventText(command: TranscriptCodeActCommand): string {
+function fallbackCodeActEventText(command: TranscriptCodeActCommand): string {
   if (command === CONTEXT_COMPACTION_COMMAND) {
     return "Compressing context";
   }
@@ -1532,7 +1575,11 @@ function codeActEventText(command: TranscriptCodeActCommand): string {
     const label = dynamicComputeLabel(command);
     return `${label || "named"} compute executed`;
   }
-  return TRANSCRIPT_CODEACT_EVENT_TEXT.get(command) || BRAIN_CODEACT_DESCRIPTION_BY_COMMAND.get(command) || "CodeAct command executed";
+  return TRANSCRIPT_CODEACT_EVENT_TEXT.get(command) || BRAIN_CODEACT_COMMAND_DESCRIPTIONS.find((entry) => entry.command === command)?.description || "CodeAct command executed";
+}
+
+function codeActEventText(command: TranscriptCodeActCommand): string {
+  return fallbackCodeActEventText(command);
 }
 
 function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined {
@@ -1610,7 +1657,7 @@ function isCodeActMetadataLine(line: string): boolean {
   const trimmed = line.trim();
   return (
     isCodeActResultHeader(trimmed) ||
-    /^(?:status|error|path|toPath|items?|stdout|stderr|exitCode|exit_code|proofHash|proof_hash|hash)\s*[:=]/i.test(trimmed) ||
+    /^(?:schema|source|status|error|path|toPath|items?|stdout|stderr|exitCode|exit_code|proofHash|proof_hash|proofhash|hash|execution|instrument|timeframe|candle_count|candlecount|candles?|screenshot|actions?|elements?|conversation_tags|conversationtags|applied_count|appliedcount|refused_count|refusedcount)\s*[:=]/i.test(trimmed) ||
     (/^[{[]/.test(trimmed) && /[}\]]$/.test(trimmed))
   );
 }
@@ -1620,7 +1667,7 @@ function isCodeActMetadataContinuation(line: string): boolean {
   if (!trimmed || trimmed.startsWith("/")) {
     return false;
   }
-  return /^\s/.test(line) || /^[a-zA-Z_][\w-]*\s*[:=]/.test(trimmed) || /^[{[\]},]/.test(trimmed);
+  return /^\s/.test(line) || /^[a-zA-Z_][\w-]*\s*[:=]/.test(trimmed) || /^["'][\w-]+["']\s*:/.test(trimmed) || /^[{[\]},'"]/.test(trimmed);
 }
 
 function codeActMetadataDisplayText(line: string): string {
@@ -1628,6 +1675,20 @@ function codeActMetadataDisplayText(line: string): string {
   const result = /^R(?:e|\u00e9)sultat\s*:\s*(.*)$/i.exec(trimmed);
   if (result) {
     return `Result: ${result[1]}`.trim();
+  }
+  if (/^(?:schema|source|execution|proofHash|proof_hash|proofhash|hash|instrument|timeframe|actions?|elements?|conversation_tags|conversationtags|applied_count|appliedcount|refused_count|refusedcount)\s*[:=]/i.test(trimmed)) {
+    return "";
+  }
+  if (/^(?:schema|source|execution)\s*[:=]/i.test(trimmed)) {
+    return "";
+  }
+  const status = /^status\s*[:=]\s*([\w-]+)/i.exec(trimmed)?.[1]?.toLowerCase() ?? "";
+  const statusDisplay = codeActStatusDisplayText(status);
+  if (statusDisplay) {
+    return statusDisplay;
+  }
+  if (status) {
+    return "";
   }
   return trimmed;
 }
@@ -1756,27 +1817,27 @@ function quoteTextFromLine(line: string): string | null {
 }
 
 function calloutFromLine(line: string): { tone: AssistantCalloutTone; title: string; body: string } | null {
-  const match = /^(note|info|important|warning|attention|danger|hypoth[eè]se|assumption|source|résumé|resume|summary|conseil|tip)\s*[:：]\s*(.*)$/i.exec(line.trim());
+  const match = /^(note|info|important|warning|attention|danger|hypoth[e\u00E8]se|assumption|source|r\u00E9sum\u00E9|resume|summary|conseil|tip)\s*[:\uFF1A]\s*(.*)$/i.exec(line.trim());
   if (!match) {
     return null;
   }
-  const label = match[1].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const label = match[1].toLowerCase();
   const tone: AssistantCalloutTone =
-    label === "warning" || label === "attention" || label === "danger"
+    label === "warning" || label === "attention" || label === "danger" || label === "important"
       ? "warning"
-      : label === "hypothese" || label === "assumption"
+      : label === "hypoth\u00E8se" || label === "hypothese" || label === "assumption"
         ? "assumption"
-        : label === "resume" || label === "summary" || label === "tip" || label === "conseil"
+        : label === "resume" || label === "r\u00E9sum\u00E9" || label === "summary" || label === "tip" || label === "conseil"
           ? "success"
           : "info";
-  const title = label === "hypothese"
-    ? "Hypothese"
+  const title = label === "resume" || label === "r\u00E9sum\u00E9"
+    ? "R\u00E9sum\u00E9"
     : match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
   return { tone, title, body: match[2].trim() };
 }
 
 function factItemFromLine(line: string): AssistantFactItem | null {
-  const match = /^([A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 /_.-]{1,38})\s*:\s+(.+)$/.exec(line.trim());
+  const match = /^([A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF0-9][A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF0-9 /_.-]{1,38})\s*:\s+(.+)$/.exec(line.trim());
   if (!match || calloutFromLine(line)) {
     return null;
   }
@@ -1803,7 +1864,7 @@ function assistantMacroListItemFromText(text: string): AssistantMacroListItem | 
   if (!label || !body || label.length > 42 || body.length < 8) {
     return null;
   }
-  if (!/^[\p{L}\p{N}][\p{L}\p{N} /_.’'()-]{1,41}$/u.test(label)) {
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} /_.Ã¢â‚¬â„¢'()-]{1,41}$/u.test(label)) {
     return null;
   }
   return { label, body };
@@ -1952,6 +2013,21 @@ function parseSearchArchiveResultBlock(lines: string[]): AssistantSearchArchiveR
   return result;
 }
 
+const ASSISTANT_PARAGRAPH_MAX_CHARS = 620;
+
+function splitAssistantParagraphText(body: string): string[] {
+  if (body.length <= ASSISTANT_PARAGRAPH_MAX_CHARS) return [body];
+  const chunks: string[] = [];
+  let remaining = body;
+  while (remaining.length > ASSISTANT_PARAGRAPH_MAX_CHARS) {
+    const splitAt = Math.max(160, remaining.lastIndexOf(". ", ASSISTANT_PARAGRAPH_MAX_CHARS) + 1 || remaining.lastIndexOf(", ", ASSISTANT_PARAGRAPH_MAX_CHARS) + 1 || ASSISTANT_PARAGRAPH_MAX_CHARS);
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
 function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   const lines = normalizeAssistantMarkdownText(text).split("\n");
   const blocks: AssistantMarkdownBlock[] = [];
@@ -1964,7 +2040,9 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   const flushParagraph = () => {
     const body = paragraph.join(" ").replace(/\s+/g, " ").trim();
     if (body) {
-      blocks.push({ kind: "paragraph", text: body });
+      for (const chunk of splitAssistantParagraphText(body)) {
+        blocks.push({ kind: "paragraph", text: chunk });
+      }
     }
     paragraph = [];
   };
@@ -1979,6 +2057,9 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
     const rawLine = lines[lineIndex];
     const line = rawLine.trim();
     if (!line) {
+      if (skippingCodeActMetadata) {
+        continue;
+      }
       flushParagraph();
       flushList();
       skippingCodeActMetadata = false;
@@ -1998,22 +2079,39 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       lastEvent = null;
       continue;
     }
-    if (line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT") {
+    const genericResultParts = codeActResultHeaderParts(line);
+    if (genericResultParts) {
       flushParagraph();
       flushList();
       const resultLines = [rawLine];
-      while (lineIndex + 1 < lines.length && lines[lineIndex + 1].trim()) {
-        resultLines.push(lines[lineIndex + 1]);
+      while (lineIndex + 1 < lines.length) {
+        const nextRawLine = lines[lineIndex + 1];
+        const nextLine = nextRawLine.trim();
+        if (!nextLine) {
+          const afterBlank = lines[lineIndex + 2] ?? "";
+          const afterBlankLine = afterBlank.trim();
+          if (afterBlankLine && (isCodeActMetadataLine(afterBlankLine) || isCodeActMetadataContinuation(afterBlank))) {
+            resultLines.push(nextRawLine);
+            lineIndex += 1;
+            continue;
+          }
+          break;
+        }
+        if (!isCodeActMetadataLine(nextLine) && !isCodeActMetadataContinuation(nextRawLine)) {
+          break;
+        }
+        resultLines.push(nextRawLine);
         lineIndex += 1;
       }
-      applyGmailResultToLatestEvent(blocks, resultLines);
+      lastEvent = appendGenericCodeActResultEvent(blocks, resultLines) ?? null;
       skippingCodeActMetadata = false;
       sawCodeActMetadata = true;
       continue;
     }
     if (isCodeActMetadataLine(line)) {
       if (lastEvent) {
-        lastEvent.detail = codeActMetadataDisplayText(line);
+        const metadataDetail = codeActMetadataDisplayText(line);
+        lastEvent.detail = metadataDetail || undefined;
       }
       flushParagraph();
       flushList();
@@ -2194,17 +2292,12 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   return groupAssistantCodeActEvents(renderedBlocks);
 }
 
-function shouldGroupAsCodexCommandEvent(event: TranscriptCodeActEvent): boolean {
-  if (event.command === CONTEXT_COMPACTION_COMMAND) {
-    return false;
-  }
-  if (isAgentActionCommand(event.command) && isAgentFileModificationCommand(event.command)) {
-    return false;
-  }
-  if (event.command === BRAIN_GMAIL_COMMAND) {
-    return false;
-  }
-  return !isBrainSegmentCommand(event.command);
+function shouldGroupAsCodexCommandEvent(_event: TranscriptCodeActEvent): boolean {
+  return false;
+}
+
+function sameTranscriptEvent(left: TranscriptCodeActEvent, right: TranscriptCodeActEvent): boolean {
+  return left.command === right.command && left.text === right.text && (left.detail ?? "") === (right.detail ?? "");
 }
 
 function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): AssistantMarkdownBlock[] {
@@ -2229,6 +2322,13 @@ function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): Assistan
       continue;
     }
     flushEvents();
+    if (block.kind === "event") {
+      const previousBlock = grouped.at(-1);
+      if (previousBlock?.kind === "event" && sameTranscriptEvent(previousBlock.event, block.event)) {
+        grouped[grouped.length - 1] = block;
+        continue;
+      }
+    }
     grouped.push(block);
   }
   flushEvents();
@@ -2268,11 +2368,17 @@ function assistantVisibleAnimationSource(text: string): string {
     offset = lineEnd + 1;
 
     if (!line) {
+      if (skippingCodeActMetadata) {
+        continue;
+      }
       skippingCodeActMetadata = false;
       continue;
     }
     if (isCodeActMetadataLine(line)) {
       skippingCodeActMetadata = true;
+      continue;
+    }
+    if (skippingCodeActMetadata && isCodeActMetadataContinuation(rawLine)) {
       continue;
     }
     if (skippingCodeActMetadata) {
@@ -2294,6 +2400,7 @@ function assistantVisibleAnimationSource(text: string): string {
 }
 
 const ASSISTANT_INLINE_ATOMIC_PATTERN = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|`[^`]+?`)/g;
+const ASSISTANT_TRADING_TARGET_PATTERN = /\b(?:bougie|candle|engulfing|impulsion|vendeuse|acheteuse|baissi[eè]re|haussi[eè]re|zone|support|r[eé]sistance|range|breakout|rejet|wick|m[eè]che|open|high|low|close|cl[oô]ture|h1|h4|d1|short|long|signal)\b|\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.]\d{2,4})?\b|\b\d{1,2}\s*(?:h|:)\s*\d{0,2}\b|\b\d+(?:[.,]\d+)?\b/i;
 
 function assistantInlineAtomicRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
@@ -2312,22 +2419,41 @@ function assistantBreakpointInsideAtomicRange(point: number, ranges: Array<{ sta
 function assistantRevealBreakpoints(text: string): number[] {
   const breakpoints: number[] = [];
   const atomicRanges = assistantInlineAtomicRanges(text);
-  const pattern = /\S+\s*|\s+/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const point = match.index + match[0].length;
-    if (/\S/.test(match[0]) && !assistantBreakpointInsideAtomicRange(point, atomicRanges)) {
-      breakpoints.push(point);
+  const atomicEndByStart = new Map(atomicRanges.map((range) => [range.start, range.end]));
+  let cursor = 0;
+  while (cursor < text.length) {
+    const atomicEnd = atomicEndByStart.get(cursor);
+    if (atomicEnd !== undefined) {
+      breakpoints.push(atomicEnd);
+      cursor = atomicEnd;
+      continue;
+    }
+    cursor += 1;
+    if (!assistantBreakpointInsideAtomicRange(cursor, atomicRanges)) {
+      breakpoints.push(cursor);
     }
   }
   if (text.length > 0 && breakpoints[breakpoints.length - 1] !== text.length) {
     breakpoints.push(text.length);
   }
-  return breakpoints;
+  return [...new Set(breakpoints)];
+}
+
+function assistantAnimationLengthForText(text: string): number {
+  return assistantVisibleAnimationSource(assistantRenderableText(text)).length;
+}
+
+function assistantAnimationLengthEntries(messages: TranscriptMessage[]): Array<[string, number]> {
+  return messages
+    .filter((message) => message.role === "assistant" && message.text.trim() && !message.id.startsWith("assistant-pending-") && !message.id.startsWith("assistant-error-"))
+    .map((message) => [message.id, assistantAnimationLengthForText(message.text)] as [string, number]);
 }
 
 const ASSISTANT_LINE_GROWTH_MIN_DELTA_PX = 4;
 const ASSISTANT_LINE_GROWTH_TRANSITION_MS = 155;
+const ASSISTANT_TYPEWRITER_BASE_CADENCE_MS = 34;
+const ASSISTANT_TYPEWRITER_LONG_TEXT_CADENCE_MS = 24;
+const ASSISTANT_TYPEWRITER_MAX_STEPS_PER_TICK = 3;
 
 interface TranscriptQuestionnaire {
   title: string;
@@ -2932,7 +3058,7 @@ function assistantMathLabel(value: string): string {
   return value
     .replace(/\\quad/g, "  ")
     .replace(/\\dots/g, "...")
-    .replace(/\\cdot/g, "·")
+    .replace(/\\cdot/g, "Ãƒâ€šÃ‚Â·")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -2940,32 +3066,15 @@ function assistantMathLabel(value: string): string {
 type AssistantMathUseHandler = (formula: string) => void;
 
 const TEXTUAL_MATH_ATOM_SOURCE = String.raw`(?:\d+(?:\.\d+)?|(?:sin|cos|tan|log|ln|sqrt)\([^()\n]{1,30}\)|[A-Za-z](?:_\{?[-+A-Za-z0-9]+\}?|\^\{?[-+A-Za-z0-9]+\}?|\([^()\n]{1,30}\))?)`;
-const TEXTUAL_MATH_OPERATOR_SOURCE = String.raw`(?:\s*(?:[+\-*/^=,]|<=|>=|≤|≥|≈|≃|≠|!=)\s*|\s*[(){}\[\]]\s*)`;
-const TEXTUAL_MATH_EQUATION_SOURCE = String.raw`\b${TEXTUAL_MATH_ATOM_SOURCE}\s*(?:=|≈|≃|≤|≥|!=|≠|<=|>=)\s*${TEXTUAL_MATH_ATOM_SOURCE}(?:${TEXTUAL_MATH_OPERATOR_SOURCE}${TEXTUAL_MATH_ATOM_SOURCE}){0,12}`;
+const TEXTUAL_MATH_OPERATOR_SOURCE = String.raw`(?:\s*(?:[+\-*/^=,]|<=|>=|\u2264|\u2265|\u2248|\u2243|\u2260|!=)\s*|\s*[(){}\[\]]\s*)`;
+const TEXTUAL_MATH_EQUATION_SOURCE = String.raw`\b${TEXTUAL_MATH_ATOM_SOURCE}\s*(?:=|\u2248|\u2243|\u2264|\u2265|!=|\u2260|<=|>=)\s*${TEXTUAL_MATH_ATOM_SOURCE}(?:${TEXTUAL_MATH_OPERATOR_SOURCE}${TEXTUAL_MATH_ATOM_SOURCE}){0,12}`;
 const TEXTUAL_MATH_SEQUENCE_SOURCE = String.raw`\b\d+(?:\s*,\s*\d+){3,}\b`;
 const TEXTUAL_MATH_PATTERN = new RegExp(`${TEXTUAL_MATH_SEQUENCE_SOURCE}|${TEXTUAL_MATH_EQUATION_SOURCE}`, "g");
 
 function assistantWordFlashNodes(text: string, keyPrefix: string, writing: boolean): ReactNode[] {
-  if (!writing) {
-    return [text];
-  }
-  const nodes: ReactNode[] = [];
-  const chunks = text.match(/\s+|\S+/g) ?? [];
-  let offset = 0;
-  for (const chunk of chunks) {
-    const key = `${keyPrefix}-word-${offset}`;
-    offset += chunk.length;
-    if (/^\s+$/.test(chunk)) {
-      nodes.push(chunk);
-    } else {
-      nodes.push(
-        <span className="assistantText__wordFlash" key={key}>
-          {chunk}
-        </span>
-      );
-    }
-  }
-  return nodes;
+  void keyPrefix;
+  void writing;
+  return [text];
 }
 
 function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute?: AssistantMathUseHandler): ReactNode {
@@ -2985,6 +3094,34 @@ function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute
       </button>
     </span>
   );
+}
+
+function assistantChartEditTagNode(token: string, key: string): ReactNode {
+  const doubleMarkdown = token.startsWith("**") && token.endsWith("**");
+  const marker = token.startsWith("^") ? "^" : "*";
+  const label = token.slice(doubleMarkdown ? 2 : 1, doubleMarkdown ? -2 : -1).trim();
+  if (!label) {
+    return <Fragment key={key}>{token}</Fragment>;
+  }
+  const tag = `${marker}${label}${marker}`;
+  return (
+    <button
+      type="button"
+      className="assistantChartEditTag"
+      key={key}
+      onClick={() => globalThis.window?.dispatchEvent(new CustomEvent("forge:trading-chart-highlight", { detail: { tag, label } }))}
+    >
+      {label}
+    </button>
+  );
+}
+
+function assistantStrongNode(token: string, key: string, children?: ReactNode): ReactNode {
+  const label = token.slice(2, -2).trim();
+  if (ASSISTANT_TRADING_TARGET_PATTERN.test(label)) {
+    return assistantChartEditTagNode(token, key);
+  }
+  return <strong key={key}>{children ?? label}</strong>;
 }
 
 function assistantGeoEntityNode(token: string, key: string): ReactNode {
@@ -3047,11 +3184,11 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
     } else if (token.startsWith("@{") || token.startsWith("#{")) {
       nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
-      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+      nodes.push(assistantStrongNode(token, `${keyPrefix}-strong-${match.index}`));
     } else if (token.startsWith("__")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("*")) {
-      nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("*") || token.startsWith("^")) {
+      nodes.push(assistantChartEditTagNode(token, `${keyPrefix}-chart-edit-${match.index}`));
     } else if (token.startsWith("_")) {
       nodes.push(<em key={`${keyPrefix}-em-${match.index}`}>{token.slice(1, -1)}</em>);
     } else {
@@ -3258,8 +3395,8 @@ function agentWorkingStatusText(event?: TranscriptCodeActEvent): string {
   return "is applying a local action";
 }
 
-function canShowAssistantWorkingStatus(_event?: TranscriptCodeActEvent): boolean {
-  return true;
+function canShowAssistantWorkingStatus(event?: TranscriptCodeActEvent): boolean {
+  return Boolean(event && isAgentActionCommand(event.command));
 }
 
 function latestTranscriptEvent(text: string): TranscriptCodeActEvent | undefined {
@@ -3431,6 +3568,11 @@ function searchArchiveResultLabel(result: AssistantSearchArchiveResult): string 
   return `${resultCount} ${resultCountNumber === 1 ? "match" : "matches"}`;
 }
 
+function transcriptEventHasRuntimeProof(event: TranscriptCodeActEvent): boolean {
+  const line = event.line?.trim() ?? "";
+  return Boolean(event.detail || /_RESULT\b|\bstatus=(?:filled|applied|refused|error|complete|completed)\b/i.test(line));
+}
+
 function TranscriptCodeActEventLine({
   agentName,
   event,
@@ -3452,9 +3594,8 @@ function TranscriptCodeActEventLine({
   const fileModification = agentCommand ? agentFileModificationSummary(event, agentCommand) : undefined;
   const isGenericCodeActEvent = !isBrainStyled && !agentCommand;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
-  const [genericCodeActPhase, setGenericCodeActPhase] = useState<"working" | "complete">(
-    writing && isGenericCodeActEvent ? "working" : "complete"
-  );
+  const genericCodeActPhase: "working" | "complete" =
+    writing && isGenericCodeActEvent && !transcriptEventHasRuntimeProof(event) ? "working" : "complete";
 
   useEffect(() => {
     if (!isBrainSegment) {
@@ -3465,18 +3606,6 @@ function TranscriptCodeActEventLine({
     return () => window.clearTimeout(timeout);
   }, [event.command, isBrainSegment]);
 
-  useEffect(() => {
-    if (!isGenericCodeActEvent) {
-      return;
-    }
-    if (!writing) {
-      setGenericCodeActPhase("complete");
-      return;
-    }
-    setGenericCodeActPhase("working");
-    const timeout = window.setTimeout(() => setGenericCodeActPhase("complete"), 1000);
-    return () => window.clearTimeout(timeout);
-  }, [event.command, event.line, isGenericCodeActEvent, writing]);
 
   const eventClassNameBase = isBrainStyled
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
@@ -3504,7 +3633,6 @@ function TranscriptCodeActEventLine({
   if (fileModification) {
     return (
       <div className={eventClassName}>
-        <code className="transcriptCodeActEvent__command">{event.command}</code>
         <span className="transcriptCodeActEvent__icon transcriptCodeActFileEvent__icon" aria-hidden="true">
           <Pencil size={13} strokeWidth={1.85} />
         </span>
@@ -3519,11 +3647,11 @@ function TranscriptCodeActEventLine({
 
   return (
     <div className={eventClassName}>
-      <code className="transcriptCodeActEvent__command">{event.command}</code>
       <span className="transcriptCodeActEvent__icon" aria-hidden="true">
         <CodeActEventIcon command={event.command} brainSegmentPhase={brainSegmentPhase} />
       </span>
       <span className="transcriptCodeActEvent__text">{text}</span>
+      {event.detail ? <span className="transcriptCodeActEvent__detail">{event.detail}</span> : null}
       {searchArchiveTerms.length > 0 ? (
         <span className="transcriptCodeActEvent__keywords" aria-label="Search keywords">
           {searchArchiveTerms.map((term) => <SearchArchiveKeywordPill key={`event-search-keyword-${term}`} term={term} />)}
@@ -3540,33 +3668,24 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
   const [expanded, setExpanded] = useState(false);
   const treeId = useId();
   const count = events.length;
-  const isGmailGroup = events.every((event) => event.command === BRAIN_GMAIL_COMMAND);
-  const rowCount = count;
-  const treeHeight = Math.max(24, rowCount * 28);
-  const summaryLabel = isGmailGroup
-    ? count > 1 ? "Gmail CodeAct pipeline" : events[0]?.text ?? codeActEventText(BRAIN_GMAIL_COMMAND)
-    : `${count} ${count > 1 ? "commands executed" : "command executed"}`;
+  const treeHeight = Math.max(24, count * 28);
   return (
     <div className="transcriptCommandSummary">
       <button
         aria-controls={treeId}
         aria-expanded={expanded}
-        className={`transcriptCommandSummaryLine${isGmailGroup ? " transcriptCommandSummaryLine--gmail" : ""}`}
+        className="transcriptCommandSummaryLine"
         onClick={() => setExpanded((value) => !value)}
         type="button"
       >
         <span className="transcriptCommandSummaryLine__icon" aria-hidden="true">
-          {isGmailGroup ? (
-            <ModuleLogo id="gmail" />
-          ) : (
-            <svg viewBox="0 0 16 16">
-              <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
-              <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
-              <path d="M8.7 10h2.4" />
-            </svg>
-          )}
+          <svg viewBox="0 0 16 16">
+            <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+            <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
+            <path d="M8.7 10h2.4" />
+          </svg>
         </span>
-        <span>{summaryLabel}</span>
+        <span>{count} {count > 1 ? "actions completed" : "action completed"}</span>
         <span className="transcriptCommandSummaryLine__chevron" aria-hidden="true">
           <svg viewBox="0 0 16 16">
             <path d="m4.5 6.5 3.5 3 3.5-3" />
@@ -3575,8 +3694,8 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
       </button>
       {expanded ? (
         <div
-          aria-label={isGmailGroup ? "Gmail command event" : "Executed command tree"}
-          className={`transcriptCommandTree${isGmailGroup ? " transcriptCommandTree--gmail" : ""}`}
+          aria-label="Executed command tree"
+          className="transcriptCommandTree"
           id={treeId}
           style={{ "--transcript-command-tree-height": `${treeHeight}px` } as CSSProperties}
         >
@@ -3588,18 +3707,9 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
             })}
           </svg>
           <div className="transcriptCommandTree__rows">
-            {isGmailGroup ? (
-              events.map((event, index) => (
-                <div className="transcriptCommandTree__row transcriptCommandTree__row--gmail" key={`${event.command}-${event.gmailStage ?? "gmail"}-${index}`}>
-                  <span className="transcriptCommandTree__gmailLogo" aria-hidden="true">
-                    <ModuleLogo id="gmail" />
-                  </span>
-                  <span className="transcriptCommandTree__eventText">{event.text}</span>
-                </div>
-              ))
-            ) : events.map((event, index) => (
+            {events.map((event, index) => (
               <div className="transcriptCommandTree__row" key={`${event.command}-${index}`}>
-                <code>{event.command}</code>
+                <span className="transcriptCommandTree__marker" aria-hidden="true" />
                 <span>
                   <span className="transcriptCommandTree__eventText">{event.text}</span>
                   {event.detail ? <span className="transcriptCommandTree__detail">{event.detail}</span> : null}
@@ -3757,7 +3867,7 @@ function highlightedSearchArchiveSnippet(text: string, query: string, keyPrefix:
       nodes.push(assistantGeoEntityNode(token, `${tokenKey}-geo`));
     } else if (token.startsWith("**") || token.startsWith("__")) {
       nodes.push(<strong key={`${tokenKey}-strong`}>{highlightedSearchArchiveText(token.slice(2, -2), highlightPattern, `${tokenKey}-strong-text`)}</strong>);
-    } else if (token.startsWith("*") || token.startsWith("_")) {
+    } else if (token.startsWith("*") || token.startsWith("^") || token.startsWith("_")) {
       nodes.push(<em key={`${tokenKey}-em`}>{highlightedSearchArchiveText(token.slice(1, -1), highlightPattern, `${tokenKey}-em-text`)}</em>);
     } else {
       nodes.push(<code key={`${tokenKey}-code`}>{highlightedSearchArchiveText(token.slice(1, -1), highlightPattern, `${tokenKey}-code-text`)}</code>);
@@ -4042,20 +4152,6 @@ function AssistantMarkdownText({
     <div className="assistantText__body">
       {blocks.map((block, index) => {
         if (block.kind === "event_group") {
-          if (block.events.every((event) => event.command === BRAIN_GMAIL_COMMAND)) {
-            return (
-              <Fragment key={`${messageId}-gmail-events-${index}`}>
-                {block.events.map((event, eventIndex) => (
-                  <TranscriptCodeActEventLine
-                    agentName={agentName}
-                    event={event}
-                    key={`${messageId}-gmail-event-${index}-${event.gmailStage ?? eventIndex}`}
-                    writing={writing}
-                  />
-                ))}
-              </Fragment>
-            );
-          }
           return <TranscriptCommandSummaryLine events={block.events} key={`${messageId}-event-group-${index}`} />;
         }
         if (block.kind === "event") {
@@ -4282,10 +4378,6 @@ function AnimatedAssistantText({
   const lineGrowthFrameRef = useRef<number | null>(null);
   const lineGrowthTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    onWritingChange?.(true);
-    return () => onWritingChange?.(false);
-  }, [message.id, onWritingChange]);
 
   const clearLineGrowthTransition = useCallback(() => {
     if (lineGrowthFrameRef.current !== null) {
@@ -4330,7 +4422,7 @@ function AnimatedAssistantText({
     const tick = (now: number) => {
       const elapsed = now - lastTickAt;
       const current = visibleCharactersRef.current;
-      const cadence = totalCharacters - current > 900 ? 62 : 78;
+      const cadence = totalCharacters - current > 1200 ? ASSISTANT_TYPEWRITER_LONG_TEXT_CADENCE_MS : ASSISTANT_TYPEWRITER_BASE_CADENCE_MS;
       if (elapsed < cadence) {
         frame = requestAnimationFrame(tick);
         return;
@@ -4338,7 +4430,7 @@ function AnimatedAssistantText({
       lastTickAt = now;
       const currentStep = revealBreakpoints.findIndex((point) => point > current);
       const nextIndex = currentStep === -1 ? totalRevealSteps - 1 : currentStep;
-      const stepBudget = Math.max(1, Math.min(2, Math.floor(elapsed / cadence)));
+      const stepBudget = Math.max(1, Math.min(ASSISTANT_TYPEWRITER_MAX_STEPS_PER_TICK, Math.floor(elapsed / cadence)));
       const targetIndex = Math.min(totalRevealSteps - 1, nextIndex + stepBudget - 1);
       const nextVisibleCharacters = Math.max(current + 1, revealBreakpoints[targetIndex] ?? totalCharacters);
       if (nextVisibleCharacters !== current) {
@@ -4410,21 +4502,39 @@ function AnimatedAssistantText({
   }, [visibleCharacters]);
 
   useEffect(() => {
+    if (visibleCharactersRef.current > totalCharacters) {
+      visibleCharactersRef.current = totalCharacters;
+      setVisibleCharacters(totalCharacters);
+    }
+    if (visibleCharactersRef.current < totalCharacters) {
+      completionReportedRef.current = false;
+      setAnimationSettled(false);
+    }
+  }, [totalCharacters]);
+
+  useEffect(() => {
     if (completionReportedRef.current || totalCharacters === 0 || !animationSettled || visibleCharacters < totalCharacters) {
       return;
     }
     completionReportedRef.current = true;
     sidebarShadowStore.finishChatSessionPreview();
     onAnimationComplete?.(message.id);
-    void panelsChatBottomStore.dispatch({ kind: "assistant_write_complete", value: message.id });
   }, [animationSettled, message.id, onAnimationComplete, totalCharacters, visibleCharacters]);
 
   useEffect(() => {
-    followTranscriptLatest(latestTranscriptContainerFor(textRef.current));
+    const container = latestTranscriptContainerFor(textRef.current) ?? transcriptContainerFor(textRef.current);
+    if (container) {
+      followTranscriptLatest(container);
+    }
   }, [visibleCharacters]);
 
   const writing = visibleCharacters < totalCharacters;
   const visibleText = animationSource.slice(0, visibleCharacters);
+
+  useEffect(() => {
+    onWritingChange?.(writing);
+    return () => onWritingChange?.(false);
+  }, [message.id, onWritingChange, writing]);
 
   return (
     <div className="assistantText" aria-label={accessibleText} ref={textRef}>
@@ -4446,7 +4556,7 @@ function PendingAssistantText({ agentName, activityText = "is thinking" }: { age
   return (
     <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} ${activityText}`} role="status">
       <span className="sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox" aria-hidden="true">
-        <span className="loader" />
+        <BanterActivityLoader />
       </span>
       <span className="assistantThinkingEvent__label">
         <strong>{label}</strong> {activityText}...
@@ -4550,7 +4660,7 @@ function AssistantErrorText({ message }: { message: TranscriptMessage }) {
   );
 }
 
-function TranscriptCanvas({
+export function TranscriptCanvas({
   activeSessionId,
   messages,
   agentName,
@@ -4561,6 +4671,7 @@ function TranscriptCanvas({
   className = "chatCanvas",
   assistantBusy = false,
   onAssistantWritingChange,
+  onAssistantAnimationGateChange,
   onParallelClose,
   onEditImage,
   onUseMathInCompute,
@@ -4576,11 +4687,16 @@ function TranscriptCanvas({
   className?: string;
   assistantBusy?: boolean;
   onAssistantWritingChange?: (active: boolean) => void;
+  onAssistantAnimationGateChange?: (parallelSessionIndex: number, messageIds: string[]) => void;
   onParallelClose?: (index: number) => void;
   onEditImage?: (preview: ComposerUploadPreview) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
   stopAnimationSignal?: number;
 }) {
+  if (CONVERSATION_TRANSCRIPT_RENDERING_DISABLED) {
+    return null;
+  }
+
   const storageKey = useMemo(() => pinsStorageKey(activeSessionId), [activeSessionId]);
   const [pins, setPins] = useState<PinnedChapter[]>(() => loadPins(storageKey));
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -4594,8 +4710,8 @@ function TranscriptCanvas({
     sessionId: activeSessionId,
     count: initialTranscriptWindowSize(messages.length)
   }));
-  const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; queue: string[]; hadPending: boolean } | null>(null);
-  const [, setAssistantAnimationQueueVersion] = useState(0);
+  const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; queue: string[]; lengths: Map<string, number>; deferredComplete: Set<string>; hadPending: boolean } | null>(null);
+  const [assistantAnimationQueueVersion, setAssistantAnimationQueueVersion] = useState(0);
   const latestMessage = messages.at(-1);
   const messageIds = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
   const normalizedFocusMessageId = focusMessageId.trim();
@@ -4618,11 +4734,17 @@ function TranscriptCanvas({
       .map((message) => message.id),
     [messages]
   );
+  const pendingAssistantIds = useMemo(
+    () => messages
+      .filter((message) => message.role === "assistant" && message.id.startsWith("assistant-pending-"))
+      .map((message) => message.id),
+    [messages]
+  );
+  const assistantAnimationLengthById = useMemo(() => new Map(assistantAnimationLengthEntries(messages)), [messages]);
   const latestAssistantMessageId = assistantMessageIds.at(-1) ?? "";
-  const hasPendingAssistant = messages.some((message) => message.role === "assistant" && message.id.startsWith("assistant-pending-"));
+  const hasPendingAssistant = pendingAssistantIds.length > 0;
   const storedPins = useMemo(() => pins.filter((pin) => messageIds.has(pin.id)), [messageIds, pins]);
   const visiblePins = useMemo(() => storedPins.filter((pin) => visibleMessageIds.has(pin.id)), [storedPins, visibleMessageIds]);
-  let hadPendingBeforeRender = assistantAnimationRef.current?.hadPending ?? false;
 
   if (assistantAnimationRef.current === null) {
     assistantAnimationRef.current = {
@@ -4630,22 +4752,23 @@ function TranscriptCanvas({
       known: new Set(assistantMessageIds),
       active: new Set(),
       queue: [],
+      lengths: new Map(assistantAnimationLengthById),
+      deferredComplete: new Set(),
       hadPending: hasPendingAssistant
     };
-    hadPendingBeforeRender = false;
   } else if (assistantAnimationRef.current.sessionId !== activeSessionId) {
     const previous = assistantAnimationRef.current;
     const keepDraftResponseLive = previous.hadPending;
-    hadPendingBeforeRender = keepDraftResponseLive ? previous.hadPending : false;
     assistantAnimationRef.current = {
       sessionId: activeSessionId,
       known: keepDraftResponseLive ? previous.known : new Set(assistantMessageIds),
       active: keepDraftResponseLive ? previous.active : new Set(),
       queue: keepDraftResponseLive ? previous.queue.filter((id) => previous.active.has(id)) : [],
+      lengths: keepDraftResponseLive ? previous.lengths : new Map(assistantAnimationLengthById),
+      deferredComplete: keepDraftResponseLive ? previous.deferredComplete : new Set(),
       hadPending: hasPendingAssistant
     };
   } else {
-    hadPendingBeforeRender = assistantAnimationRef.current.hadPending;
     assistantAnimationRef.current.hadPending = hasPendingAssistant;
   }
   if (assistantAnimationRef.current) {
@@ -4655,18 +4778,62 @@ function TranscriptCanvas({
         assistantAnimationRef.current.active.delete(id);
       }
     }
+    for (const id of [...assistantAnimationRef.current.lengths.keys()]) {
+      if (!messageIds.has(id)) {
+        assistantAnimationRef.current.lengths.delete(id);
+      }
+    }
+    for (const id of [...assistantAnimationRef.current.deferredComplete]) {
+      if (!messageIds.has(id)) {
+        assistantAnimationRef.current.deferredComplete.delete(id);
+      }
+    }
+    const invisibleQueuedIds = assistantAnimationRef.current.queue.filter((id) => !visibleMessageIds.has(id));
+    if (invisibleQueuedIds.length > 0) {
+      for (const id of invisibleQueuedIds) {
+        assistantAnimationRef.current.active.delete(id);
+        assistantAnimationRef.current.deferredComplete.delete(id);
+      }
+      assistantAnimationRef.current.queue = assistantAnimationRef.current.queue.filter((id) => visibleMessageIds.has(id));
+    }
   }
-  const pendingResolvedThisRender = hadPendingBeforeRender && !hasPendingAssistant;
+  useLayoutEffect(() => {
+    const activeIds = assistantAnimationRef.current?.active ? [...assistantAnimationRef.current.active] : [];
+    onAssistantAnimationGateChange?.(parallelSessionIndex, activeIds);
+    return () => onAssistantAnimationGateChange?.(parallelSessionIndex, []);
+  }, [activeSessionId, assistantAnimationQueueVersion, messages.length, onAssistantAnimationGateChange, parallelSessionIndex]);
 
   const completeAssistantAnimation = useCallback((messageId: string) => {
     const animationState = assistantAnimationRef.current;
     if (!animationState) {
       return;
     }
+    if (assistantBusy && messageId === latestAssistantMessageId) {
+      animationState.deferredComplete.add(messageId);
+      return;
+    }
+    animationState.deferredComplete.delete(messageId);
     animationState.active.delete(messageId);
     animationState.queue = animationState.queue.filter((id) => id !== messageId);
     setAssistantAnimationQueueVersion((version) => version + 1);
-  }, []);
+  }, [assistantBusy, latestAssistantMessageId]);
+
+  useEffect(() => {
+    const animationState = assistantAnimationRef.current;
+    if (assistantBusy || !animationState || animationState.deferredComplete.size === 0) {
+      return;
+    }
+    let changed = false;
+    for (const messageId of [...animationState.deferredComplete]) {
+      animationState.deferredComplete.delete(messageId);
+      animationState.active.delete(messageId);
+      animationState.queue = animationState.queue.filter((id) => id !== messageId);
+      changed = true;
+    }
+    if (changed) {
+      setAssistantAnimationQueueVersion((version) => version + 1);
+    }
+  }, [assistantBusy, messages.length]);
 
   useEffect(() => {
     if (stopAnimationSignal === 0) {
@@ -4900,15 +5067,12 @@ function TranscriptCanvas({
           }
           const assistantWorkingCandidate =
             assistantBusy &&
+            !hasPendingAssistant &&
             role === "assistant" &&
             message.id === latestAssistantMessageId &&
             !assistantPending &&
             !message.id.startsWith("assistant-error-");
-          const assistantCanShowWorkingStatus =
-            role === "assistant" &&
-            message.id === latestAssistantMessageId &&
-            !assistantPending &&
-            !message.id.startsWith("assistant-error-");
+          const assistantCanShowWorkingStatus = false;
           const assistantWorkingEvent = assistantWorkingCandidate ? latestTranscriptEvent(message.text) : undefined;
           const assistantWorking = assistantWorkingCandidate && canShowAssistantWorkingStatus(assistantWorkingEvent);
           const assistantWorkingActivityText = assistantWorking ? agentWorkingStatusText(assistantWorkingEvent) : "is working";
@@ -4925,26 +5089,32 @@ function TranscriptCanvas({
           const assistantContinuesLoop = role === "assistant" && nextMessage?.role === "assistant";
           const pinned = pinnedIds.has(message.id);
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
-          const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
+          const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError && !prefersReducedMotion();
           const isArchiveFocusMessage = normalizedFocusMessageId === message.id;
           const questionnaireAnswerRows = role === "user" ? parseQuestionnaireAnswerTable(message.text) : [];
           let assistantShouldAnimate = false;
           let assistantQueued = false;
           if (assistantCanAnimate && assistantAnimationRef.current) {
             const animationState = assistantAnimationRef.current;
-            if (animationState.active.has(message.id)) {
-              assistantShouldAnimate = animationState.queue[0] === message.id;
-              assistantQueued = !assistantShouldAnimate;
-            } else if (!animationState.known.has(message.id) && (message.id === latestAssistantMessageId || pendingResolvedThisRender)) {
+            const assistantAnimationLength = assistantAnimationLengthForText(message.text);
+            const previousAnimationLength = animationState.lengths.get(message.id) ?? 0;
+            const assistantTextGrew = assistantAnimationLength > previousAnimationLength;
+            const shouldStartAnimation =
+              assistantAnimationLength > 0 &&
+              (!animationState.known.has(message.id) || assistantTextGrew);
+            if (shouldStartAnimation) {
               animationState.known.add(message.id);
               animationState.active.add(message.id);
               if (!animationState.queue.includes(message.id)) {
                 animationState.queue.push(message.id);
               }
-              assistantShouldAnimate = animationState.queue[0] === message.id;
-              assistantQueued = !assistantShouldAnimate;
             } else {
               animationState.known.add(message.id);
+            }
+            animationState.lengths.set(message.id, Math.max(previousAnimationLength, assistantAnimationLength));
+            if (animationState.active.has(message.id)) {
+              assistantShouldAnimate = animationState.queue[0] === message.id;
+              assistantQueued = !assistantShouldAnimate;
             }
           }
           const assistantAwaitingAnimation = assistantPending || assistantQueued;
@@ -5084,12 +5254,14 @@ function TranscriptCanvas({
    to the far right that starts a real new app session. */
 function WidgetSessionDrawer({
   activeLabel,
+  forced = false,
   open,
   onToggle,
   onNewSession,
   children
 }: {
   activeLabel: string;
+  forced?: boolean;
   open: boolean;
   onToggle: () => void;
   onNewSession?: () => void;
@@ -5097,7 +5269,7 @@ function WidgetSessionDrawer({
 }) {
   const label = activeLabel.trim() || "New session";
   return (
-    <div className={["widgetSessionDrawer", open ? "widgetSessionDrawer--open" : ""].filter(Boolean).join(" ")}>
+    <div className={["widgetSessionDrawer", forced ? "widgetSessionDrawer--forced" : "", open ? "widgetSessionDrawer--open" : ""].filter(Boolean).join(" ")}>
       <section className="widgetSessionDrawer__panel" aria-label={`Session ${label}`}>
         <div className="widgetSessionTabsRail">
           <button
@@ -5141,6 +5313,9 @@ interface PanelsChatBottomSliceProps {
   widgetRecentSessions?: SidebarSessionItem[];
   widgetMode?: boolean;
   widgetModeTransitioning?: boolean;
+  deferFirstUserMessageUntilWave?: boolean;
+  forceWidgetSessionDrawer?: boolean;
+  forceWidgetSessionDrawerEmpty?: boolean;
   onWidgetNewSession?: () => void;
   onWidgetSessionOpen?: (sessionId: string, section: NativeSection) => void;
   onWidgetModeChange?: (enabled: boolean) => void;
@@ -5218,7 +5393,6 @@ function selfDirectedContinuationPrompt({
       `cycle=${cycle}`,
       `prior_goal="${compactSelfDirectedText(goal).replace(/"/g, "'")}"`,
       `completion_evidence="${compactSelfDirectedText(previousAssistantText, 360).replace(/"/g, "'")}"`,
-      "role=agent_authored_prompt_visible_in_composer",
       "instruction=Invent the next stronger project direction yourself. Extend the result, raise quality, add missing professional depth, and start a new action cycle. If the new direction is ambiguous, open /questionnaire_; otherwise begin with the next concrete action and CodeAct event."
     ].join("\n");
   }
@@ -5337,6 +5511,9 @@ export function PanelsChatBottomSlice({
   widgetRecentSessions = [],
   widgetMode = false,
   widgetModeTransitioning = false,
+  deferFirstUserMessageUntilWave = true,
+  forceWidgetSessionDrawer = false,
+  forceWidgetSessionDrawerEmpty = false,
   onWidgetNewSession,
   onWidgetSessionOpen,
   onWidgetModeChange
@@ -5593,7 +5770,18 @@ export function PanelsChatBottomSlice({
   const uploadPreviews = snapshot.composer.uploadPreviews;
   const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = useMemo(() => snapshot.transcript.filter((message) => message.role !== "system"), [snapshot.transcript]);
+  const [assistantAnimationGateByLane, setAssistantAnimationGateByLane] = useState<Record<number, string[]>>({});
+  const updateAssistantAnimationGate = useCallback((parallelSessionIndex: number, messageIds: string[]) => {
+    setAssistantAnimationGateByLane((current) => {
+      const previous = current[parallelSessionIndex] ?? [];
+      if (previous.length === messageIds.length && previous.every((id, index) => id === messageIds[index])) {
+        return current;
+      }
+      return { ...current, [parallelSessionIndex]: messageIds };
+    });
+  }, []);
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
+  const questionnaireAnimationGateByLane = assistantAnimationGateByLane;
   const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
   // The send spinner runs from Enter until the user's message lands in the
@@ -5750,13 +5938,22 @@ export function PanelsChatBottomSlice({
     const laneMessages = lane?.transcript.filter((message) => message.role !== "system") ?? [];
     return latestQuestionnaireFromMessages(laneMessages);
   }, [focusedParallelIndex, parallelMode, snapshot.parallelLanes]);
-  const composerQuestionnaire = focusedParallelQuestionnaire
-    ? { questionnaire: focusedParallelQuestionnaire, parallelSessionIndex: focusedParallelIndex }
-    : activeQuestionnaire
-      ? { questionnaire: activeQuestionnaire, parallelSessionIndex: 0 }
-      : null;
+  const focusedParallelQuestionnaireReady = focusedParallelQuestionnaire && !(questionnaireAnimationGateByLane[focusedParallelIndex] ?? []).includes(focusedParallelQuestionnaire.sourceMessageId)
+    ? focusedParallelQuestionnaire
+    : null;
+  const activeQuestionnaireReady = activeQuestionnaire && !(questionnaireAnimationGateByLane[0] ?? []).includes(activeQuestionnaire.sourceMessageId)
+    ? activeQuestionnaire
+    : null;
+  const composerQuestionnaire = CONVERSATION_TRANSCRIPT_RENDERING_DISABLED
+    ? null
+    : focusedParallelQuestionnaireReady
+      ? { questionnaire: focusedParallelQuestionnaireReady, parallelSessionIndex: focusedParallelIndex }
+      : activeQuestionnaireReady
+        ? { questionnaire: activeQuestionnaireReady, parallelSessionIndex: 0 }
+        : null;
   const widgetSessionTabVisible =
-    widgetMode &&
+    !CONVERSATION_TRANSCRIPT_RENDERING_DISABLED &&
+    (widgetMode || forceWidgetSessionDrawer) &&
     !widgetModeTransitioning &&
     !composerQuestionnaire;
   // The drawer only exists while the languette is shown; collapse it whenever
@@ -5912,7 +6109,7 @@ export function PanelsChatBottomSlice({
         }
       };
       const burst = burstRef.current;
-      if (sessionIsNew && burst) {
+      if (deferFirstUserMessageUntilWave && sessionIsNew && burst) {
         burst.fire(composerRef.current, commit);
       } else {
         commit();
@@ -5957,7 +6154,7 @@ export function PanelsChatBottomSlice({
       : snapshot.transcript;
     const sessionIsNew = !targetTranscript.some((message) => message.role === "user" || message.role === "assistant");
     const burst = burstRef.current;
-    if (sessionIsNew && burst) {
+    if (deferFirstUserMessageUntilWave && sessionIsNew && burst) {
       burst.fire(composerRef.current, commit);
     } else {
       commit();
@@ -6034,6 +6231,7 @@ export function PanelsChatBottomSlice({
                   stopAnimationSignal={assistantStopSignal}
                   key={`parallel-transcript-${index}`}
                   onEditImage={stageImageForEdit}
+                  onAssistantAnimationGateChange={updateAssistantAnimationGate}
                   onUseMathInCompute={useMathInCompute}
                 />
               );
@@ -6043,13 +6241,14 @@ export function PanelsChatBottomSlice({
           <TranscriptCanvas
             key={snapshot.activeSessionId || "draft-session"}
             activeSessionId={snapshot.activeSessionId}
-            messages={canvasMessages}
+            messages={forceWidgetSessionDrawerEmpty ? [] : canvasMessages}
             agentName={brainAgentName}
             userName={brainUserName}
             parallelSessionIndex={0}
             assistantBusy={Boolean(snapshot.composer.assistantBusy)}
             stopAnimationSignal={assistantStopSignal}
             onEditImage={stageImageForEdit}
+            onAssistantAnimationGateChange={updateAssistantAnimationGate}
             onUseMathInCompute={useMathInCompute}
           />
         )
@@ -6070,6 +6269,7 @@ export function PanelsChatBottomSlice({
       {widgetSessionTabVisible ? (
         <WidgetSessionDrawer
           activeLabel={sessionName}
+          forced={forceWidgetSessionDrawer}
           open={widgetPanelOpen}
           onToggle={() => setWidgetPanelOpen((value) => !value)}
           onNewSession={onWidgetNewSession ? startWidgetNewSessionFromTab : undefined}
@@ -6084,6 +6284,7 @@ export function PanelsChatBottomSlice({
             assistantBusy={Boolean(snapshot.composer.assistantBusy)}
             stopAnimationSignal={assistantStopSignal}
             onEditImage={stageImageForEdit}
+            onAssistantAnimationGateChange={updateAssistantAnimationGate}
             onUseMathInCompute={useMathInCompute}
           />
         </WidgetSessionDrawer>

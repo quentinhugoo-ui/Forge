@@ -202,7 +202,9 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
   if (kind === "layout") {
     return <svg {...base}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M9 21V9" /></svg>;
   }
-  if (kind === "calendar") {
+  if (kind === "chart") {
+    return <svg {...base}><path d="M4 18h16" /><path d="M6 15v-5" /><path d="M10 17V7" /><path d="M14 14V9" /><path d="M18 12V5" /><path d="M5 16c4-1 5-6 8-5s3-4 6-5" /></svg>;
+  }  if (kind === "calendar") {
     return <svg {...base}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>;
   }
   if (kind === "modules") {
@@ -237,6 +239,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/gmail_") return <GmailIcon />;
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
+  if (command === "/tradingbrain_" || command === "/chart_" || command === "/edit_chart_" || command === "/market_order_") return <TradingHeaderIcon />;
   if (command === BRAIN_CODEDOCS_COMMAND) return <Glyph kind="database" />;
   if (command === BRAIN_GITHUB_MCP_COMMAND) return <Glyph kind="code" />;
   if (command === BRAIN_WEBACT_COMMAND) return <Glyph kind="globe" />;
@@ -267,6 +270,10 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   return <Glyph kind={stroke[command] ?? "terminal"} />;
 }
 
+function TradingHeaderIcon() {
+  return <span className="shellIcon shellIcon--trading brainTradingHeaderIcon" aria-hidden="true" />;
+}
+
 export const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
   { id: "memory", label: "Memory", glyph: "database" },
   { id: "codeacts", label: "CodeActs", glyph: "codeact" },
@@ -278,7 +285,7 @@ export const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = 
 /* Segmented brain: the general brain is the default; the science and coding
    brains own the CodeActs specialized for their domain. The activator
    commands live in the general brain since they are the switches. */
-const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
+const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_", "/tradingbrain_"];
 const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
 const MCP_COMMANDS: BrainCodeActCommand[] = [
   BRAIN_SCRAPERS_COMMAND
@@ -289,6 +296,12 @@ const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/selectcompute_",
   "/compute_<name>_",
   "/newobject_"
+];
+
+const TRADING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
+  "/chart_",
+  "/edit_chart_",
+  "/market_order_"
 ];
 
 const CODING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
@@ -305,7 +318,8 @@ const CODING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
 const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: BrainCodeActCommand[] }[] = [
   { id: "general", label: "general brain", glyph: "brain" },
   { id: "science", label: "science brain", glyph: "flask", commands: SCIENCE_BRAIN_COMMANDS },
-  { id: "coding", label: "coding brain", glyph: "code", commands: CODING_BRAIN_COMMANDS }
+  { id: "coding", label: "coding brain", glyph: "code", commands: CODING_BRAIN_COMMANDS },
+  { id: "trading", label: "trading brain", glyph: "chart", commands: TRADING_BRAIN_COMMANDS }
 ];
 
 type BrainLearningRegistryCategory = Extract<BrainLearningMemoryCategory, "lesson" | "skill">;
@@ -339,6 +353,7 @@ const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<string>([BRAIN_RENAME_SESSION_COMM
 const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>> = {
   "/sciencebrain_": "Switch to science mode for math, engineering, simulation, 3D, or technical analysis.",
   "/codingbrain_": "Switch to coding mode for software projects, files, bugs, builds, and developer tasks.",
+  "/tradingbrain_": "Switch to trading mode for broker, chart, position, risk, and order workflows.",
   "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
   "/googleweb_": "Search the web for current public information.",
   [BRAIN_SCRAPERS_COMMAND]: "Run Scrapling and Crawl4AI in parallel, then merge structured data, clean Markdown, links, image/media URLs, artifacts, and provenance.",
@@ -354,7 +369,7 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/brain_": "Save or update useful memory after the user confirms it is correct.",
   [BRAIN_NEWBRAIN_COMMAND]: "Create a specialized Brain for a recurring domain without changing the root read-only catalog.",
   [BRAIN_MODIFY_NAMED_BRAIN_COMMAND]: "Add a lesson, rule, skill, task, or CodeAct draft to one specialized Brain.",
-  "/questionnaire_": "Ask a short set of questions when the task needs clearer choices.",
+  "/questionnaire_": "Ask a short set of questions when the task needs clearer choices before acting.",
   "/newcompute_": "Start a new heavy local calculation, such as a simulation or numeric analysis.",
   "/selectcompute_": "Reuse a saved calculation instead of rebuilding the same work.",
   "/compute_<name>_": "Run a known saved calculation by name when it matches the request.",
@@ -364,7 +379,10 @@ const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>
   "/newmodule_": "Create a small new app module or feature area.",
   "/rust_port_adapter_": "Add a Rust service bridge when a feature needs native backend access.",
   "/rust_state_store_": "Create durable local storage for settings, indexes, credentials, or cached data.",
-  "/web_": "Open or control a web page inside the contained browser."
+  "/web_": "Open or control a web page inside the contained browser.",
+  "/chart_": "Read the currently displayed Trading chart: screenshot plus raw OHLC candles from the chart data already loaded in the session.",
+  "/edit_chart_": "Annotate the active Trading chart during analysis: candles, levels, rays, MA, VWAP, Donchian, or risk zones.",
+  "/market_order_": "Prepare a safety-gated OANDA market order workflow from the Trading Brain."
 };
 
 const NEW_COMPUTE_DETAIL_SECTIONS = [
@@ -399,6 +417,7 @@ function segmentCodeActs(segment: { commands?: BrainCodeActCommand[] }) {
   const elsewhere = new Set<BrainCodeActCommand>([
     ...SCIENCE_BRAIN_COMMANDS,
     ...CODING_BRAIN_COMMANDS,
+    ...TRADING_BRAIN_COMMANDS,
     ...BRAIN_ACTIVATOR_COMMANDS,
     ...GOOGLE_SUITE_COMMANDS,
     ...MCP_COMMANDS
@@ -1062,7 +1081,7 @@ function CodeActsSpace() {
         {BRAIN_SEGMENTS.map((segment) => (
           <section className="brainSegment" key={segment.id} aria-label={segment.label}>
             <h2 className="brainSegment__head">
-              <Glyph kind={segment.glyph} size={14} />
+              {segment.id === "trading" ? <TradingHeaderIcon /> : <Glyph kind={segment.glyph} size={14} />}
               {segment.label}
             </h2>
             {segment.id === "general" ? (

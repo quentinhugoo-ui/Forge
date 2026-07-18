@@ -157,6 +157,12 @@ describe("Scrapers MCP CodeAct", () => {
             kind: "audio",
             url: "https://cdn.example.com/theme.mp3",
             mimeType: "audio/mpeg"
+          },
+          {
+            kind: "image",
+            url: "/shell-assets/witcher-characters/ciri.png",
+            mimeType: "image/png",
+            title: "Ciri local asset"
           }
         ],
         artifacts: [
@@ -175,8 +181,8 @@ describe("Scrapers MCP CodeAct", () => {
 
     const attachments = scrapersVisualAttachments(result);
 
-    expect(attachments).toHaveLength(3);
-    expect(attachments.map((attachment) => attachment.kind)).toEqual(["image", "video", "image"]);
+    expect(attachments).toHaveLength(4);
+    expect(attachments.map((attachment) => attachment.kind)).toEqual(["image", "video", "image", "image"]);
     expect(attachments[0]).toMatchObject({
       name: "Hero image",
       url: "https://cdn.example.com/hero",
@@ -197,6 +203,11 @@ describe("Scrapers MCP CodeAct", () => {
       url: "https://cdn.example.com/trailer.mp4"
     });
     expect(attachments[2]).toMatchObject({
+      name: "Ciri local asset",
+      url: "/shell-assets/witcher-characters/ciri.png",
+      textPreview: expect.stringContaining("media_url=/shell-assets/witcher-characters/ciri.png")
+    });
+    expect(attachments[3]).toMatchObject({
       name: "screen",
       url: "https://cdn.example.com/screen.png"
     });

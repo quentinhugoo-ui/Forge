@@ -1,7 +1,7 @@
 import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { copyFile, mkdir, open, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { cpus } from "node:os";
@@ -45,11 +45,16 @@ import {
   BRAIN_SELECTCOMPUTE_COMMAND,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_TRADING_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
+  BRAIN_TRADING_VISIBLE_CATALOG,
   BRAIN_WORKSPACE_COMMAND,
   BRAIN_LOCAL_ACTIONS_COMMAND,
+  BRAIN_CHART_COMMAND,
+  BRAIN_EDIT_CHART_RESULT_SCHEMA,
+  BRAIN_MARKET_ORDER_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
   type CanvasSurfaceSummary,
   type CanvasSurfacesCommand,
@@ -90,6 +95,27 @@ import {
   type SidebarSnapshot,
   type SidebarToolControl,
   type TerminalStartResult,
+  type TradingAccountStateResult,
+  type TradingCandlesRequest,
+  type TradingCandlesResult,
+  type TradingCandle,
+  type TradingChartEditAction,
+  type TradingChartEditElement,
+  type TradingChartEditRequestEvent,
+  type TradingChartEditResult,
+  type TradingChartRequestEvent,
+  type TradingChartResult,
+  type TradingChartWindowSnapshot,
+  type TradingChartWindowSnapshotResult,
+  type TradingOrderRequest,
+  type TradingOrderResult,
+  type TradingOrderSide,
+  type TradingOrderDraftEvent,
+  type TradingOrderWindowSnapshot,
+  type TradingOrderWindowSnapshotResult,
+  type TradingTickRequest,
+  type TradingTickResult,
+  type TradingTimeframe,
   type TranscriptMessage,
   type WorkspaceActionResult,
   type WorkspaceChoiceResult,
@@ -208,6 +234,29 @@ import {
 } from "./gmail-codeact.js";
 import { renderGmailApiBridgeResult, runGmailApiBridge, setGmailApiCredentialResolver, type GmailApiCredentialsResult } from "./gmail-api-bridge.js";
 import {
+  marketOrderCodeActExecutionResult,
+  marketOrderRequiresLiveExecution,
+  readMarketOrderCodeAct,
+  renderMarketOrderCodeActResult,
+  renderMarketOrderTemplateResult,
+  type MarketOrderCodeActRequest,
+  type MarketOrderVisibilityResult
+} from "./market-order-codeact.js";
+import {
+  chartRefusalResult,
+  readChartCodeAct,
+  renderChartCodeActResult,
+  renderChartTemplateResult,
+  type ChartCodeActRequest
+} from "./chart-codeact.js";
+import {
+  editChartRefusalResult,
+  readEditChartCodeAct,
+  renderEditChartCodeActResult,
+  renderEditChartTemplateResult,
+  type EditChartCodeActRequest
+} from "./edit-chart-codeact.js";
+import {
   AIRBNB_HOME_URL,
   extractAirbnbCodeAct,
   renderAirbnbCodeActResult,
@@ -245,6 +294,11 @@ const CHATGPT_HOME_URL = "https://chatgpt.com/";
 const CHATGPT_LOGIN_URL = "https://chatgpt.com/auth/login?next=%2F";
 const CHATGPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+const BLOOMBERG_WEBVIEW_PARTITION = "persist:ingen-bloomberg";
+const BLOOMBERG_VIDEO_WEBVIEW_PARTITION = "persist:ingen-bloomberg-video";
+const BLOOMBERG_HOME_URL = "https://www.bloomberg.com/europe";
+const BLOOMBERG_VIDEO_REFERRER = "https://www.youtube.com/";
+const BLOOMBERG_YOUTUBE_CONSENT_COOKIE = "CONSENT=YES+cb.20210328-17-p0.fr+FX+667; SOCS=CAI";
 const WEBEXPLORER_DEFAULT_URL = "https://www.google.com/";
 const NATIVE_WEBEXPLORER_VIEWPORT_FADE_CSS = `
 html::before,
@@ -423,7 +477,11 @@ function installMainProcessConsoleGuard(): void {
 
 installMainProcessConsoleGuard();
 
-app.setName(eventTextLabMode ? "InGen Event Text Lab" : "InGen");
+const graphenAppName = eventTextLabMode ? "Graphen Event Text Lab" : "Graphen";
+const graphenAppUserModelId = eventTextLabMode ? "com.graphen.event-text-lab" : "com.graphen.desktop";
+const graphenAppIconPath = process.env.GRAPHEN_APP_ICON?.trim() || undefined;
+
+app.setName(graphenAppName);
 const canonicalUserDataDir = process.env.INGEN_ELECTRON_USER_DATA_DIR?.trim()
   || join(app.getPath("appData"), INGEN_CANONICAL_USER_DATA_DIR_NAME);
 mkdirSync(canonicalUserDataDir, { recursive: true });
@@ -432,7 +490,7 @@ mkdirSync(join(canonicalUserDataDir, "session-data"), { recursive: true });
 app.setPath("userData", canonicalUserDataDir);
 app.setPath("sessionData", join(canonicalUserDataDir, "session-data"));
 if (process.platform === "win32") {
-  app.setAppUserModelId(eventTextLabMode ? "com.forge.ingen.event-text-lab" : "com.forge.ingen");
+  app.setAppUserModelId(graphenAppUserModelId);
 }
 
 const bypassSingleInstanceLock = process.env.INGEN_ELECTRON_BYPASS_SINGLE_INSTANCE_LOCK === "1";
@@ -846,7 +904,7 @@ let chatArchiveLoaded = false;
 let chatArchiveLoadPromise: Promise<void> | undefined;
 let chatArchiveWriteQueue: Promise<void> = Promise.resolve();
 
-type BrainSegmentId = "general" | "science" | "coding";
+type BrainSegmentId = "general" | "science" | "coding" | "trading";
 type ActiveBrainSegmentId = Exclude<BrainSegmentId, "general">;
 
 let panelsChatBottomState = {
@@ -2599,7 +2657,6 @@ async function gmailLocalCredentialResolver(): Promise<GmailApiCredentialsResult
   }
   return connectLocalGmailConnector();
 }
-
 
 function stopOpenRouterOAuthServer(): void {
   if (openRouterOAuthServer) {
@@ -4472,6 +4529,13 @@ function codexRuntimeReasoning(profile: ProviderRuntimeProfile): string {
   return selected || "medium";
 }
 
+function effectiveConversationModuleId(moduleId = ""): string {
+  const normalized = moduleId.trim();
+  if (normalized) {
+    return normalized;
+  }
+  return headerState.activeSection === "trading" ? "trading" : "";
+}
 function webExplorerCodeActInstructions(moduleId = ""): string {
   if (moduleId === "gmail") {
     return [
@@ -4505,10 +4569,19 @@ function webExplorerCodeActInstructions(moduleId = ""): string {
       `Use ${BRAIN_GOOGLEWEB_COMMAND} only if the calculation requires external web research before Compute.`
     ].join("\n");
   }
+  if (moduleId === "trading") {
+    return [
+      "Active surface: Trading page, Natural Gas chart. The user is already in the broker/chart workspace.",
+      BRAIN_CODEACT_ROUTING_RULES,
+      `If the active Brain is general and the user asks about natural gas, chart analysis, trading, broker data, candles, support/resistance, risk, SL/TP or orders, first write one short natural sentence and activate ${BRAIN_TRADING_COMMAND}.`,
+      `Do not use ${BRAIN_GOOGLEWEB_COMMAND} or ${BRAIN_WEBSEARCH_COMMAND} for active-chart analysis. Use the Trading Brain catalog after ${BRAIN_TRADING_COMMAND}; chart evidence comes from ${BRAIN_CHART_COMMAND}.`,
+      "Visible prose must stay compact and in the user's language. The app renders action events between monologues."
+    ].join("\n");
+  }
   return [
     "Follow the Brain CodeAct commands and priorities already provided at session start.",
     BRAIN_CODEACT_ROUTING_RULES,
-    `When the active Brain is general and a request matches ${BRAIN_SCIENCE_COMMAND} or ${BRAIN_CODING_COMMAND}, activate that Brain CodeAct first with one short natural sentence; do not start with a long specialized answer before switching.`,
+    `When the active Brain is general and a request matches ${BRAIN_SCIENCE_COMMAND}, ${BRAIN_CODING_COMMAND} or ${BRAIN_TRADING_COMMAND}, activate that Brain CodeAct first with one short natural sentence; do not start with a long specialized answer before switching.`,
     `Use ${BRAIN_GOOGLEWEB_COMMAND} only for generic web research that is not covered by a specific Brain module.`,
     `Strict geography rule: ${BRAIN_MAPS_COMMAND} requires an explicit map/location/route/coordinates/Google Earth/local weather intent. A country, city, region, or historical period in a cultural, literary, historical, table, vocabulary, or explanation request is never enough: use ${BRAIN_WEBSEARCH_COMMAND} instead, then ${BRAIN_SCRAPERS_COMMAND} if sources, images, or media should enrich the conversation. If the same place appears with travel, vacation, visit, tourism, stay, destination, dates, travelers, lodging, hotel, rental, or booking, write a natural sentence, then activate ${BRAIN_MAPS_COMMAND} first and ${BRAIN_AIRBNB_COMMAND} as the next WebExplorer page. ${BRAIN_MAPS_COMMAND} without a target opens a neutral Earth view; never use user_home_location as the default target. Never read the computer location without explicit permission.`,
     `If the user asks to generate/create an image, write a natural sentence, then activate ${BRAIN_NEWIMAGE_COMMAND} with say and prompt.`,
@@ -6010,12 +6083,15 @@ function shouldContinueAfterBrainCodeAct(params: {
   if (params.activatedBrainSegment && params.activatedBrainSegment !== params.previousBrainSegment) {
     return false;
   }
+  if (hasPendingBrainCodeActTemplateResult(params.assistantText)) {
+    return true;
+  }
+  if (hasBrainCodeActTerminalResult(params.assistantText)) {
+    return true;
+  }
   const commands = brainCodeActCommandsFromAssistantText(params.assistantText);
   if (commands.length === 0) {
     return false;
-  }
-  if (commands.includes(BRAIN_GMAIL_COMMAND)) {
-    return params.assistantText.includes("GMAIL_TEMPLATE_RESULT") && !params.assistantText.includes("GMAIL_RESULT");
   }
   if (commands.every((command) => isBrainCodeActUserPauseCommand(command) || isBrainCodeActSurfaceCommand(command))) {
     return commands.includes(BRAIN_MAPS_COMMAND) && textLooksLikeMapBackedAnswerIntent(params.originalUserText);
@@ -6045,6 +6121,85 @@ function shouldContinueAfterBrainCodeAct(params: {
         command === BRAIN_RUST_STATE_STORE_COMMAND
     )
   );
+}
+
+function brainCodeActResultHeaderPattern(prefix: string): RegExp {
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|\\n)${escapedPrefix}_RESULT\\b`);
+}
+
+function hasBrainCodeActResultHeader(text: string, prefix: string): boolean {
+  return brainCodeActResultHeaderPattern(prefix).test(text);
+}
+
+function hasPendingBrainCodeActTemplateResult(text: string): boolean {
+  for (const match of text.matchAll(/\b([A-Z][A-Z0-9_]*)_TEMPLATE_RESULT\b/g)) {
+    const prefix = match[1];
+    if (prefix && !hasBrainCodeActResultHeader(text, prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+function latestPendingBrainCodeActTemplateResultBlock(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let latest = "";
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = /^([A-Z][A-Z0-9_]*)_TEMPLATE_RESULT\b/.exec(lines[index]?.trim() ?? "");
+    if (!header) {
+      continue;
+    }
+    const prefix = header[1];
+    if (hasBrainCodeActResultHeader(text, prefix)) {
+      continue;
+    }
+    const block: string[] = [];
+    for (let cursor = index; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      if (cursor > index && !line.trim()) {
+        break;
+      }
+      block.push(line);
+    }
+    latest = block.join("\n").trim();
+  }
+  return latest.length > 14_000 ? `${latest.slice(0, 14_000)}\n[template_result_truncated]` : latest;
+}
+function brainCodeActTerminalResultBlocks(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const blocks: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = /^([A-Z][A-Z0-9_]*)_RESULT\b/.exec(lines[index]?.trim() ?? "");
+    if (!header || header[1].endsWith("_TEMPLATE") || header[1] === "AGENT_ACTION") {
+      continue;
+    }
+    const block: string[] = [];
+    for (let cursor = index; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      if (cursor > index && !line.trim()) {
+        break;
+      }
+      block.push(line);
+    }
+    blocks.push(block.join("\n").trim());
+  }
+  return blocks;
+}
+
+function hasBrainCodeActTerminalResult(text: string): boolean {
+  return brainCodeActTerminalResultBlocks(text).length > 0;
+}
+
+function brainCodeActLoopContinuationMarker(text: string): string {
+  const pendingTemplate = latestPendingBrainCodeActTemplateResultBlock(text);
+  if (pendingTemplate) {
+    return `template:${hashJson(pendingTemplate).slice(0, 16)}`;
+  }
+  const terminalResult = brainCodeActTerminalResultBlocks(text).at(-1) ?? "";
+  if (terminalResult) {
+    return `result:${hashJson(terminalResult).slice(0, 16)}`;
+  }
+  return `action:${hashJson(brainCodeActCommandsFromAssistantText(text)).slice(0, 16)}`;
 }
 
 function textIsAgentActionContinuation(text: string): boolean {
@@ -6146,6 +6301,16 @@ function brainSegmentManifest(): string {
       BRAIN_CODING_VISIBLE_CATALOG
     ].join("\n");
   }
+  if (panelsChatBottomState.activeBrainSegment === "trading") {
+    return [
+      "ACTIVE_BRAIN_SEGMENT v1",
+      "active=trading",
+      brainPersonalityContextManifest(),
+      `activated_by=${BRAIN_TRADING_COMMAND}`,
+      `rule=${BRAIN_TRADING_COMMAND} is already active for this session; continue directly in Trading Brain and do not emit ${BRAIN_TRADING_COMMAND} again unless a later turn explicitly switches away first.`,
+      BRAIN_TRADING_VISIBLE_CATALOG
+    ].join("\n");
+  }
   return [
     "ACTIVE_BRAIN_SEGMENT v1",
     "active=general",
@@ -6155,9 +6320,11 @@ function brainSegmentManifest(): string {
     "mandatory=Physical product or prototype conception is engineering by default only when the user asks to design, build, manufacture, size, simulate or technically validate a functional object.",
     "mandatory=The decision to activate /sciencebrain_ is semantic, not keyword-based: infer the domain implied by the user's natural-language request, even when the exact object, field or project name has never appeared in the Brain, but never invent a domain, goal or discipline that the user did not request.",
     `mandatory=If the task is already clear and belongs to software engineering, coding, websites, applications, repository work, debugging, tests, architecture, scripts, API, Rust, TypeScript, Electron or developer tooling, write a short natural acknowledgement and activate ${BRAIN_CODING_COMMAND} before detailed specialized work.`,
-    `questionnaire_rule=${BRAIN_QUESTIONNAIRE_COMMAND} is a General Brain CodeAct too: use it only when guessing would hurt the result; skip it for trivial tasks or obvious safe defaults.`,
+    `mandatory=If the task is already clear and belongs to trading, brokerage, OANDA, market orders, positions, SL/TP, margin, financing, order history, broker transactions, live price feeds or chart trading, write a short natural acknowledgement and activate ${BRAIN_TRADING_COMMAND} before detailed specialized work.`,
+    `questionnaire_rule=${BRAIN_QUESTIONNAIRE_COMMAND} is a General Brain CodeAct too: use it only when guessing would hurt the result; skip it for trivial tasks or obvious safe defaults. Write title, intro, questions and options in the user's current language.`,
     `sciencebrain_activation_format=${BRAIN_SCIENCE_COMMAND} segment="science" reason="short LLM-authored reason" output="inject_brain_catalog"`,
-    `codingbrain_activation_format=${BRAIN_CODING_COMMAND} segment="coding" reason="short LLM-authored reason" output="inject_brain_catalog"`
+    `codingbrain_activation_format=${BRAIN_CODING_COMMAND} segment="coding" reason="short LLM-authored reason" output="inject_brain_catalog"`,
+    `tradingbrain_activation_format=${BRAIN_TRADING_COMMAND} segment="trading" reason="short LLM-authored reason" output="inject_brain_catalog"`
   ].join("\n");
 }
 
@@ -6169,7 +6336,7 @@ function selfDirectedModeManifest(): string {
     "SELF_DIRECTED_MODE v1",
     "rule=Keep the normal Brain path first: read the Brain boot manifest, classify the request, and activate /sciencebrain_ or /codingbrain_ before deep work when the domain requires it.",
     `mandatory=After the correct Brain is active, and before starting project work for a natural user direction, emit ${BRAIN_QUESTIONNAIRE_COMMAND} to clarify the target. Do not skip this in Self-Directed mode.`,
-    `questionnaire_format=Use title, intro, q1/q2/q3/q4/q5 maximum and qN_options. The final question must define the stop condition: ask exactly how the agent will know the objective is reached.`,
+    `questionnaire_format=Use title, intro, q1/q2/q3/q4/q5 maximum and qN_options in the user's current language. The final question must define the stop condition: ask exactly how the agent will know the objective is reached.`,
     "questionnaire_options=Use expert option cards, not vague Option 1/2/3 labels. Include one recommended option and one more ambitious/high-quality option when useful.",
     "after_answers=When the user message starts SELF_DIRECTED_QUESTIONNAIRE_ANSWERS v1, begin autonomous multi-step work immediately; do not ask the same questionnaire again unless the answers are contradictory.",
     "work_rhythm=Write one short paragraph that states the next concrete action and why, then emit the relevant CodeAct command/event below it. Repeat this paragraph -> event rhythm while work remains.",
@@ -6188,7 +6355,7 @@ function ingenProviderRuntimeContract(params: {
 }): string {
   const transcript = params.transcript ?? panelsChatBottomState.transcript;
   const userText = params.userText ?? "";
-  const moduleId = params.moduleId ?? "";
+  const moduleId = effectiveConversationModuleId(params.moduleId ?? "");
   return [
     "INGEN_PROVIDER_RUNTIME_CONTRACT v1",
     `provider=${params.provider}`,
@@ -7758,14 +7925,15 @@ function agentLoopNarrationContractManifest(): string {
     "LOOP_STREAM_NARRATION_CONTRACT v1",
     "ACTION_NARRATION_CONTRACT v1",
     "voice_source=Follow BRAIN_PERSONALITY_MANIFEST when choosing warmth, rhythm, phrasing and how much human presence to show.",
-    "visible_language=English; write like a capable desktop coding agent explaining work in progress, not like a status logger.",
-    "visible_step_shape=Each visible paragraph should make the step understandable: what was just learned, why the next move follows, and what action or verification comes next.",
-    "paragraph_size=Use one compact paragraph of 1-3 sentences before an event or action. Avoid long checklists during the loop.",
+    "visible_language=Match the user's current language for every visible sentence, questionnaire title, question and option. If the user writes in French, write natural French; keep technical tokens, CodeAct names and schema/result markers unchanged.",
+    "visible_step_shape=Write loop progress as small readable chunks: what was just learned, why the next move follows, and what action or verification comes next. Never pack the whole analysis into one dense paragraph.",
+    "paragraph_size=During the loop, use at most 2 short sentences or roughly 360 characters per paragraph. Split longer reasoning into separate paragraphs or 3-5 short bullets.",
+    "result_summary=After a *_RESULT, first write one short evidence summary, then continue with the next CodeAct or a concise final answer. Prefer bullets for multiple levels, risks, numbers or tradeoffs.",
     "pedagogy=Name pivots and tradeoffs plainly: if a tool fails, explain the useful signal from the failure and the safer next route.",
     "evidence=After a tool result, mention the runtime proof that matters: accepted result, path, count, exit code, artifact, verification or blocked reason.",
     "event_coupling=When you say an action will be taken, immediately follow with the matching CodeAct or AGENT_ACTION_JSON control line. Do not promise work without an event.",
     "tone=Concrete, calm, direct. Avoid mechanical labels such as 'Step 1', 'OBLIGATION', 'Forbidden', or repeating 'I will' at every paragraph.",
-    "completion=When no further loop action is needed, stop the loop with a short natural summary of what was actually proven or what remains blocked."
+    "completion=When no further loop action is needed, stop the loop with a short natural summary of what was actually proven or what remains blocked. Final answers may be fuller, but must still use short paragraphs instead of one monolithic block."
   ].join("\n");
 }
 
@@ -8211,6 +8379,21 @@ async function executeAssistantAgentActionLoop(params: {
   commitTranscript: (transcript: TranscriptMessage[]) => void;
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
+  let loopTranscript = params.baseTranscript;
+  const commitLoopTranscript = (transcriptUpdate: TranscriptMessage[]) => {
+    loopTranscript = transcriptUpdate;
+    params.commitTranscript(transcriptUpdate);
+  };
+  const commitLoopSnapshot = (message: TranscriptMessage) => {
+    const snapshot: TranscriptMessage = loopTranscript.some((existing) => existing.id === message.id)
+      ? {
+          ...message,
+          id: `assistant-loop-${message.id}-${hashJson({ text: message.text, proofHash: message.proofHash }).slice(0, 10)}`,
+          proofHash: hashJson({ loopStreamSnapshotFor: message.id, text: message.text, proofHash: message.proofHash })
+        }
+      : message;
+    commitLoopTranscript(transcriptWithMessage(loopTranscript, snapshot));
+  };
   let loopState = createAgentActionLoopState(params.originalUserText);
   let step = 0;
   let initialCodingVisualActionForced = false;
@@ -8230,15 +8413,15 @@ async function executeAssistantAgentActionLoop(params: {
             text: sanitizedText
           })
         };
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        commitLoopSnapshot(assistantMessage);
       }
       if (!initialCodingVisualActionForced && shouldForceInitialCodingVisualAction(params.originalUserText, assistantMessage.text)) {
         initialCodingVisualActionForced = true;
         const forcedLiveSink = createAssistantLiveTextSink({
-          baseTranscript: params.baseTranscript,
+          baseTranscript: loopTranscript,
           assistantMessageId: assistantMessage.id,
           agentEvents: params.agentEvents,
-          commitTranscript: params.commitTranscript,
+          commitTranscript: commitLoopTranscript,
           assistantRun: params.assistantRun
         });
         const forcedContinuation = await buildAssistantTranscriptMessage(
@@ -8246,7 +8429,7 @@ async function executeAssistantAgentActionLoop(params: {
           params.providerAttachments,
           params.userMessageId,
           params.moduleId,
-          params.baseTranscript,
+          loopTranscript,
           forcedLiveSink,
           assistantMessage.id
         );
@@ -8260,16 +8443,16 @@ async function executeAssistantAgentActionLoop(params: {
             continuationProofHash: forcedContinuation.proofHash
           })
         };
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        commitLoopSnapshot(assistantMessage);
         continue;
       }
       if (!codingLivePreviewForced && shouldForceCodingLivePreviewAfterWrite(params.originalUserText, assistantMessage.text, loopState)) {
         codingLivePreviewForced = true;
         const previewLiveSink = createAssistantLiveTextSink({
-          baseTranscript: params.baseTranscript,
+          baseTranscript: loopTranscript,
           assistantMessageId: assistantMessage.id,
           agentEvents: params.agentEvents,
-          commitTranscript: params.commitTranscript,
+          commitTranscript: commitLoopTranscript,
           assistantRun: params.assistantRun
         });
         const previewContinuation = await buildAssistantTranscriptMessage(
@@ -8277,7 +8460,7 @@ async function executeAssistantAgentActionLoop(params: {
           params.providerAttachments,
           params.userMessageId,
           params.moduleId,
-          params.baseTranscript,
+          loopTranscript,
           previewLiveSink,
           assistantMessage.id
         );
@@ -8291,7 +8474,7 @@ async function executeAssistantAgentActionLoop(params: {
             continuationProofHash: previewContinuation.proofHash
           })
         };
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        commitLoopSnapshot(assistantMessage);
         continue;
       }
       if (loopState.toolSteps > 0) {
@@ -8304,7 +8487,7 @@ async function executeAssistantAgentActionLoop(params: {
           toolSteps: loopState.toolSteps,
           loopState
         });
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        commitLoopSnapshot(assistantMessage);
       }
       return assistantMessage;
     }
@@ -8319,7 +8502,7 @@ async function executeAssistantAgentActionLoop(params: {
       text: renderPendingAgentActionText(assistantMessage.text, extracted),
       proofHash: hashJson({ agentActionLoopPendingStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request })
     };
-    params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+    commitLoopSnapshot(assistantMessage);
     throwIfAssistantRunCancelled(params.assistantRun);
     const result = await executeTrackedAgentAction(extracted.request);
     throwIfAssistantRunCancelled(params.assistantRun);
@@ -8335,13 +8518,13 @@ async function executeAssistantAgentActionLoop(params: {
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
       proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request, result, loopState })
     };
-    params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+    commitLoopSnapshot(assistantMessage);
     if (!result.accepted) {
       const failureLiveSink = createAssistantLiveTextSink({
-        baseTranscript: params.baseTranscript,
+        baseTranscript: loopTranscript,
         assistantMessageId: assistantMessage.id,
         agentEvents: params.agentEvents,
-        commitTranscript: params.commitTranscript,
+        commitTranscript: commitLoopTranscript,
         prefixText: assistantMessage.text,
         assistantRun: params.assistantRun
       });
@@ -8350,7 +8533,7 @@ async function executeAssistantAgentActionLoop(params: {
         params.providerAttachments,
         params.userMessageId,
         params.moduleId,
-        transcriptWithMessage(params.baseTranscript, assistantMessage),
+        transcriptWithMessage(loopTranscript, assistantMessage),
         failureLiveSink,
         assistantMessage.id
       );
@@ -8361,7 +8544,7 @@ async function executeAssistantAgentActionLoop(params: {
         text: [assistantMessage.text, failureContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
         proofHash: hashJson({ agentActionLoopFailureContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: failureContinuation.proofHash })
       };
-      params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+      commitLoopSnapshot(assistantMessage);
       if (extractAgentActionJsonRequest(assistantMessage.text)) {
         step += 1;
         continue;
@@ -8375,7 +8558,7 @@ async function executeAssistantAgentActionLoop(params: {
         toolSteps: loopState.toolSteps,
         loopState
       });
-      params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+      commitLoopSnapshot(assistantMessage);
       return assistantMessage;
     }
     if (
@@ -8390,10 +8573,10 @@ async function executeAssistantAgentActionLoop(params: {
         result,
         agentEvents: params.agentEvents,
         assistantRun: params.assistantRun,
-        commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
+        commitProgress: (message) => commitLoopSnapshot(message)
       });
       if (fallbackMessage.text !== assistantMessage.text) {
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
+        commitLoopSnapshot(fallbackMessage);
         emitAgentLoopDiagnosticSummary({
           agentEvents: params.agentEvents,
           messageId: fallbackMessage.id,
@@ -8405,10 +8588,10 @@ async function executeAssistantAgentActionLoop(params: {
       }
     }
     const continuationLiveSink = createAssistantLiveTextSink({
-      baseTranscript: params.baseTranscript,
+      baseTranscript: loopTranscript,
       assistantMessageId: assistantMessage.id,
       agentEvents: params.agentEvents,
-      commitTranscript: params.commitTranscript,
+      commitTranscript: commitLoopTranscript,
       prefixText: assistantMessage.text,
       assistantRun: params.assistantRun
     });
@@ -8417,7 +8600,7 @@ async function executeAssistantAgentActionLoop(params: {
       params.providerAttachments,
       params.userMessageId,
       params.moduleId,
-      transcriptWithMessage(params.baseTranscript, assistantMessage),
+      transcriptWithMessage(loopTranscript, assistantMessage),
       continuationLiveSink,
       assistantMessage.id
     );
@@ -8430,10 +8613,10 @@ async function executeAssistantAgentActionLoop(params: {
     };
     if (agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result) && !extractAgentActionJsonRequest(assistantMessage.text)) {
       const forcedLiveSink = createAssistantLiveTextSink({
-        baseTranscript: params.baseTranscript,
+        baseTranscript: loopTranscript,
         assistantMessageId: assistantMessage.id,
         agentEvents: params.agentEvents,
-        commitTranscript: params.commitTranscript,
+        commitTranscript: commitLoopTranscript,
         prefixText: assistantMessage.text,
         assistantRun: params.assistantRun
       });
@@ -8442,7 +8625,7 @@ async function executeAssistantAgentActionLoop(params: {
         params.providerAttachments,
         params.userMessageId,
         params.moduleId,
-        transcriptWithMessage(params.baseTranscript, assistantMessage),
+        transcriptWithMessage(loopTranscript, assistantMessage),
         forcedLiveSink,
         assistantMessage.id
       );
@@ -8462,13 +8645,13 @@ async function executeAssistantAgentActionLoop(params: {
             result,
             agentEvents: params.agentEvents,
             assistantRun: params.assistantRun,
-            commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
+            commitProgress: (message) => commitLoopSnapshot(message)
           });
         } else {
           loopState = agentActionLoopWithStatus(loopState, "blocked");
           assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
         }
-        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+        commitLoopSnapshot(assistantMessage);
         return assistantMessage;
       }
     }
@@ -10967,6 +11150,9 @@ function emptyMapsDomRamCartographyResult(error: IpcError): NativeDomRamCartogra
   return result;
 }
 
+let bloombergDomWebviewSessionConfigured = false;
+let bloombergVideoWebviewSessionConfigured = false;
+
 function isMapsWebviewAttachment(src: string, partition?: string): boolean {
   if (partition === "persist:ingen-maps") {
     return true;
@@ -10977,6 +11163,91 @@ function isMapsWebviewAttachment(src: string, partition?: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAllowedBloombergWebviewUrl(src: string): boolean {
+  try {
+    const parsed = new URL(src || BLOOMBERG_HOME_URL);
+    return parsed.protocol === "https:" && (parsed.hostname === "bloomberg.com" || parsed.hostname.endsWith(".bloomberg.com"));
+  } catch {
+    return false;
+  }
+}
+
+function isBloombergWebviewAttachment(src: string, partition?: string): boolean {
+  return partition === BLOOMBERG_WEBVIEW_PARTITION && isAllowedBloombergWebviewUrl(src || BLOOMBERG_HOME_URL);
+}
+
+function isAllowedBloombergVideoWebviewUrl(src: string): boolean {
+  try {
+    const parsed = new URL(src);
+    const allowedHosts = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "www.youtube-nocookie.com", "consent.youtube.com"]);
+    return parsed.protocol === "https:" && allowedHosts.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isBloombergVideoWebviewAttachment(src: string, partition?: string): boolean {
+  return partition === BLOOMBERG_VIDEO_WEBVIEW_PARTITION && isAllowedBloombergVideoWebviewUrl(src);
+}
+
+function configureBloombergDomWebviewSession(): void {
+  if (bloombergDomWebviewSessionConfigured) {
+    return;
+  }
+  bloombergDomWebviewSessionConfigured = true;
+  const bloombergSession = session.fromPartition(BLOOMBERG_WEBVIEW_PARTITION);
+  bloombergSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback({
+      requestHeaders: {
+        ...details.requestHeaders,
+        "User-Agent": CHATGPT_USER_AGENT
+      }
+    });
+  });
+}
+
+function configureBloombergVideoWebviewSession(): void {
+  if (bloombergVideoWebviewSessionConfigured) {
+    return;
+  }
+  bloombergVideoWebviewSessionConfigured = true;
+  const videoSession = session.fromPartition(BLOOMBERG_VIDEO_WEBVIEW_PARTITION);
+  const consentCookies = [
+    { url: "https://www.youtube.com", domain: ".youtube.com", name: "CONSENT", value: "YES+cb.20210328-17-p0.fr+FX+667" },
+    { url: "https://www.youtube.com", domain: ".youtube.com", name: "SOCS", value: "CAI" },
+    { url: "https://www.youtube-nocookie.com", domain: ".youtube-nocookie.com", name: "CONSENT", value: "YES+cb.20210328-17-p0.fr+FX+667" },
+    { url: "https://www.youtube-nocookie.com", domain: ".youtube-nocookie.com", name: "SOCS", value: "CAI" }
+  ];
+  void Promise.all(
+    consentCookies.map((cookie) =>
+      videoSession.cookies.set({
+        ...cookie,
+        path: "/",
+        secure: true,
+        sameSite: "no_restriction"
+      })
+    )
+  ).catch((error: unknown) => {
+    console.warn("Bloomberg video consent cookie setup failed.", error);
+  });
+  videoSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = { ...details.requestHeaders };
+    const existingCookie = requestHeaders.Cookie ?? requestHeaders.cookie ?? "";
+    delete requestHeaders.cookie;
+    requestHeaders.Cookie = existingCookie.includes("CONSENT=")
+      ? existingCookie
+      : [existingCookie, BLOOMBERG_YOUTUBE_CONSENT_COOKIE].filter(Boolean).join("; ");
+    callback({
+      requestHeaders: {
+        ...requestHeaders,
+        Origin: BLOOMBERG_VIDEO_REFERRER.slice(0, -1),
+        Referer: BLOOMBERG_VIDEO_REFERRER,
+        "User-Agent": CHATGPT_USER_AGENT
+      }
+    });
+  });
 }
 
 function rememberMapsDomWebviewGuest(webContents: Electron.WebContents, src = ""): void {
@@ -12704,8 +12975,18 @@ function closeNativeWindow(event: Electron.IpcMainInvokeEvent): boolean {
     return false;
   }
   console.info("Applying native window close", { id: window.id, title: window.getTitle() });
+  const closingPrimaryWindow = window === primaryWindow;
   if (!window.isDestroyed()) {
     window.destroy();
+  }
+  if (closingPrimaryWindow) {
+    for (const candidate of BrowserWindow.getAllWindows()) {
+      if (!candidate.isDestroyed()) {
+        candidate.destroy();
+      }
+    }
+    app.quit();
+    return true;
   }
   if (BrowserWindow.getAllWindows().length <= 1) {
     app.quit();
@@ -15625,6 +15906,7 @@ async function commitAssistantMessageWithProgressiveSeed(
   }
   const seedMessage: TranscriptMessage = {
     ...assistantMessage,
+    id: `assistant-progressive-seed-${assistantMessage.id}`,
     text: seedText,
     proofHash: hashJson({ progressiveSeedFor: assistantMessage.id, fullProofHash: assistantMessage.proofHash, text: seedText })
   };
@@ -15632,7 +15914,7 @@ async function commitAssistantMessageWithProgressiveSeed(
   commitTranscript(seedTranscript);
   emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", sessionId);
   await delayAssistantProgressiveSeed(ASSISTANT_PROGRESSIVE_SEED_DELAY_MS);
-  const finalTranscript = transcriptWithReplacedMessage(seedTranscript, assistantMessage);
+  const finalTranscript = transcriptWithMessage(seedTranscript, assistantMessage);
   commitTranscript(finalTranscript);
   return finalTranscript;
 }
@@ -15676,7 +15958,7 @@ function createAssistantLiveTextSink(params: {
         textDelta
       });
       const liveMessage: TranscriptMessage = {
-        id: params.assistantMessageId,
+        id: `assistant-live-${params.assistantMessageId}`,
         role: "assistant",
         text: trimmed,
         proofHash: hashJson({ liveAssistantMessage: params.assistantMessageId, text: trimmed })
@@ -16787,6 +17069,111 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
   };
 }
 
+async function executeAssistantChartCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (
+    message.role !== "assistant" ||
+    message.text.includes("CHART_TEMPLATE_RESULT") ||
+    message.text.includes("CHART_RESULT")
+  ) {
+    return message;
+  }
+  const codeAct = readChartCodeAct(message.text, latestTradingChartWindowSnapshot ?? undefined);
+  if (!codeAct) {
+    return message;
+  }
+  if (codeAct.kind === "template") {
+    const executionText = renderChartTemplateResult(codeAct.result);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeActTemplate: codeAct.result
+      })
+    };
+  }
+  const result = await requestTradingChartFromRenderer(codeAct.request);
+  const executionText = renderChartCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: codeAct.request,
+      chartResult: result
+    })
+  };
+}
+async function executeAssistantEditChartCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (
+    message.role !== "assistant" ||
+    message.text.includes("EDIT_CHART_TEMPLATE_RESULT") ||
+    message.text.includes("EDIT_CHART_RESULT")
+  ) {
+    return message;
+  }
+  const codeAct = readEditChartCodeAct(message.text, latestTradingChartWindowSnapshot ?? undefined);
+  if (!codeAct) {
+    return message;
+  }
+  if (codeAct.kind === "template") {
+    const executionText = renderEditChartTemplateResult(codeAct.result);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeActTemplate: codeAct.result
+      })
+    };
+  }
+  const result = await requestTradingChartEditFromRenderer(codeAct.request);
+  const executionText = renderEditChartCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: codeAct.request,
+      editChartResult: result
+    })
+  };
+}
+async function executeAssistantMarketOrderCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
+  if (
+    message.role !== "assistant" ||
+    message.text.includes("MARKET_ORDER_TEMPLATE_RESULT") ||
+    message.text.includes("MARKET_ORDER_RESULT")
+  ) {
+    return message;
+  }
+  const codeAct = readMarketOrderCodeAct(message.text, latestTradingOrderWindowSnapshot ?? undefined);
+  if (!codeAct) {
+    return message;
+  }
+  if (codeAct.kind === "template") {
+    const executionText = renderMarketOrderTemplateResult(codeAct.result);
+    return {
+      ...message,
+      text: `${message.text.trim()}\n\n${executionText}`,
+      proofHash: hashJson({
+        previousProofHash: message.proofHash,
+        assistantCodeActTemplate: codeAct.result
+      })
+    };
+  }
+  const result = await executeMarketOrderCodeActRequest(codeAct.request);
+  const executionText = renderMarketOrderCodeActResult(result);
+  return {
+    ...message,
+    text: `${message.text.trim()}\n\n${executionText}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: codeAct.request,
+      marketOrderResult: result
+    })
+  };
+}
 async function executeAssistantWebSearchCodeAct(message: TranscriptMessage): Promise<TranscriptMessage> {
   if (
     message.role !== "assistant" ||
@@ -16956,7 +17343,7 @@ function executeAssistantBrainSegmentCodeAct(message: TranscriptMessage): Transc
     proofHash: hashJson({
       previousProofHash: message.proofHash,
       brainSegment: nextSegment,
-      command: nextSegment === "science" ? BRAIN_SCIENCE_COMMAND : BRAIN_CODING_COMMAND
+      command: brainSegmentCommand(nextSegment)
     })
   };
 }
@@ -16968,6 +17355,9 @@ function brainSegmentFromAssistantText(text: string): ActiveBrainSegmentId | und
   }
   if (trimmed.includes(BRAIN_CODING_COMMAND)) {
     return "coding";
+  }
+  if (trimmed.includes(BRAIN_TRADING_COMMAND)) {
+    return "trading";
   }
   return undefined;
 }
@@ -16986,8 +17376,10 @@ function activeBrainSegmentFromTranscript(messages: TranscriptMessage[]): BrainS
   return activeSegment;
 }
 
-function brainSegmentCommand(segment: ActiveBrainSegmentId): typeof BRAIN_SCIENCE_COMMAND | typeof BRAIN_CODING_COMMAND {
-  return segment === "science" ? BRAIN_SCIENCE_COMMAND : BRAIN_CODING_COMMAND;
+function brainSegmentCommand(segment: ActiveBrainSegmentId): typeof BRAIN_SCIENCE_COMMAND | typeof BRAIN_CODING_COMMAND | typeof BRAIN_TRADING_COMMAND {
+  if (segment === "science") return BRAIN_SCIENCE_COMMAND;
+  if (segment === "coding") return BRAIN_CODING_COMMAND;
+  return BRAIN_TRADING_COMMAND;
 }
 
 function removeBrainSegmentCommandLines(text: string, segment: ActiveBrainSegmentId): string {
@@ -17022,14 +17414,20 @@ function suppressRepeatedBrainSegmentCodeAct(message: TranscriptMessage, activeS
 
 function brainSegmentContinuationUserText(userText: string, segment: ActiveBrainSegmentId): string {
   const command = brainSegmentCommand(segment);
-  const catalog = segment === "science" ? "Science/Engineering/3D Brain" : "Coding Brain";
+  const catalog = segment === "science" ? "Science/Engineering/3D Brain" : segment === "coding" ? "Coding Brain" : "Trading Brain";
   const lines = [
     userText || "Continue the current user request.",
     "",
     `InGen context: ${command} has just been activated. The ${catalog} catalog is now injected. Continue the user request with this Brain active; do not reactivate ${command} unless a new request requires it.`,
     agentLoopNarrationContractManifest(),
-    `questionnaire_pause=If useful questions are needed before acting, do not write a checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, optional intro, q1..q5 max, one question per page, and three concrete expert options in qN_options. Use only if guessing would hurt the result; host adds Other automatically.`
+    "loop_contract=Do not stop with a prose-only intention such as \"I will inspect/open/check\" while the original request still needs an action result. If a catalog CodeAct is needed to finish the request, emit the chosen CodeAct in this message and wait for its RESULT before giving the final answer.",
+    `questionnaire_pause=If useful questions are needed before acting, do not write a checklist in the Canvas: activate ${BRAIN_QUESTIONNAIRE_COMMAND} with title, optional intro, q1..q5 max, one question per page, and three concrete expert options in qN_options. Write the questionnaire in the user's current language. Use only if guessing would hurt the result; host adds Other automatically.`
   ];
+  if (segment === "trading") {
+    lines.push(
+      "Trading Brain keeps broker execution safety gates: for market orders, emit /market_order_ bare first, wait for MARKET_ORDER_TEMPLATE_RESULT with the live order-window snapshot, then fill the returned template only when the user has explicitly confirmed the exact live order."
+    );
+  }
   if (segment === "coding") {
     lines.push(
       "Coding Brain keeps Windows/local action tools and action rhythm: to create code, modify a file, run a test, or inspect the machine, use AGENT_ACTION_JSON, then wait for AGENT_ACTION_RESULT before concluding.",
@@ -17046,14 +17444,21 @@ function brainCodeActLoopContinuationUserText(
 ): string {
   const commandList = commands.join(" ");
   const visiblePrior = assistantCodeActVisibleText(previousAssistantText);
+  const pendingTemplateResult = latestPendingBrainCodeActTemplateResultBlock(previousAssistantText);
   return [
     userText || "Continue the current user request.",
     "",
     "BRAIN_CODEACT_LOOP_CONTINUATION v1",
     `codeact_events=${commandList || "none"}`,
     visiblePrior ? `previous_visible_progress=${visiblePrior}` : "",
+    pendingTemplateResult ? "previous_codeact_template_result:" : "",
+    pendingTemplateResult ? "```text" : "",
+    pendingTemplateResult,
+    pendingTemplateResult ? "```" : "",
     agentLoopNarrationContractManifest(),
     "runtime_next=The previous Brain CodeAct was an action event, not a final answer if the requested work is not complete.",
+    "template_action=If previous_codeact_template_result is present, fill and emit that returned template now. Do not merely say you are waiting for the final RESULT.",
+    "result_action=If the previous message contains a *_RESULT block, read it as ground truth, then either continue with the next needed CodeAct or give the final answer/refusal summary.",
     "control_line=Continue with the next useful CodeAct or exactly one AGENT_ACTION_JSON line when a real local action is needed.",
     "pause_policy=If the previous CodeAct opened UI, waits for user input, or is blocked on permission/confirmation, explain that pause compactly and do not invent an action.",
     "repeat_policy=Do not repeat the same CodeAct only to show activity. Use the next event only when it represents a real step."
@@ -17100,6 +17505,9 @@ async function executeAssistantModuleCodeActs(
 ): Promise<TranscriptMessage> {
   let next = await executeAssistantSearchArchiveCodeAct(message, session);
   next = await executeAssistantLocalActionsCodeAct(next);
+  next = await executeAssistantChartCodeAct(next);
+  next = await executeAssistantEditChartCodeAct(next);
+  next = await executeAssistantMarketOrderCodeAct(next);
   if (moduleId === "gmail") {
     return await executeAssistantGmailCodeAct(next, parallelSessionIndex);
   }
@@ -18652,7 +19060,8 @@ function universalLoopContinuationKey(params: {
   return [
     params.continuation.idSuffix,
     params.pass.activatedBrainSegment ?? "",
-    codeActs || "no-codeact"
+    codeActs || "no-codeact",
+    brainCodeActLoopContinuationMarker(params.pass.assistantMessage.text)
   ].join(":");
 }
 
@@ -18672,6 +19081,10 @@ async function executeUniversalLoopContinuation(params: {
   pass: UniversalLoopOrchestratorPassResult;
 }): Promise<TranscriptMessage[]> {
   let nextTranscript = params.nextTranscript;
+  const commitContinuationTranscript = (transcriptUpdate: TranscriptMessage[]) => {
+    nextTranscript = transcriptUpdate;
+    params.commitTranscript(transcriptUpdate);
+  };
   let pass = params.pass;
   const seenContinuationKeys = new Set<string>();
 
@@ -18697,7 +19110,7 @@ async function executeUniversalLoopContinuation(params: {
       baseTranscript: nextTranscript,
       assistantMessageId: continuationAssistantMessageId,
       agentEvents: params.agentEvents,
-      commitTranscript: params.commitTranscript,
+      commitTranscript: commitContinuationTranscript,
       assistantRun: params.assistantRun,
       renameSession: params.session
     });
@@ -18721,13 +19134,13 @@ async function executeUniversalLoopContinuation(params: {
       session: params.session,
       agentEvents: params.agentEvents,
       assistantRun: params.assistantRun,
-      commitTranscript: params.commitTranscript
+      commitTranscript: commitContinuationTranscript
     });
     nextTranscript = await commitAssistantMessageWithProgressiveSeed(
       nextTranscript,
       continuationPass.assistantMessage,
       params.requestSessionId,
-      params.commitTranscript
+      commitContinuationTranscript
     );
     archiveTranscriptMessage(params.session, continuationPass.assistantMessage);
     pass = continuationPass;
@@ -18783,12 +19196,16 @@ async function submitChatDraftForSessionInner(
   };
   const requestTranscriptWithUser = [...requestTranscriptBeforeSend, message];
   let nextTranscript = transcriptWithoutMessage(transcript, replaceAssistantMessageId);
+  const commitTurnTranscript = (transcriptUpdate: TranscriptMessage[]) => {
+    nextTranscript = transcriptUpdate;
+    commitTranscript(transcriptUpdate);
+  };
   nextTranscript = internalPrompt ? nextTranscript : transcriptWithMessage(nextTranscript, message);
   if (replaceAssistantMessageId) {
-    commitTranscript(nextTranscript);
+    commitTurnTranscript(nextTranscript);
   }
   if (!internalPrompt) {
-    commitTranscript(nextTranscript);
+    commitTurnTranscript(nextTranscript);
     archiveTranscriptMessage(session, message);
   }
   if (panelsChatBottomState.activeSessionId === requestSessionId) {
@@ -18803,7 +19220,7 @@ async function submitChatDraftForSessionInner(
   const agentEvents = createAgentRuntimeEventQueue({ sessionId: requestSessionId });
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithMessage(nextTranscript, contextCompactionEvent);
-    commitTranscript(nextTranscript);
+    commitTurnTranscript(nextTranscript);
     agentEvents.emit({
       kind: "compaction_started",
       messageId: contextCompactionEvent.id,
@@ -18826,7 +19243,7 @@ async function submitChatDraftForSessionInner(
       baseTranscript: nextTranscript,
       assistantMessageId: liveAssistantMessageId,
       agentEvents,
-      commitTranscript,
+      commitTranscript: commitTurnTranscript,
       assistantRun,
       renameSession: session
     });
@@ -18853,14 +19270,14 @@ async function submitChatDraftForSessionInner(
     session,
     agentEvents,
     assistantRun,
-    commitTranscript,
+    commitTranscript: commitTurnTranscript,
     replaceAssistantMessageId
   });
   assistantMessage = orchestratorPass.assistantMessage;
-  nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTranscript);
+  nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTurnTranscript);
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithReplacedMessage(nextTranscript, contextCompactionEventMessage("compressed", contextCompactionSeed));
-    commitTranscript(nextTranscript);
+    commitTurnTranscript(nextTranscript);
     agentEvents.emit({
       kind: "compaction_completed",
       messageId: contextCompactionEvent.id,
@@ -18885,7 +19302,7 @@ async function submitChatDraftForSessionInner(
     session,
     agentEvents,
     assistantRun,
-    commitTranscript,
+    commitTranscript: commitTurnTranscript,
     searchArchiveActive: Boolean(searchArchiveCodeAct),
     pass: orchestratorPass
   });
@@ -18937,7 +19354,7 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
     }
     case "send_chat": {
       const draft = (command.value ?? panelsChatBottomState.chatText).trim();
-      const moduleId = typeof command.moduleId === "string" ? command.moduleId : "";
+      const moduleId = effectiveConversationModuleId(typeof command.moduleId === "string" ? command.moduleId : "");
       const pendingUploadItems = composerUploadItemsForCommand(command);
       panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
       panelsChatBottomState.chatText = "";
@@ -18957,7 +19374,7 @@ async function applyPanelsChatBottomCommand(command: PanelsChatBottomCommand): P
       break;
     }
     case "send_parallel_chat_batch": {
-      const moduleId = typeof command.moduleId === "string" ? command.moduleId : "";
+      const moduleId = effectiveConversationModuleId(typeof command.moduleId === "string" ? command.moduleId : "");
       const pendingUploadItems = composerUploadItemsForCommand(command);
       panelsChatBottomState.composerResetRequestTime = panelsChatBottomCommandTime(command);
       panelsChatBottomState.chatText = "";
@@ -19086,8 +19503,872 @@ function panelsChatBottomCommandResult(
   return result;
 }
 
+const TRADING_DEFAULT_INSTRUMENT = "NATGAS_USD";
+const TRADING_DEFAULT_BASE_URL = "https://api-fxtrade.oanda.com";
+const TRADING_CANDLE_LIMIT = 5000;
+const TRADING_GRANULARITY: Record<TradingTimeframe, string> = { H1: "H1", H4: "H4", D1: "D" };
+let tradingAccountCache: { key: string; accountId: string; baseUrl: string; cachedAt: number } | null = null;
+let latestTradingChartWindowSnapshot: TradingChartWindowSnapshot | null = null;
+const pendingTradingChartRequests = new Map<string, { resolve: (result: TradingChartResult) => void; timer: ReturnType<typeof setTimeout> }>();
+const pendingTradingChartEditRequests = new Map<string, { resolve: (result: TradingChartEditResult) => void; timer: ReturnType<typeof setTimeout> }>();
+
+function normalizeTradingChartWindowSnapshot(value: unknown): TradingChartWindowSnapshot {
+  const record = value && typeof value === "object" ? value as Partial<TradingChartWindowSnapshot> : {};
+  const available: TradingTimeframe[] = Array.isArray(record.availableTimeframes)
+    ? record.availableTimeframes.filter((timeframe): timeframe is TradingTimeframe => timeframe === "H1" || timeframe === "H4" || timeframe === "D1")
+    : ["H1"];
+  const snapshot: TradingChartWindowSnapshot = {
+    schema: "forge.trading.chart_window_snapshot.v1",
+    source: "renderer_trading_chart",
+    instrument: tradingInstrument(record.instrument),
+    displayName: typeof record.displayName === "string" && record.displayName.trim() ? record.displayName.trim() : "Natural Gas",
+    timeframe: record.timeframe === "H4" || record.timeframe === "D1" ? record.timeframe : "H1",
+    availableTimeframes: available.length > 0 ? available : (["H1"] as TradingTimeframe[]),
+    loadedCandleCount: Number.isFinite(Number(record.loadedCandleCount)) ? Math.max(0, Math.floor(Number(record.loadedCandleCount))) : 0,
+    visibleCandleCount: Number.isFinite(Number(record.visibleCandleCount)) ? Math.max(0, Math.floor(Number(record.visibleCandleCount))) : 0,
+    firstLoadedTime: typeof record.firstLoadedTime === "string" ? record.firstLoadedTime : undefined,
+    lastLoadedTime: typeof record.lastLoadedTime === "string" ? record.lastLoadedTime : undefined,
+    firstVisibleTime: typeof record.firstVisibleTime === "string" ? record.firstVisibleTime : undefined,
+    lastVisibleTime: typeof record.lastVisibleTime === "string" ? record.lastVisibleTime : undefined,
+    pricePrecision: Number.isFinite(Number(record.pricePrecision)) ? Math.max(0, Math.floor(Number(record.pricePrecision))) : 3,
+    dataSource: "oanda_rest_v20",
+    chartUpdatedAt: typeof record.chartUpdatedAt === "string" ? record.chartUpdatedAt : new Date().toISOString(),
+    proofHash: ""
+  };
+  snapshot.proofHash = hashJson({ ...snapshot, proofHash: "" });
+  return snapshot;
+}
+
+function updateTradingChartWindowSnapshot(value: unknown): TradingChartWindowSnapshotResult {
+  try {
+    latestTradingChartWindowSnapshot = normalizeTradingChartWindowSnapshot(value);
+    return {
+      accepted: true,
+      schema: "forge.trading.chart_window_snapshot_result.v1",
+      proofHash: latestTradingChartWindowSnapshot.proofHash
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Trading chart window snapshot rejected.";
+    return {
+      accepted: false,
+      schema: "forge.trading.chart_window_snapshot_result.v1",
+      proofHash: hashJson({ accepted: false, message }),
+      error: tradingIpcError(message)
+    };
+  }
+}
+
+function completeTradingChartRequest(value: unknown): TradingChartResult {
+  const record = value && typeof value === "object" ? value as TradingChartResult & { requestId?: string } : undefined;
+  const requestId = typeof record?.requestId === "string" ? record.requestId : "";
+  const pending = requestId ? pendingTradingChartRequests.get(requestId) : undefined;
+  const result = normalizeTradingChartResult(record);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingTradingChartRequests.delete(requestId);
+    pending.resolve(result);
+  }
+  return result;
+}
+
+function normalizeTradingChartResult(value: unknown): TradingChartResult {
+  const record = value && typeof value === "object" ? value as Partial<TradingChartResult> : {};
+  const candles = Array.isArray(record.candles) ? record.candles.filter(isTradingCandle) : [];
+  const snapshot = record.chartWindowSnapshot ? normalizeTradingChartWindowSnapshot(record.chartWindowSnapshot) : latestTradingChartWindowSnapshot ?? undefined;
+  const result: TradingChartResult = {
+    accepted: record.accepted === true,
+    schema: "forge.trading.chart.result.v1",
+    source: "renderer_trading_chart",
+    instrument: tradingInstrument(record.instrument ?? snapshot?.instrument),
+    displayName: typeof record.displayName === "string" && record.displayName.trim() ? record.displayName.trim() : snapshot?.displayName ?? "Natural Gas",
+    timeframe: record.timeframe === "H4" || record.timeframe === "D1" ? record.timeframe : "H1",
+    candleCount: Number.isFinite(Number(record.candleCount)) ? Math.max(0, Math.floor(Number(record.candleCount))) : candles.length,
+    candles,
+    screenshotPngDataUrl: typeof record.screenshotPngDataUrl === "string" && record.screenshotPngDataUrl.startsWith("data:image/png;base64,") ? record.screenshotPngDataUrl : undefined,
+    screenshotWidth: Number.isFinite(Number(record.screenshotWidth)) ? Math.floor(Number(record.screenshotWidth)) : undefined,
+    screenshotHeight: Number.isFinite(Number(record.screenshotHeight)) ? Math.floor(Number(record.screenshotHeight)) : undefined,
+    screenshotHash: typeof record.screenshotHash === "string" ? record.screenshotHash.replace(/^sha256:/i, "") : undefined,
+    firstCandleTime: typeof record.firstCandleTime === "string" ? record.firstCandleTime : candles[0]?.time,
+    lastCandleTime: typeof record.lastCandleTime === "string" ? record.lastCandleTime : candles.at(-1)?.time,
+    chartWindowSnapshot: snapshot,
+    capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : new Date().toISOString(),
+    proofHash: "",
+    error: record.error
+  };
+  result.proofHash = hashJson({ ...result, proofHash: "" });
+  return result;
+}
+
+function isTradingCandle(value: unknown): value is TradingCandle {
+  const record = value && typeof value === "object" ? value as Partial<TradingCandle> : undefined;
+  return Boolean(record)
+    && typeof record?.time === "string"
+    && [record.open, record.high, record.low, record.close, record.volume].every((item) => typeof item === "number" && Number.isFinite(item));
+}
+
+function tradingChartRequestEvent(request: ChartCodeActRequest): TradingChartRequestEvent {
+  const requestedAt = new Date().toISOString();
+  const event: TradingChartRequestEvent = {
+    schema: "forge.trading.chart_request.v1",
+    requestId: `chart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+    instrument: request.instrument,
+    timeframe: request.timeframe,
+    candleCount: request.candleCount,
+    includeScreenshot: request.includeScreenshot,
+    includeOhlc: request.includeOhlc,
+    requestedAt,
+    proofHash: ""
+  };
+  event.proofHash = hashJson({ ...event, proofHash: "" });
+  return event;
+}
+
+function completeTradingChartEditRequest(value: unknown): TradingChartEditResult {
+  const record = value && typeof value === "object" ? value as TradingChartEditResult & { requestId?: string } : undefined;
+  const requestId = typeof record?.requestId === "string" ? record.requestId : "";
+  const pending = requestId ? pendingTradingChartEditRequests.get(requestId) : undefined;
+  const result = normalizeTradingChartEditResult(record);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingTradingChartEditRequests.delete(requestId);
+    pending.resolve(result);
+  }
+  return result;
+}
+
+function normalizeTradingChartEditResult(value: unknown): TradingChartEditResult {
+  const record = value && typeof value === "object" ? value as Partial<TradingChartEditResult> : {};
+  const snapshot = record.chartWindowSnapshot ? normalizeTradingChartWindowSnapshot(record.chartWindowSnapshot) : latestTradingChartWindowSnapshot ?? undefined;
+  const elements = Array.isArray(record.elements) ? record.elements.map(normalizeTradingChartEditElement).filter((item): item is TradingChartEditElement => Boolean(item)) : [];
+  const conversationTags = Array.isArray(record.conversationTags)
+    ? record.conversationTags.map((tag) => {
+      const entry = tag && typeof tag === "object" ? tag as { tag?: unknown; elementId?: unknown; label?: unknown } : {};
+      return {
+        tag: typeof entry.tag === "string" ? entry.tag : "",
+        elementId: typeof entry.elementId === "string" ? entry.elementId : "",
+        label: typeof entry.label === "string" ? entry.label : ""
+      };
+    }).filter((tag) => tag.tag && tag.elementId)
+    : elements.map((element) => ({ tag: element.tag, elementId: element.id, label: element.label }));
+  const result: TradingChartEditResult = {
+    accepted: record.accepted === true,
+    schema: BRAIN_EDIT_CHART_RESULT_SCHEMA,
+    source: "renderer_trading_chart",
+    instrument: tradingInstrument(record.instrument ?? snapshot?.instrument),
+    timeframe: record.timeframe === "H4" || record.timeframe === "D1" ? record.timeframe : "H1",
+    appliedCount: Number.isFinite(Number(record.appliedCount)) ? Math.max(0, Math.floor(Number(record.appliedCount))) : elements.length,
+    refusedCount: Number.isFinite(Number(record.refusedCount)) ? Math.max(0, Math.floor(Number(record.refusedCount))) : 0,
+    elements,
+    conversationTags,
+    chartWindowSnapshot: snapshot,
+    capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : new Date().toISOString(),
+    proofHash: "",
+    error: record.error
+  };
+  result.proofHash = hashJson({ ...result, proofHash: "" });
+  return result;
+}
+
+function normalizeTradingChartEditElement(value: unknown): TradingChartEditElement | null {
+  const record = value && typeof value === "object" ? value as Partial<TradingChartEditElement> : undefined;
+  if (!record || typeof record.kind !== "string") return null;
+  const label = typeof record.label === "string" && record.label.trim() ? record.label.trim() : record.kind;
+  const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : hashJson({ label, kind: record.kind }).slice(0, 16);
+  return {
+    ...record,
+    kind: record.kind as TradingChartEditAction["kind"],
+    id,
+    label,
+    tag: typeof record.tag === "string" && record.tag.trim() ? record.tag.trim() : `*${label}*`,
+    instrument: tradingInstrument(record.instrument),
+    timeframe: record.timeframe === "H4" || record.timeframe === "D1" ? record.timeframe : "H1",
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+    proofHash: typeof record.proofHash === "string" ? record.proofHash.replace(/^sha256:/i, "") : hashJson({ id, label, kind: record.kind })
+  };
+}
+
+function tradingChartEditRequestEvent(request: EditChartCodeActRequest): TradingChartEditRequestEvent {
+  const requestedAt = new Date().toISOString();
+  const event: TradingChartEditRequestEvent = {
+    schema: "forge.trading.edit_chart.request.v1",
+    requestId: `edit-chart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+    instrument: request.instrument,
+    timeframe: request.timeframe,
+    actions: request.actions,
+    chartWindowSnapshotHash: request.chartWindowSnapshotHash,
+    requestedAt,
+    proofHash: ""
+  };
+  event.proofHash = hashJson({ ...event, proofHash: "" });
+  return event;
+}
+
+async function requestTradingChartEditFromRenderer(request: EditChartCodeActRequest): Promise<TradingChartEditResult> {
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  if (windows.length === 0) {
+    return editChartRefusalResult({ request, snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "No renderer window is available for /edit_chart_.", code: "chart_renderer_unavailable" });
+  }
+  const event = tradingChartEditRequestEvent(request);
+  const response = new Promise<TradingChartEditResult>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingTradingChartEditRequests.delete(event.requestId);
+      resolve(editChartRefusalResult({ request, snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "Trading chart renderer did not answer to /edit_chart_ before timeout.", code: "edit_chart_renderer_timeout" }));
+    }, 5000);
+    pendingTradingChartEditRequests.set(event.requestId, { resolve, timer });
+  });
+  for (const window of windows) {
+    window.webContents.send("forge:trading-chart-edit-request", event);
+  }
+  return response;
+}
+async function requestTradingChartFromRenderer(request: ChartCodeActRequest): Promise<TradingChartResult> {
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  if (windows.length === 0) {
+    return chartRefusalResult({ request, snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "No renderer window is available for /chart_.", code: "chart_renderer_unavailable" });
+  }
+  const event = tradingChartRequestEvent(request);
+  const response = new Promise<TradingChartResult>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingTradingChartRequests.delete(event.requestId);
+      resolve(chartRefusalResult({ request, snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "Trading chart renderer did not answer before timeout.", code: "chart_renderer_timeout" }));
+    }, 5000);
+    pendingTradingChartRequests.set(event.requestId, { resolve, timer });
+  });
+  for (const window of windows) {
+    window.webContents.send("forge:trading-chart-request", event);
+  }
+  return response;
+}
+let latestTradingOrderWindowSnapshot: TradingOrderWindowSnapshot | null = null;
+
+type OandaJson = Record<string, unknown>;
+type OandaFetchResult = { value?: OandaJson; error?: IpcError };
+
+function tradingIpcError(message: string, detail?: unknown): IpcError {
+  return { code: "shadow_only", message, proofHash: hashJson({ oanda: false, message, detail }) };
+}
+
+function tradingInstrument(value?: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : TRADING_DEFAULT_INSTRUMENT;
+}
+
+function maskTradingAccountId(accountId: string): string {
+  if (accountId.length <= 8) return accountId ? "***" : "unavailable";
+  return `${accountId.slice(0, 4)}...${accountId.slice(-4)}`;
+}
+
+function tradingNormalizeBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return TRADING_DEFAULT_BASE_URL;
+  try {
+    const parsed = new URL(trimmed);
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    if (parsed.hostname === "stream-fxtrade.oanda.com") parsed.hostname = "api-fxtrade.oanda.com";
+    if (parsed.hostname === "stream-fxpractice.oanda.com") parsed.hostname = "api-fxpractice.oanda.com";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return TRADING_DEFAULT_BASE_URL;
+  }
+}
+
+function tradingSecretFileCandidates(): string[] {
+  const userProfile = process.env.USERPROFILE ?? process.env.HOME ?? "";
+  return [
+    process.env.OANDA_TOKEN_FILE,
+    process.env.OANDA_API_TOKEN_FILE,
+    process.env.FORGE_OANDA_TOKEN_FILE,
+    userProfile ? join(userProfile, "Documents", "007", "OANDA TOKEN.txt") : ""
+  ].filter((value): value is string => Boolean(value && value.trim()));
+}
+
+function tradingSecretFileValue(name: string): string {
+  for (const filePath of tradingSecretFileCandidates()) {
+    try {
+      if (!existsSync(filePath)) continue;
+      const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const separators = ["=", ":", " "];
+        for (const separator of separators) {
+          const separatorIndex = line.indexOf(separator);
+          if (separatorIndex <= 0) continue;
+          const key = line.slice(0, separatorIndex).trim();
+          const value = line.slice(separatorIndex + 1).trim().replace(/^['\"]|['\"]$/g, "");
+          if (key === name && value) return value;
+        }
+        if ((name === "OANDA_API_TOKEN" || name === "OANDA_API_KEY") && /^[A-Za-z0-9_-]{32,}$/.test(line)) return line;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+function tradingOandaToken(): string {
+  return (process.env.OANDA_API_TOKEN ?? process.env.OANDA_API_KEY ?? tradingSecretFileValue("OANDA_API_TOKEN") ?? tradingSecretFileValue("OANDA_API_KEY") ?? "").trim();
+}
+
+function tradingOandaBaseUrl(): string {
+  return tradingNormalizeBaseUrl(process.env.OANDA_API_BASE_URL ?? process.env.OANDA_API_URL ?? process.env.OANDA_REST_URL ?? TRADING_DEFAULT_BASE_URL);
+}
+
+class OandaApiError extends Error {
+  constructor(message: string, readonly status: number, readonly payload: OandaJson) {
+    super(message);
+    this.name = "OandaApiError";
+  }
+}
+async function oandaFetchJson(pathname: string, init?: { method?: string; body?: unknown }): Promise<OandaJson> {
+  const token = tradingOandaToken();
+  if (!token) throw new Error("OANDA_API_TOKEN unavailable.");
+  const baseUrl = tradingOandaBaseUrl();
+  const response = await net.fetch(`${baseUrl}${pathname}`, {
+    method: init?.method ?? "GET",
+    cache: "no-store",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/json",
+      "Accept-Datetime-Format": "RFC3339",
+      "Content-Type": "application/json"
+    },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body)
+  });
+  const text = await response.text();
+  let payload: unknown = {};
+  if (text.trim()) {
+    try { payload = JSON.parse(text); } catch { payload = { body: text }; }
+  }
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "errorMessage" in payload
+      ? String((payload as { errorMessage?: unknown }).errorMessage)
+      : `OANDA HTTP ${response.status}`;
+    throw new OandaApiError(message, response.status, payload && typeof payload === "object" ? payload as OandaJson : {});
+  }
+  return payload && typeof payload === "object" ? payload as OandaJson : {};
+}
+
+async function oandaOptionalFetchJson(pathname: string): Promise<OandaFetchResult> {
+  try {
+    return { value: await oandaFetchJson(pathname) };
+  } catch (error) {
+    return { error: tradingIpcError(error instanceof Error ? error.message : "OANDA request failed.", { pathname }) };
+  }
+}
+
+function oandaAccountMetric(payload: OandaJson | undefined, key: string): number {
+  const account = payload?.account && typeof payload.account === "object" ? payload.account as Record<string, unknown> : undefined;
+  const value = account?.[key];
+  const parsed = typeof value === "string" || typeof value === "number" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function oandaAccountContext(): Promise<{ accountId: string; baseUrl: string; accountIdMasked: string }> {
+  const baseUrl = tradingOandaBaseUrl();
+  const key = `${baseUrl}:${hashJson(tradingOandaToken()).slice(0, 16)}:account_select_v2`;
+  const forcedAccountId = (process.env.OANDA_FORCE_ACCOUNT_ID ?? process.env.FORGE_OANDA_FORCE_ACCOUNT_ID ?? tradingSecretFileValue("OANDA_FORCE_ACCOUNT_ID") ?? tradingSecretFileValue("FORGE_OANDA_FORCE_ACCOUNT_ID") ?? "").trim();
+  if (forcedAccountId) return { accountId: forcedAccountId, baseUrl, accountIdMasked: maskTradingAccountId(forcedAccountId) };
+  const preferredAccountId = (process.env.OANDA_ACCOUNT_ID ?? tradingSecretFileValue("OANDA_ACCOUNT_ID") ?? "").trim();
+  if (tradingAccountCache?.key === key && Date.now() - tradingAccountCache.cachedAt < 300000) {
+    return { accountId: tradingAccountCache.accountId, baseUrl: tradingAccountCache.baseUrl, accountIdMasked: maskTradingAccountId(tradingAccountCache.accountId) };
+  }
+  const payload = await oandaFetchJson("/v3/accounts");
+  const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  const listedAccountIds = accounts
+    .map((item) => item && typeof item === "object" ? String((item as { id?: unknown }).id ?? "") : "")
+    .filter(Boolean);
+  const accountIds = Array.from(new Set([preferredAccountId, ...listedAccountIds].filter(Boolean)));
+  if (accountIds.length === 0) throw new Error("No OANDA account authorized for this token.");
+
+  let selectedAccountId = accountIds[0];
+  let selectedScore = Number.NEGATIVE_INFINITY;
+  for (const accountId of accountIds.slice(0, 16)) {
+    try {
+      const summary = await oandaFetchJson(`/v3/accounts/${encodeURIComponent(accountId)}/summary`);
+      const openTradeScore = oandaAccountMetric(summary, "openTradeCount") * 1_000_000_000;
+      const openPositionScore = oandaAccountMetric(summary, "openPositionCount") * 100_000_000;
+      const pendingOrderScore = oandaAccountMetric(summary, "pendingOrderCount") * 10_000_000;
+      const navScore = Math.max(oandaAccountMetric(summary, "NAV"), oandaAccountMetric(summary, "balance"));
+      const score = openTradeScore + openPositionScore + pendingOrderScore + navScore;
+      if (score > selectedScore) {
+        selectedScore = score;
+        selectedAccountId = accountId;
+      }
+    } catch {
+      continue;
+    }
+  }
+  tradingAccountCache = { key, accountId: selectedAccountId, baseUrl, cachedAt: Date.now() };
+  return { accountId: selectedAccountId, baseUrl, accountIdMasked: maskTradingAccountId(selectedAccountId) };
+}
+
+function oandaMidPriceFromCandles(candle: unknown): TradingCandle | null {
+  if (!candle || typeof candle !== "object") return null;
+  const record = candle as Record<string, unknown>;
+  const mid = record.mid && typeof record.mid === "object" ? record.mid as Record<string, unknown> : null;
+  if (!mid || typeof record.time !== "string") return null;
+  const open = Number(mid.o);
+  const high = Number(mid.h);
+  const low = Number(mid.l);
+  const close = Number(mid.c);
+  if (![open, high, low, close].every(Number.isFinite)) return null;
+  return { time: record.time, open, high, low, close, volume: Number(record.volume ?? 0), complete: record.complete === true };
+}
+
+async function getTradingCandlesSnapshot(request: TradingCandlesRequest): Promise<TradingCandlesResult> {
+  const instrument = tradingInstrument(request.instrument);
+  const timeframe = request.timeframe && TRADING_GRANULARITY[request.timeframe] ? request.timeframe : "H1";
+  const fetchedAt = new Date().toISOString();
+  try {
+    const account = await oandaAccountContext();
+    const params = new URLSearchParams({ price: "M", granularity: TRADING_GRANULARITY[timeframe], count: String(Math.min(Math.max(Math.floor(Number(request.count ?? 500)), 1), TRADING_CANDLE_LIMIT)) });
+    if (request.from) {
+      params.delete("count");
+      params.set("from", request.from);
+      params.set("includeFirst", "false");
+    }
+    const payload = await oandaFetchJson(`/v3/instruments/${encodeURIComponent(instrument)}/candles?${params.toString()}`);
+    const candles = (Array.isArray(payload.candles) ? payload.candles : []).map(oandaMidPriceFromCandles).filter((value): value is TradingCandle => Boolean(value));
+    const result: TradingCandlesResult = { accepted: true, schema: "forge.trading.oanda.candles.v1", source: "oanda_rest_v20", instrument, timeframe, baseUrl: account.baseUrl, accountIdMasked: account.accountIdMasked, candles, fetchedAt, nextFrom: candles.at(-1)?.time, proofHash: "" };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  } catch (error) {
+    const result: TradingCandlesResult = { accepted: false, schema: "forge.trading.oanda.candles.v1", source: "oanda_rest_v20", instrument, timeframe, baseUrl: tradingOandaBaseUrl(), accountIdMasked: "unavailable", candles: [], fetchedAt, proofHash: "", error: tradingIpcError(error instanceof Error ? error.message : "OANDA candles failed.") };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  }
+}
+
+function compactOandaUnitsAvailable(value: unknown): TradingTickResult["unitsAvailable"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const readSide = (key: string) => {
+    const side = record[key];
+    if (!side || typeof side !== "object") return undefined;
+    const sideRecord = side as Record<string, unknown>;
+    const long = oandaStringField(sideRecord, "long");
+    const short = oandaStringField(sideRecord, "short");
+    return long || short ? { long, short } : undefined;
+  };
+  const unitsAvailable = {
+    default: readSide("default"),
+    openOnly: readSide("openOnly"),
+    reduceFirst: readSide("reduceFirst"),
+    reduceOnly: readSide("reduceOnly")
+  };
+  return Object.values(unitsAvailable).some(Boolean) ? unitsAvailable : undefined;
+}
+async function getTradingTickSnapshot(request?: TradingTickRequest): Promise<TradingTickResult> {
+  const instrument = tradingInstrument(request?.instrument);
+  const fetchedAt = new Date().toISOString();
+  try {
+    const account = await oandaAccountContext();
+    const payload = await oandaFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/pricing?instruments=${encodeURIComponent(instrument)}&includeUnitsAvailable=true`);
+    const price = Array.isArray(payload.prices) ? payload.prices[0] as Record<string, unknown> | undefined : undefined;
+    const bid = Array.isArray(price?.bids) ? Number((price?.bids[0] as Record<string, unknown> | undefined)?.price) : NaN;
+    const ask = Array.isArray(price?.asks) ? Number((price?.asks[0] as Record<string, unknown> | undefined)?.price) : NaN;
+    const mid = Number.isFinite(bid) && Number.isFinite(ask) ? (bid + ask) / 2 : null;
+    const unitsAvailable = compactOandaUnitsAvailable(price?.unitsAvailable);
+    const result: TradingTickResult = { accepted: true, schema: "forge.trading.oanda.tick.v1", source: "oanda_rest_v20", instrument, baseUrl: account.baseUrl, accountIdMasked: account.accountIdMasked, bid: Number.isFinite(bid) ? bid : null, ask: Number.isFinite(ask) ? ask : null, mid, tradeable: price?.tradeable !== false, unitsAvailable, time: typeof price?.time === "string" ? price.time : fetchedAt, fetchedAt, proofHash: "" };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  } catch (error) {
+    const result: TradingTickResult = { accepted: false, schema: "forge.trading.oanda.tick.v1", source: "oanda_rest_v20", instrument, baseUrl: tradingOandaBaseUrl(), accountIdMasked: "unavailable", bid: null, ask: null, mid: null, tradeable: false, time: fetchedAt, fetchedAt, proofHash: "", error: tradingIpcError(error instanceof Error ? error.message : "OANDA tick failed.") };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  }
+}
+
+function oandaArray(payload: OandaJson | undefined, key: string): unknown[] {
+  return payload && Array.isArray(payload[key]) ? payload[key] as unknown[] : [];
+}
+
+function oandaSummaryAccount(payload: OandaJson | undefined): Record<string, unknown> | undefined {
+  return payload?.account && typeof payload.account === "object" ? payload.account as Record<string, unknown> : undefined;
+}
+
+function oandaSummaryValue(payloads: Array<OandaJson | undefined>, key: string): string | undefined {
+  const keys = key === "NAV" ? ["NAV", "nav"] : [key];
+  for (const payload of payloads) {
+    const account = oandaSummaryAccount(payload);
+    if (!account) continue;
+    for (const candidateKey of keys) {
+      const value = account[candidateKey];
+      if (typeof value === "string" && value.trim()) return value;
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+  }
+  return undefined;
+}
+
+type CompactOandaOrder = ReturnType<typeof compactOandaOrder>;
+type CompactOandaTrade = ReturnType<typeof compactOandaTrade>;
+
+function oandaStringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function oandaNestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+  const value = record[key];
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function compactOandaOrder(order: unknown) {
+  const record = order && typeof order === "object" ? order as Record<string, unknown> : {};
+  return { id: String(record.id ?? ""), type: oandaStringField(record, "type"), instrument: oandaStringField(record, "instrument"), units: oandaStringField(record, "units"), price: oandaStringField(record, "price"), state: oandaStringField(record, "state"), createTime: oandaStringField(record, "createTime"), tradeId: oandaStringField(record, "tradeID"), clientTradeId: oandaStringField(record, "clientTradeID") };
+}
+
+function compactOandaTrade(trade: unknown) {
+  const record = trade && typeof trade === "object" ? trade as Record<string, unknown> : {};
+  const stopLoss = oandaNestedRecord(record, "stopLossOrder") ?? oandaNestedRecord(record, "guaranteedStopLossOrder");
+  const takeProfit = oandaNestedRecord(record, "takeProfitOrder");
+  return { id: String(record.id ?? ""), instrument: oandaStringField(record, "instrument"), currentUnits: oandaStringField(record, "currentUnits"), price: oandaStringField(record, "price"), unrealizedPL: oandaStringField(record, "unrealizedPL"), state: oandaStringField(record, "state"), openTime: oandaStringField(record, "openTime"), stopLossPrice: oandaStringField(stopLoss, "price"), takeProfitPrice: oandaStringField(takeProfit, "price") };
+}
+
+function mergeOandaTradeDependentOrderPrices(trades: CompactOandaTrade[], orders: CompactOandaOrder[]): CompactOandaTrade[] {
+  if (trades.length === 0 || orders.length === 0) return trades;
+  const byTradeId = new Map<string, { stopLossPrice?: string; takeProfitPrice?: string }>();
+  for (const order of orders) {
+    if (!order.tradeId || !order.price || order.state === "CANCELLED" || order.state === "FILLED") continue;
+    const type = order.type ?? "";
+    const update = byTradeId.get(order.tradeId) ?? {};
+    if (type.includes("STOP_LOSS")) update.stopLossPrice = order.price;
+    if (type.includes("TAKE_PROFIT")) update.takeProfitPrice = order.price;
+    byTradeId.set(order.tradeId, update);
+  }
+  return trades.map((trade) => {
+    const update = byTradeId.get(trade.id);
+    if (!update) return trade;
+    return {
+      ...trade,
+      stopLossPrice: update.stopLossPrice ?? trade.stopLossPrice,
+      takeProfitPrice: update.takeProfitPrice ?? trade.takeProfitPrice
+    };
+  });
+}
+
+function compactOandaPosition(position: unknown) {
+  const record = position && typeof position === "object" ? position as Record<string, unknown> : {};
+  const long = record.long && typeof record.long === "object" ? record.long as Record<string, unknown> : {};
+  const short = record.short && typeof record.short === "object" ? record.short as Record<string, unknown> : {};
+  return { instrument: String(record.instrument ?? ""), longUnits: typeof long.units === "string" ? long.units : undefined, shortUnits: typeof short.units === "string" ? short.units : undefined, unrealizedPL: typeof record.unrealizedPL === "string" ? record.unrealizedPL : undefined };
+}
+
+function compactOandaTransaction(transaction: unknown) {
+  const record = transaction && typeof transaction === "object" ? transaction as Record<string, unknown> : {};
+  return { id: String(record.id ?? ""), type: typeof record.type === "string" ? record.type : undefined, instrument: typeof record.instrument === "string" ? record.instrument : undefined, units: typeof record.units === "string" ? record.units : undefined, price: typeof record.price === "string" ? record.price : undefined, pl: typeof record.pl === "string" ? record.pl : undefined, financing: typeof record.financing === "string" ? record.financing : undefined, accountBalance: typeof record.accountBalance === "string" ? record.accountBalance : undefined, marginUsed: typeof record.marginUsed === "string" ? record.marginUsed : undefined, reason: typeof record.reason === "string" ? record.reason : undefined, orderId: typeof record.orderID === "string" ? record.orderID : undefined, tradeId: typeof record.tradeID === "string" ? record.tradeID : undefined, time: typeof record.time === "string" ? record.time : undefined };
+}
+
+async function getTradingAccountState(request?: TradingTickRequest): Promise<TradingAccountStateResult> {
+  const instrument = tradingInstrument(request?.instrument);
+  const fetchedAt = new Date().toISOString();
+  try {
+    const account = await oandaAccountContext();
+    const [summaryResult, ordersResult, tradesResult, positionsResult] = await Promise.all([
+      oandaOptionalFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/summary`),
+      oandaOptionalFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/pendingOrders`),
+      oandaOptionalFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/openTrades`),
+      oandaOptionalFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/openPositions`)
+    ]);
+    const payloads = [summaryResult.value].filter(Boolean) as OandaJson[];
+    const pendingOrders = oandaArray(ordersResult.value, "orders").map(compactOandaOrder).filter((order) => order.id);
+    let openTrades = oandaArray(tradesResult.value, "trades").map(compactOandaTrade).filter((trade) => trade.id);
+    openTrades = mergeOandaTradeDependentOrderPrices(openTrades, pendingOrders);
+    const openPositions = oandaArray(positionsResult.value, "positions").map(compactOandaPosition).filter((position) => position.instrument);
+    let transactions: ReturnType<typeof compactOandaTransaction>[] = [];
+    let transactionHistoryError: string | undefined;
+    if (request?.includeHistory === true) {
+      const lastTransactionId = Number(oandaSummaryValue(payloads, "lastTransactionID") ?? 0);
+      if (Number.isFinite(lastTransactionId) && lastTransactionId > 0) {
+        const from = Math.max(1, lastTransactionId - 500);
+        const txResult = await oandaOptionalFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/transactions/idrange?from=${from}&to=${lastTransactionId}`);
+        transactions = oandaArray(txResult.value, "transactions").map(compactOandaTransaction).filter((transaction) => transaction.id);
+        transactionHistoryError = txResult.error?.message;
+      }
+    }
+    const closedOrders = transactions.filter((transaction) => ["ORDER_FILL", "TRADE_CLOSE", "MARKET_ORDER"].some((type) => transaction.type?.includes(type)) && (transaction.pl || transaction.financing));
+    const financingTransactions = transactions.filter((transaction) => transaction.type?.includes("FINANCING"));
+    const marginCallTransactions = transactions.filter((transaction) => transaction.type?.includes("MARGIN_CALL"));
+    const orderEvents = transactions.filter((transaction) => transaction.type?.includes("ORDER") && (transaction.type.includes("CANCEL") || transaction.type.includes("MODIFY") || transaction.type.includes("REJECT") || transaction.type.includes("STOP_LOSS") || transaction.type.includes("TAKE_PROFIT")));
+    const firstError = summaryResult.error;
+    const result: TradingAccountStateResult = {
+      accepted: Boolean(summaryResult.value),
+      schema: "forge.trading.oanda.account_state.v1",
+      source: "oanda_rest_v20",
+      instrument,
+      baseUrl: account.baseUrl,
+      accountIdMasked: account.accountIdMasked,
+      fetchedAt,
+      currency: oandaSummaryValue(payloads, "currency"),
+      balance: oandaSummaryValue(payloads, "balance"),
+      nav: oandaSummaryValue(payloads, "NAV"),
+      unrealizedPL: oandaSummaryValue(payloads, "unrealizedPL"),
+      marginAvailable: oandaSummaryValue(payloads, "marginAvailable"),
+      marginUsed: oandaSummaryValue(payloads, "marginUsed"),
+      pendingOrderCount: Number(oandaSummaryValue(payloads, "pendingOrderCount") ?? pendingOrders.length),
+      openTradeCount: Number(oandaSummaryValue(payloads, "openTradeCount") ?? openTrades.length),
+      openPositionCount: Number(oandaSummaryValue(payloads, "openPositionCount") ?? openPositions.length),
+      pendingOrders,
+      openTrades,
+      openPositions,
+      transactionHistoryCount: transactions.length,
+      transactionHistoryError,
+      closedOrderCount: closedOrders.length,
+      financingTransactionCount: financingTransactions.length,
+      marginCallTransactionCount: marginCallTransactions.length,
+      orderEventCount: orderEvents.length,
+      closedOrders,
+      financingTransactions,
+      marginCallTransactions,
+      orderEvents,
+      proofHash: "",
+      error: firstError
+    };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  } catch (error) {
+    const result: TradingAccountStateResult = { accepted: false, schema: "forge.trading.oanda.account_state.v1", source: "oanda_rest_v20", instrument, baseUrl: tradingOandaBaseUrl(), accountIdMasked: "unavailable", fetchedAt, pendingOrderCount: 0, openTradeCount: 0, openPositionCount: 0, pendingOrders: [], openTrades: [], openPositions: [], transactionHistoryCount: 0, closedOrderCount: 0, financingTransactionCount: 0, marginCallTransactionCount: 0, orderEventCount: 0, closedOrders: [], financingTransactions: [], marginCallTransactions: [], orderEvents: [], proofHash: "", error: tradingIpcError(error instanceof Error ? error.message : "OANDA account state failed.") };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  }
+}
+
+function normalizeTradingOrderWindowSnapshot(value: unknown): TradingOrderWindowSnapshot {
+  const record = value && typeof value === "object" ? value as Partial<TradingOrderWindowSnapshot> : {};
+  const livePrice = record.livePrice && typeof record.livePrice === "object" ? record.livePrice : undefined;
+  const account = record.account && typeof record.account === "object" ? record.account : undefined;
+  const snapshot: TradingOrderWindowSnapshot = {
+    schema: "forge.trading.order_window_snapshot.v1",
+    source: "renderer_order_window_oanda",
+    instrument: tradingInstrument(record.instrument),
+    side: record.side === "sell" ? "sell" : "buy",
+    type: record.type === "LIMIT" ? "LIMIT" : "MARKET",
+    units: typeof record.units === "string" ? record.units.trim() : "",
+    price: typeof record.price === "string" && record.price.trim() ? record.price.trim() : undefined,
+    stopLossPrice: typeof record.stopLossPrice === "string" && record.stopLossPrice.trim() ? record.stopLossPrice.trim() : undefined,
+    takeProfitPrice: typeof record.takeProfitPrice === "string" && record.takeProfitPrice.trim() ? record.takeProfitPrice.trim() : undefined,
+    trailingStopDistance: typeof record.trailingStopDistance === "string" && record.trailingStopDistance.trim() ? record.trailingStopDistance.trim() : undefined,
+    trailingTakeProfitDistance: typeof record.trailingTakeProfitDistance === "string" && record.trailingTakeProfitDistance.trim() ? record.trailingTakeProfitDistance.trim() : undefined,
+    confirmLiveOrder: record.confirmLiveOrder === true,
+    livePrice: livePrice ? {
+      bid: typeof livePrice.bid === "number" && Number.isFinite(livePrice.bid) ? livePrice.bid : null,
+      ask: typeof livePrice.ask === "number" && Number.isFinite(livePrice.ask) ? livePrice.ask : null,
+      mid: typeof livePrice.mid === "number" && Number.isFinite(livePrice.mid) ? livePrice.mid : null,
+      tradeable: livePrice.tradeable !== false,
+      time: typeof livePrice.time === "string" ? livePrice.time : new Date().toISOString(),
+      fetchedAt: typeof livePrice.fetchedAt === "string" ? livePrice.fetchedAt : new Date().toISOString(),
+      unitsAvailable: livePrice.unitsAvailable
+    } : undefined,
+    account: account ? {
+      accountIdMasked: typeof account.accountIdMasked === "string" ? account.accountIdMasked : "unavailable",
+      currency: typeof account.currency === "string" ? account.currency : undefined,
+      balance: typeof account.balance === "string" ? account.balance : undefined,
+      nav: typeof account.nav === "string" ? account.nav : undefined,
+      unrealizedPL: typeof account.unrealizedPL === "string" ? account.unrealizedPL : undefined,
+      marginAvailable: typeof account.marginAvailable === "string" ? account.marginAvailable : undefined,
+      marginUsed: typeof account.marginUsed === "string" ? account.marginUsed : undefined,
+      pendingOrderCount: Number.isFinite(Number(account.pendingOrderCount)) ? Number(account.pendingOrderCount) : 0,
+      openTradeCount: Number.isFinite(Number(account.openTradeCount)) ? Number(account.openTradeCount) : 0,
+      openPositionCount: Number.isFinite(Number(account.openPositionCount)) ? Number(account.openPositionCount) : 0
+    } : undefined,
+    windowUpdatedAt: typeof record.windowUpdatedAt === "string" ? record.windowUpdatedAt : new Date().toISOString(),
+    proofHash: ""
+  };
+  snapshot.proofHash = hashJson({ ...snapshot, proofHash: "" });
+  return snapshot;
+}
+
+function updateTradingOrderWindowSnapshot(value: unknown): TradingOrderWindowSnapshotResult {
+  try {
+    latestTradingOrderWindowSnapshot = normalizeTradingOrderWindowSnapshot(value);
+    return {
+      accepted: true,
+      schema: "forge.trading.order_window_snapshot_result.v1",
+      proofHash: latestTradingOrderWindowSnapshot.proofHash
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Trading order window snapshot rejected.";
+    return {
+      accepted: false,
+      schema: "forge.trading.order_window_snapshot_result.v1",
+      proofHash: hashJson({ accepted: false, message }),
+      error: tradingIpcError(message)
+    };
+  }
+}
+
+function tradingOrderDraftEventFromMarketOrder(request: MarketOrderCodeActRequest): TradingOrderDraftEvent {
+  const event: TradingOrderDraftEvent = {
+    schema: "forge.trading.order_draft_event.v1",
+    source: "market_order_codeact",
+    instrument: request.instrument,
+    side: request.side,
+    type: "MARKET",
+    units: request.units,
+    unitsAvailable: request.unitsAvailable || undefined,
+    maxUnitsAfterSafetyBuffer: request.maxUnitsAfterSafetyBuffer || undefined,
+    unitsSafetyBufferPercent: "1",
+    stopLossPrice: request.stopLossPrice || undefined,
+    takeProfitPrice: request.takeProfitPrice || undefined,
+    trailingStopDistance: request.trailingStopDistance || undefined,
+    timeInForce: request.timeInForce,
+    positionFill: request.positionFill,
+    orderWindowSnapshotHash: request.orderWindowSnapshotHash,
+    livePriceTime: request.livePriceTime,
+    accountIdMasked: request.accountIdMasked,
+    executionMode: request.executionMode,
+    userConfirmation: request.userConfirmation,
+    receivedAt: new Date().toISOString(),
+    proofHash: ""
+  };
+  return { ...event, proofHash: hashJson({ ...event, proofHash: "" }) };
+}
+
+function broadcastTradingOrderDraft(request: MarketOrderCodeActRequest): TradingOrderDraftEvent {
+  const event = tradingOrderDraftEventFromMarketOrder(request);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("forge:trading-order-draft", event);
+    }
+  }
+  return event;
+}
+
+function marketOrderVisibilityProof(status: MarketOrderVisibilityResult["status"], request: MarketOrderCodeActRequest, openTradeId?: string): MarketOrderVisibilityResult {
+  const checkedAt = new Date().toISOString();
+  const result: MarketOrderVisibilityResult = { status, openTradeId, checkedAt, proofHash: "" };
+  return { ...result, proofHash: hashJson({ ...result, requestProofHash: request.proofHash, proofHash: "" }) };
+}
+
+async function waitForMarketOrderVisibility(request: MarketOrderCodeActRequest, brokerResult: TradingOrderResult | undefined): Promise<MarketOrderVisibilityResult> {
+  if (!brokerResult) return marketOrderVisibilityProof("staged", request);
+  if (!brokerResult.accepted) return marketOrderVisibilityProof("rejected", request);
+  const expectedTradeId = brokerResult.orderFillTransactionID;
+  const expectedUnits = request.side === "sell" ? `-${Math.abs(Number(request.units))}` : String(Math.abs(Number(request.units)));
+  for (const retryDelay of [250, 500, 900, 1400, 2200]) {
+    await delay(retryDelay);
+    const accountState = await getTradingAccountState({ instrument: request.instrument, includeHistory: false });
+    const visibleTrade = accountState.openTrades.find((trade) => {
+      if (expectedTradeId && trade.id === expectedTradeId) return true;
+      return trade.instrument === request.instrument && (trade.currentUnits === expectedUnits || Math.abs(Number(trade.currentUnits)) === Math.abs(Number(request.units)));
+    });
+    if (visibleTrade?.id) {
+      return marketOrderVisibilityProof("visible_open_trade", request, visibleTrade.id);
+    }
+  }
+  return marketOrderVisibilityProof("not_visible_yet", request);
+}
+async function executeMarketOrderCodeActRequest(request: MarketOrderCodeActRequest) {
+  broadcastTradingOrderDraft(request);
+  const shouldExecute = marketOrderRequiresLiveExecution(request);
+  const brokerResult = shouldExecute ? await submitTradingOrder({
+    instrument: request.instrument,
+    side: request.side,
+    type: "MARKET",
+    units: request.units,
+    stopLossPrice: request.stopLossPrice || undefined,
+    takeProfitPrice: request.takeProfitPrice || undefined,
+    trailingStopDistance: request.trailingStopDistance || undefined,
+    timeInForce: request.timeInForce,
+    clientExtensionsTag: request.clientExtensionsTag || "forge-trading",
+    confirmLiveOrder: true
+  }) : undefined;
+  const orderVisibility = await waitForMarketOrderVisibility(request, brokerResult);
+  return marketOrderCodeActExecutionResult({
+    request,
+    orderWindowSnapshot: latestTradingOrderWindowSnapshot ?? undefined,
+    brokerResult,
+    orderVisibility
+  });
+}
+async function submitTradingOrder(request: TradingOrderRequest): Promise<TradingOrderResult> {
+  const instrument = tradingInstrument(request.instrument);
+  const side: TradingOrderSide = request.side === "sell" ? "sell" : "buy";
+  const fetchedAt = new Date().toISOString();
+  try {
+    if (!request.confirmLiveOrder) throw new Error("Live OANDA order must be confirmed.");
+    const account = await oandaAccountContext();
+    const unitCount = Math.abs(Number(request.units));
+    if (!Number.isFinite(unitCount) || unitCount <= 0) throw new Error("Order units must be positive.");
+    const signedUnits = side === "sell" ? `-${unitCount}` : String(unitCount);
+    const order: Record<string, unknown> = { type: request.type === "LIMIT" ? "LIMIT" : "MARKET", instrument, units: signedUnits, timeInForce: request.type === "LIMIT" ? (request.timeInForce ?? "GTC") : request.timeInForce === "IOC" ? "IOC" : "FOK", positionFill: "DEFAULT", clientExtensions: { tag: request.clientExtensionsTag ?? "forge-trading" } };
+    if (request.type === "LIMIT") order.price = request.price;
+    if (request.stopLossPrice) order.stopLossOnFill = { price: request.stopLossPrice };
+    if (request.takeProfitPrice) order.takeProfitOnFill = { price: request.takeProfitPrice };
+    if (request.trailingStopDistance) order.trailingStopLossOnFill = { distance: request.trailingStopDistance };
+    const payload = await oandaFetchJson(`/v3/accounts/${encodeURIComponent(account.accountId)}/orders`, { method: "POST", body: { order } });
+    const relatedTransactionIDs = Array.isArray(payload.relatedTransactionIDs) ? payload.relatedTransactionIDs.map(String) : [];
+    const orderCreateTransaction = payload.orderCreateTransaction as Record<string, unknown> | undefined;
+    const orderFillTransaction = payload.orderFillTransaction as Record<string, unknown> | undefined;
+    const orderCancelTransaction = payload.orderCancelTransaction as Record<string, unknown> | undefined;
+    const orderRejectTransaction = payload.orderRejectTransaction as Record<string, unknown> | undefined;
+    const orderCreateTransactionID = typeof orderCreateTransaction?.id === "string" ? String(orderCreateTransaction.id) : undefined;
+    const orderFillTransactionID = typeof orderFillTransaction?.id === "string" ? String(orderFillTransaction.id) : undefined;
+    const orderCancelTransactionID = typeof orderCancelTransaction?.id === "string" ? String(orderCancelTransaction.id) : undefined;
+    const orderRejectTransactionID = typeof orderRejectTransaction?.id === "string" ? String(orderRejectTransaction.id) : undefined;
+    const rejectReason = String(orderRejectTransaction?.reason ?? orderCancelTransaction?.reason ?? payload.errorCode ?? "").trim() || undefined;
+    const accepted = request.type === "MARKET" ? Boolean(orderFillTransactionID) && !orderCancelTransactionID && !orderRejectTransactionID : !orderRejectTransactionID;
+    const result: TradingOrderResult = { accepted, schema: "forge.trading.oanda.order.v1", source: "oanda_rest_v20", instrument, side, type: request.type === "LIMIT" ? "LIMIT" : "MARKET", units: signedUnits, price: request.price, stopLossPrice: request.stopLossPrice, takeProfitPrice: request.takeProfitPrice, trailingStopDistance: request.trailingStopDistance, trailingTakeProfitDistance: request.trailingTakeProfitDistance, baseUrl: account.baseUrl, accountIdMasked: account.accountIdMasked, fetchedAt, relatedTransactionIDs, lastTransactionID: typeof payload.lastTransactionID === "string" ? payload.lastTransactionID : undefined, orderCreateTransactionID, orderFillTransactionID, orderCancelTransactionID, orderRejectTransactionID, rejectReason, proofHash: "", error: accepted ? undefined : tradingIpcError(rejectReason ? `OANDA order not filled: ${rejectReason}` : "OANDA order was not filled.", { orderCancelTransactionID, orderRejectTransactionID }) };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  } catch (error) {
+    const payload = error instanceof OandaApiError ? error.payload : undefined;
+    const relatedTransactionIDs = Array.isArray(payload?.relatedTransactionIDs) ? payload.relatedTransactionIDs.map(String) : [];
+    const orderRejectTransaction = payload?.orderRejectTransaction as Record<string, unknown> | undefined;
+    const orderRejectTransactionID = typeof orderRejectTransaction?.id === "string" ? String(orderRejectTransaction.id) : undefined;
+    const rejectReason = String(orderRejectTransaction?.reason ?? payload?.errorCode ?? "").trim() || undefined;
+    const result: TradingOrderResult = { accepted: false, schema: "forge.trading.oanda.order.v1", source: "oanda_rest_v20", instrument, side, type: request.type === "LIMIT" ? "LIMIT" : "MARKET", units: request.units, price: request.price, stopLossPrice: request.stopLossPrice, takeProfitPrice: request.takeProfitPrice, trailingStopDistance: request.trailingStopDistance, trailingTakeProfitDistance: request.trailingTakeProfitDistance, baseUrl: tradingOandaBaseUrl(), accountIdMasked: "unavailable", fetchedAt, relatedTransactionIDs, lastTransactionID: typeof payload?.lastTransactionID === "string" ? payload.lastTransactionID : undefined, orderRejectTransactionID, rejectReason, proofHash: "", error: tradingIpcError(error instanceof Error ? error.message : "OANDA order failed.", { orderRejectTransactionID, rejectReason }) };
+    return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
+  }
+}
 function installIpc(): void {
-  ipcMain.handle("forge:get-hardware-telemetry-snapshot", async (event): Promise<HardwareTelemetrySnapshot> => {
+  ipcMain.handle("forge:get-trading-candles", async (event, request: TradingCandlesRequest): Promise<TradingCandlesResult> => {
+    if (!validateSender(event)) return getTradingCandlesSnapshot({ ...request, count: 0 });
+    return getTradingCandlesSnapshot(request);
+  });
+  ipcMain.handle("forge:get-trading-tick", async (event, request?: TradingTickRequest): Promise<TradingTickResult> => {
+    if (!validateSender(event)) return getTradingTickSnapshot(request);
+    return getTradingTickSnapshot(request);
+  });
+  ipcMain.handle("forge:submit-trading-order", async (event, request: TradingOrderRequest): Promise<TradingOrderResult> => {
+    if (!validateSender(event)) return submitTradingOrder({ ...request, confirmLiveOrder: false });
+    return submitTradingOrder(request);
+  });
+  ipcMain.handle("forge:update-trading-chart-window-snapshot", async (event, snapshot: unknown): Promise<TradingChartWindowSnapshotResult> => {
+    if (!validateSender(event)) {
+      return {
+        accepted: false,
+        schema: "forge.trading.chart_window_snapshot_result.v1",
+        proofHash: hashJson({ accepted: false, reason: "bad_sender" }),
+        error: tradingIpcError("Trading chart window snapshot rejected by sender validation.")
+      };
+    }
+    return updateTradingChartWindowSnapshot(snapshot);
+  });
+  ipcMain.handle("forge:complete-trading-chart-request", async (event, result: unknown): Promise<TradingChartResult> => {
+    if (!validateSender(event)) {
+      return chartRefusalResult({ snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "Trading chart result rejected by sender validation.", code: "bad_sender" });
+    }
+    return completeTradingChartRequest(result);
+  });
+  ipcMain.handle("forge:complete-trading-chart-edit-request", async (event, result: unknown): Promise<TradingChartEditResult> => {
+    if (!validateSender(event)) {
+      return editChartRefusalResult({ snapshot: latestTradingChartWindowSnapshot ?? undefined, message: "Trading chart edit result rejected by sender validation.", code: "bad_sender" });
+    }
+    return completeTradingChartEditRequest(result);
+  });
+  ipcMain.handle("forge:update-trading-order-window-snapshot", async (event, snapshot: unknown): Promise<TradingOrderWindowSnapshotResult> => {
+    if (!validateSender(event)) {
+      return {
+        accepted: false,
+        schema: "forge.trading.order_window_snapshot_result.v1",
+        proofHash: hashJson({ accepted: false, reason: "bad_sender" }),
+        error: tradingIpcError("Trading order window snapshot rejected by sender validation.")
+      };
+    }
+    return updateTradingOrderWindowSnapshot(snapshot);
+  });
+  ipcMain.handle("forge:get-trading-account-state", async (event, request?: TradingTickRequest): Promise<TradingAccountStateResult> => {
+    if (!validateSender(event)) return getTradingAccountState(request);
+    return getTradingAccountState(request);
+  });  ipcMain.handle("forge:get-hardware-telemetry-snapshot", async (event): Promise<HardwareTelemetrySnapshot> => {
     const snapshot = await hardwareTelemetrySnapshot();
     if (!validateSender(event)) {
       return {
@@ -19796,7 +21077,8 @@ async function createWindow(): Promise<void> {
     focusable: true,
     skipTaskbar: false,
     autoHideMenuBar: labWindow ? true : false,
-    title: labWindow ? "InGen Event Text Lab" : "InGen",
+    title: graphenAppName,
+    icon: graphenAppIconPath,
     show: false,
     transparent: !labWindow,
     backgroundColor: labWindow ? "#101112" : TRANSPARENT_WINDOW_BACKGROUND,
@@ -19812,7 +21094,7 @@ async function createWindow(): Promise<void> {
     }
   });
   primaryWindow = window;
-  window.setTitle(labWindow ? "InGen Event Text Lab" : "InGen");
+  window.setTitle(graphenAppName);
   installRendererCpuProfiler(window);
 
   const showWindow = () => {
@@ -19830,7 +21112,7 @@ async function createWindow(): Promise<void> {
     showWindow();
   });
   window.webContents.once("did-finish-load", () => {
-    window.setTitle(labWindow ? "InGen Event Text Lab" : "InGen");
+    window.setTitle(graphenAppName);
     showWindow();
     emitProviderRuntimeSnapshot();
   });
@@ -19848,15 +21130,83 @@ async function createWindow(): Promise<void> {
       event.preventDefault();
     }
   });
-  (window.webContents as Electron.WebContents & {
+  const shellWebContents = window.webContents as Electron.WebContents & {
+    on(event: "will-attach-webview", listener: (event: Electron.Event, webPreferences: Electron.WebPreferences, params?: { src?: unknown; partition?: unknown; useragent?: unknown; httpreferrer?: unknown }) => void): Electron.WebContents;
     on(event: "did-attach-webview", listener: (event: Electron.Event, webContents: Electron.WebContents, params?: { src?: unknown; partition?: unknown }) => void): Electron.WebContents;
-  }).on("did-attach-webview", (_event: Electron.Event, webContents: Electron.WebContents, params?: { src?: unknown; partition?: unknown }) => {
+  };
+  shellWebContents.on("will-attach-webview", (_event: Electron.Event, webPreferences: Electron.WebPreferences, params?: { src?: unknown; partition?: unknown; useragent?: unknown; httpreferrer?: unknown }) => {
+    const attachmentParams = params ?? {};
+    const src = typeof attachmentParams.src === "string" ? attachmentParams.src : "";
+    const partition = typeof attachmentParams.partition === "string" ? attachmentParams.partition : "";
+    if (isBloombergVideoWebviewAttachment(src, partition)) {
+      configureBloombergVideoWebviewSession();
+      attachmentParams.useragent = CHATGPT_USER_AGENT;
+      attachmentParams.httpreferrer = BLOOMBERG_VIDEO_REFERRER;
+      webPreferences.partition = BLOOMBERG_VIDEO_WEBVIEW_PARTITION;
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      return;
+    }
+    if (!isBloombergWebviewAttachment(src, partition)) {
+      return;
+    }
+    configureBloombergDomWebviewSession();
+    attachmentParams.useragent = CHATGPT_USER_AGENT;
+    webPreferences.partition = BLOOMBERG_WEBVIEW_PARTITION;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+  });
+  shellWebContents.on("did-attach-webview", (_event: Electron.Event, webContents: Electron.WebContents, params?: { src?: unknown; partition?: unknown }) => {
     const attachmentParams = params ?? {};
     const src = typeof attachmentParams.src === "string" ? attachmentParams.src : "";
     const partition = typeof attachmentParams.partition === "string" ? attachmentParams.partition : "";
     if (isMapsWebviewAttachment(src, partition)) {
       rememberMapsDomWebviewGuest(webContents, src);
       console.info("Google Earth DOM/RAM cartography guest attached.", { src, partition });
+      return;
+    }
+    if (isBloombergVideoWebviewAttachment(src, partition)) {
+      configureBloombergVideoWebviewSession();
+      webContents.setUserAgent(CHATGPT_USER_AGENT);
+      webContents.setWindowOpenHandler(({ url }) => {
+        if (isAllowedBloombergVideoWebviewUrl(url)) {
+          return { action: "allow" };
+        }
+        if (url.startsWith("https://")) {
+          void shell.openExternal(url);
+        }
+        return { action: "deny" };
+      });
+      webContents.on("will-navigate", (event, url) => {
+        if (!isAllowedBloombergVideoWebviewUrl(url)) {
+          event.preventDefault();
+        }
+      });
+      console.info("Bloomberg video webview guest attached.", { src, partition });
+      return;
+    }
+    if (isBloombergWebviewAttachment(src, partition)) {
+      configureBloombergDomWebviewSession();
+      webContents.setUserAgent(CHATGPT_USER_AGENT);
+      webContents.setWindowOpenHandler(({ url }) => {
+        if (isAllowedBloombergWebviewUrl(url)) {
+          return { action: "allow" };
+        }
+        if (url.startsWith("https://")) {
+          void shell.openExternal(url);
+        }
+        return { action: "deny" };
+      });
+      webContents.on("will-navigate", (event, url) => {
+        if (!isAllowedBloombergWebviewUrl(url)) {
+          event.preventDefault();
+        }
+      });
+      console.info("Bloomberg DOM webview guest attached.", { src, partition });
     }
   });
   window.on("closed", () => {
@@ -19947,7 +21297,6 @@ app.whenReady().then(async () => {
     })
   ]);
   await restoreProviderRuntimeFromDisk();
-  await restoreGmailConnectorFromDisk();
   await reconcileCanonicalMemoryStore();
   await restoreBrainIdentityContextFromDisk();
   await restoreWorkspaceDirFromDisk();

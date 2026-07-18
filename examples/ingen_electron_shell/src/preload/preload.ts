@@ -56,6 +56,66 @@ const forgeShell: ForgeShellApi = {
   getBangerGoogleTilesConfig() {
     return ipcRenderer.invoke("forge:get-banger-google-tiles-config");
   },
+  getTradingCandles(request) {
+    return ipcRenderer.invoke("forge:get-trading-candles", request);
+  },
+  getTradingTick(request) {
+    return ipcRenderer.invoke("forge:get-trading-tick", request);
+  },
+  submitTradingOrder(request) {
+    return ipcRenderer.invoke("forge:submit-trading-order", request);
+  },
+  updateTradingOrderWindowSnapshot(snapshot) {
+    return ipcRenderer.invoke("forge:update-trading-order-window-snapshot", snapshot);
+  },
+  onTradingOrderDraftEvent(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on("forge:trading-order-draft", handler);
+    return () => ipcRenderer.removeListener("forge:trading-order-draft", handler);
+  },
+  updateTradingChartWindowSnapshot(snapshot) {
+    return ipcRenderer.invoke("forge:update-trading-chart-window-snapshot", snapshot);
+  },
+  onTradingChartRequestEvent(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on("forge:trading-chart-request", handler);
+    return () => ipcRenderer.removeListener("forge:trading-chart-request", handler);
+  },
+  completeTradingChartRequest(result) {
+    return ipcRenderer.invoke("forge:complete-trading-chart-request", result);
+  },
+  onTradingChartEditRequestEvent(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on("forge:trading-chart-edit-request", handler);
+    return () => ipcRenderer.removeListener("forge:trading-chart-edit-request", handler);
+  },
+  completeTradingChartEditRequest(result) {
+    return ipcRenderer.invoke("forge:complete-trading-chart-edit-request", result);
+  },
+  getTradingAccountState(request) {
+    return ipcRenderer.invoke("forge:get-trading-account-state", request);
+  },
+  getBloombergEuropeNews(request) {
+    return ipcRenderer.invoke("forge:get-bloomberg-europe-news", request);
+  },
+  showNativeBloomberg(bounds: NativeWebExplorerBounds) {
+    return ipcRenderer.invoke("forge:bloomberg-show", bounds);
+  },
+  updateNativeBloombergBounds(bounds: NativeWebExplorerBounds) {
+    return ipcRenderer.invoke("forge:bloomberg-bounds", bounds);
+  },
+  navigateNativeBloomberg(url: string) {
+    return ipcRenderer.invoke("forge:bloomberg-navigate", url);
+  },
+  hideNativeBloomberg() {
+    return ipcRenderer.invoke("forge:bloomberg-hide");
+  },
   showNativeBanger(bounds: NativeWebExplorerBounds) {
     return ipcRenderer.invoke("forge:banger-show", bounds);
   },

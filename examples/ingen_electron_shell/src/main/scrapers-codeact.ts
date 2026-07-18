@@ -387,11 +387,15 @@ function firstUnknownString(record: Record<string, unknown>, keys: string[]): st
 }
 
 function normalizedVisualUrl(value: string): string {
-  if (!value) {
+  const clean = value.trim();
+  if (!clean) {
     return "";
   }
+  if (clean.startsWith("/") || clean.startsWith("data:image/") || clean.startsWith("data:video/")) {
+    return clean;
+  }
   try {
-    const url = new URL(value);
+    const url = new URL(clean);
     return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "ingen:" ? url.toString() : "";
   } catch {
     return "";
@@ -426,7 +430,8 @@ function scrapedMediaFilename(url: string): string {
     const name = new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? "";
     return decodeURIComponent(name).replace(/\.[a-z0-9]{2,5}$/iu, "").trim();
   } catch {
-    return "";
+    const name = url.split(/[?#]/u, 1)[0]?.split(/[\\/]/u).filter(Boolean).at(-1) ?? "";
+    return decodeURIComponent(name).replace(/\.[a-z0-9]{2,5}$/iu, "").trim();
   }
 }
 

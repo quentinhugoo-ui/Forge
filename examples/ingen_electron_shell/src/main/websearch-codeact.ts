@@ -30,6 +30,8 @@ export type WebSearchMediaIntent =
   | "image_video_audio_enrichment";
 export type WebSearchContentTypes = "text" | "text_image" | "image";
 export type WebSearchMediaKind = "image" | "video" | "audio" | "page";
+export type WebSearchCompactMedia = "none" | "images" | "video_audio";
+export type WebSearchCompactNext = "answer_only" | "scrape_urls";
 
 export interface WebSearchCodeActRequest {
   schema: "forge.websearch.request.v1";
@@ -76,16 +78,10 @@ export interface WebSearchTemplateResult {
   template: string;
   allowedValues: {
     goal: WebSearchCodeActRequest["goal"][];
-    providers: WebSearchProviderRoute[];
-    toolChoice: WebSearchCodeActRequest["toolChoice"][];
     freshness: WebSearchCodeActRequest["freshness"][];
-    searchContextSize: WebSearchCodeActRequest["searchContextSize"][];
-    mediaIntent: WebSearchMediaIntent[];
-    searchContentTypes: WebSearchContentTypes[];
-    mediaSafety: WebSearchCodeActRequest["mediaSafety"][];
+    media: WebSearchCompactMedia[];
+    next: WebSearchCompactNext[];
     locale: WebSearchCodeActRequest["locale"][];
-    extractIntent: WebSearchCodeActRequest["extractIntent"][];
-    output: WebSearchCodeActRequest["output"][];
   };
   proofHash: string;
 }
@@ -156,9 +152,12 @@ const WEBSEARCH_GOALS: WebSearchCodeActRequest["goal"][] = [
   "source_backed_answer_and_ranked_urls",
   "url_discovery_for_scrapers",
   "citation_verification",
-  "comparative_research",
   "latest_status_check",
   "media_enrichment"
+];
+const WEBSEARCH_COMPAT_GOALS: WebSearchCodeActRequest["goal"][] = [
+  ...WEBSEARCH_GOALS,
+  "comparative_research"
 ];
 const WEBSEARCH_PROVIDER_ROUTES: WebSearchProviderRoute[] = [
   "auto",
@@ -201,6 +200,8 @@ const WEBSEARCH_OUTPUTS: WebSearchCodeActRequest["output"][] = [
   "verification_report",
   "media_manifest"
 ];
+const WEBSEARCH_COMPACT_MEDIA: WebSearchCompactMedia[] = ["none", "images", "video_audio"];
+const WEBSEARCH_COMPACT_NEXT: WebSearchCompactNext[] = ["answer_only", "scrape_urls"];
 
 export function webSearchTemplateResult(reason: WebSearchTemplateResult["reason"] = "empty_command"): WebSearchTemplateResult {
   const templateProofHash = webSearchTemplateProofHash();
@@ -208,23 +209,12 @@ export function webSearchTemplateResult(reason: WebSearchTemplateResult["reason"
     `${WEBSEARCH_COMMAND}`,
     `template_proof_hash="sha256:${templateProofHash}"`,
     'query=""',
-    'goal="source_backed_answer_and_ranked_urls|url_discovery_for_scrapers|citation_verification|comparative_research|latest_status_check|media_enrichment"',
-    'providers="auto|openai|claude|openai_then_claude|claude_then_openai|both_parallel"',
-    'tool_choice="required|auto"',
+    'goal="source_backed_answer_and_ranked_urls|url_discovery_for_scrapers|citation_verification|latest_status_check|media_enrichment"',
     'freshness="auto|latest|past_day|past_week|past_month|past_year|any_time"',
-    "allowed_domains=[]",
-    "blocked_domains=[]",
-    "max_searches=5",
-    "top_k_urls=8",
-    'search_context_size="low|medium|high"',
-    'media_intent="none|image_enrichment|video_enrichment|audio_enrichment|image_video_audio_enrichment"',
-    'search_content_types="text|text_image|image"',
-    "image_max_results=6",
-    'media_safety="urls_metadata_only_until_user_approval"',
-    'user_location="none"',
+    "domains=[]",
+    'media="none|images|video_audio"',
+    'next="answer_only|scrape_urls"',
     'locale="fr|en|auto"',
-    'extract_intent="none|suggest_scrapers_urls|next_loop_scrapers"',
-    'output="compact_answer_url_citation_manifest|url_manifest_only|comparison_matrix|verification_report|media_manifest"'
   ].join("\n");
   const result: WebSearchTemplateResult = {
     schema: WEBSEARCH_TEMPLATE_RESULT_SCHEMA,
@@ -234,16 +224,10 @@ export function webSearchTemplateResult(reason: WebSearchTemplateResult["reason"
     template,
     allowedValues: {
       goal: WEBSEARCH_GOALS,
-      providers: WEBSEARCH_PROVIDER_ROUTES,
-      toolChoice: WEBSEARCH_TOOL_CHOICES,
       freshness: WEBSEARCH_FRESHNESS,
-      searchContextSize: WEBSEARCH_CONTEXT_SIZES,
-      mediaIntent: WEBSEARCH_MEDIA_INTENTS,
-      searchContentTypes: WEBSEARCH_CONTENT_TYPES,
-      mediaSafety: WEBSEARCH_MEDIA_SAFETY,
+      media: WEBSEARCH_COMPACT_MEDIA,
+      next: WEBSEARCH_COMPACT_NEXT,
       locale: WEBSEARCH_LOCALES,
-      extractIntent: WEBSEARCH_EXTRACT_INTENTS,
-      output: WEBSEARCH_OUTPUTS
     },
     proofHash: ""
   };
@@ -295,6 +279,8 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
   const fields = parseTemplateFields(body);
   const freeform = fields.size === 0 ? body : "";
   const query = clampText(fields.get("query") ?? fields.get("q") ?? fields.get("topic") ?? freeform, MAX_QUERY_CHARS);
+  const compactMedia = readCompactMedia(fields);
+  const compactNext = readCompactNext(fields);
   if (!query) {
     return undefined;
   }
@@ -303,7 +289,7 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
     command: WEBSEARCH_COMMAND,
     templateProofHash: normalizeProofHash(fields.get("template_proof_hash") ?? fields.get("templateProofHash")),
     query,
-    goal: readChoice(fields.get("goal"), WEBSEARCH_GOALS, "source_backed_answer_and_ranked_urls"),
+    goal: readChoice(fields.get("goal"), WEBSEARCH_COMPAT_GOALS, "source_backed_answer_and_ranked_urls"),
     providers: readChoice(fields.get("providers") ?? fields.get("provider"), WEBSEARCH_PROVIDER_ROUTES, "auto"),
     toolChoice: readChoice(fields.get("tool_choice"), WEBSEARCH_TOOL_CHOICES, "required"),
     freshness: readChoice(fields.get("freshness") ?? fields.get("recency"), WEBSEARCH_FRESHNESS, "auto"),
@@ -312,14 +298,14 @@ export function parseWebSearchCodeAct(input: string): WebSearchCodeActRequest | 
     maxSearches: clampNumber(fields.get("max_searches"), 1, 20, 5),
     topKUrls: clampNumber(fields.get("top_k_urls") ?? fields.get("top_k"), 1, 30, 8),
     searchContextSize: readChoice(fields.get("search_context_size"), WEBSEARCH_CONTEXT_SIZES, "medium"),
-    mediaIntent: readChoice(fields.get("media_intent"), WEBSEARCH_MEDIA_INTENTS, readMediaIntentFallback(fields)),
-    searchContentTypes: readChoice(fields.get("search_content_types"), WEBSEARCH_CONTENT_TYPES, readSearchContentTypesFallback(fields)),
+    mediaIntent: readChoice(fields.get("media_intent"), WEBSEARCH_MEDIA_INTENTS, compactMediaIntent(compactMedia) ?? readMediaIntentFallback(fields)),
+    searchContentTypes: readChoice(fields.get("search_content_types"), WEBSEARCH_CONTENT_TYPES, compactSearchContentTypes(compactMedia) ?? readSearchContentTypesFallback(fields)),
     imageMaxResults: clampNumber(fields.get("image_max_results") ?? fields.get("max_images"), 0, 30, 6),
     mediaSafety: readChoice(fields.get("media_safety"), WEBSEARCH_MEDIA_SAFETY, "urls_metadata_only_until_user_approval"),
     userLocation: clampText(fields.get("user_location") ?? "", 240),
     locale: readChoice(fields.get("locale") ?? fields.get("lang"), WEBSEARCH_LOCALES, "fr"),
-    extractIntent: readChoice(fields.get("extract_intent"), WEBSEARCH_EXTRACT_INTENTS, "none"),
-    output: readChoice(fields.get("output"), WEBSEARCH_OUTPUTS, "compact_answer_url_citation_manifest"),
+    extractIntent: readChoice(fields.get("extract_intent"), WEBSEARCH_EXTRACT_INTENTS, compactExtractIntent(compactNext)),
+    output: readChoice(fields.get("output"), WEBSEARCH_OUTPUTS, compactOutput(compactMedia)),
     source: "explicit_codeact",
     proofHash: ""
   };
@@ -431,35 +417,18 @@ function webSearchTemplateProofHash(): string {
       "template_proof_hash",
       "query",
       "goal",
-      "providers",
-      "tool_choice",
       "freshness",
-      "allowed_domains",
-      "blocked_domains",
-      "max_searches",
-      "top_k_urls",
-      "search_context_size",
-      "media_intent",
-      "search_content_types",
-      "image_max_results",
-      "media_safety",
-      "user_location",
+      "domains",
+      "media",
+      "next",
       "locale",
-      "extract_intent",
-      "output"
     ],
     allowedValues: {
       goal: WEBSEARCH_GOALS,
-      providers: WEBSEARCH_PROVIDER_ROUTES,
-      toolChoice: WEBSEARCH_TOOL_CHOICES,
       freshness: WEBSEARCH_FRESHNESS,
-      searchContextSize: WEBSEARCH_CONTEXT_SIZES,
-      mediaIntent: WEBSEARCH_MEDIA_INTENTS,
-      searchContentTypes: WEBSEARCH_CONTENT_TYPES,
-      mediaSafety: WEBSEARCH_MEDIA_SAFETY,
+      media: WEBSEARCH_COMPACT_MEDIA,
+      next: WEBSEARCH_COMPACT_NEXT,
       locale: WEBSEARCH_LOCALES,
-      extractIntent: WEBSEARCH_EXTRACT_INTENTS,
-      output: WEBSEARCH_OUTPUTS
     }
   });
 }
@@ -532,6 +501,39 @@ function readChoice<T extends string>(value: unknown, choices: readonly T[], fal
   }
   const normalized = value.trim().toLowerCase();
   return choices.find((choice) => choice === normalized) ?? fallback;
+}
+
+function readCompactMedia(fields: Map<string, string>): WebSearchCompactMedia {
+  return readChoice(fields.get("media"), WEBSEARCH_COMPACT_MEDIA, "none");
+}
+
+function readCompactNext(fields: Map<string, string>): WebSearchCompactNext {
+  return readChoice(fields.get("next"), WEBSEARCH_COMPACT_NEXT, "answer_only");
+}
+
+function compactMediaIntent(media: WebSearchCompactMedia): WebSearchMediaIntent | undefined {
+  if (media === "images") {
+    return "image_enrichment";
+  }
+  if (media === "video_audio") {
+    return "image_video_audio_enrichment";
+  }
+  return undefined;
+}
+
+function compactSearchContentTypes(media: WebSearchCompactMedia): WebSearchContentTypes | undefined {
+  if (media === "images" || media === "video_audio") {
+    return "text_image";
+  }
+  return undefined;
+}
+
+function compactExtractIntent(next: WebSearchCompactNext): WebSearchCodeActRequest["extractIntent"] {
+  return next === "scrape_urls" ? "next_loop_scrapers" : "none";
+}
+
+function compactOutput(media: WebSearchCompactMedia): WebSearchCodeActRequest["output"] {
+  return media === "none" ? "compact_answer_url_citation_manifest" : "media_manifest";
 }
 
 function readMediaIntentFallback(fields: Map<string, string>): WebSearchMediaIntent {

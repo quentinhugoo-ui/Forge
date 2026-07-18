@@ -3,7 +3,7 @@
   "date": "2026-06-10",
   "status": "cutover_complete",
   "inputs": {
-    "ipc_manifest_hash": "23f02326ce1dd5d938584f28b94e31c5e7251d989f9e51ca1cd04abd02d0a1de"
+    "ipc_manifest_hash": "d508213d3ecc63497ec28214b00b37d97c61a2d8d3f21c46a23c1ffad5cbf619"
   },
   "checks": [
     {
@@ -89,6 +89,7 @@
           "App.tsx",
           "assistant-geo-entities.ts",
           "assistant-learning-interrupts.ts",
+          "BanterActivityLoader.tsx",
           "brain-blob-cache.ts",
           "brain-blob.tsx",
           "brain-user-memory-store.ts",
@@ -113,7 +114,9 @@
           "sidebar-shadow-store.ts",
           "SidebarSlice.tsx",
           "styles.css",
+          "TradingCanvas.tsx",
           "vite-env.d.ts",
+          "web-source-logos.ts",
           "welcome-message-store.ts",
           "WidgetSystemTray.tsx"
         ]
@@ -138,5 +141,5 @@
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "40a51d191eb9f6944ee619f8dc6a74392449dd99b5acb23f55444d95767f0965"
+  "proof_hash": "be3aa888887a60d3f8726908691b02b8854bca3179dbbc159dca3b5b5abed33a"
 }

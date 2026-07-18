@@ -6,6 +6,8 @@ import {
   BRAIN_IMAGE_RESULT_SCHEMA,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_RESULT_SCHEMA,
+  BRAIN_GOOGLEPLACE_COMMAND,
+  BRAIN_GOOGLEPLACE_RESULT_SCHEMA,
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_GOOGLEWEB_RESULT_SCHEMA,
   BRAIN_MAPS_COMMAND,
@@ -17,11 +19,17 @@ import {
   BRAIN_PLAN_RESULT_SCHEMA,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_TRADING_COMMAND,
   BRAIN_LOCAL_ACTIONS_COMMAND,
   BRAIN_LOCAL_ACTIONS_RESULT_SCHEMA,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
+  BRAIN_TRADING_VISIBLE_CATALOG,
+  BRAIN_CHART_COMMAND,
+  BRAIN_CHART_RESULT_SCHEMA,
+  BRAIN_EDIT_CHART_COMMAND,
+  BRAIN_EDIT_CHART_RESULT_SCHEMA,
   BRAIN_WORKSPACE_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
   BRAIN_SEARCHARCHIVE_RESULT_SCHEMA,
@@ -100,6 +108,9 @@ export {
   BRAIN_GOOGLEWEB_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND_DESCRIPTION,
   BRAIN_GOOGLEWEB_RESULT_SCHEMA,
+  BRAIN_GOOGLEPLACE_COMMAND,
+  BRAIN_GOOGLEPLACE_COMMAND_DESCRIPTION,
+  BRAIN_GOOGLEPLACE_RESULT_SCHEMA,
   BRAIN_SCRAPERS_COMMAND,
   BRAIN_SCRAPERS_COMMAND_DESCRIPTION,
   BRAIN_SCRAPERS_RESULT_SCHEMA,
@@ -126,6 +137,8 @@ export {
   BRAIN_SCIENCE_COMMAND_DESCRIPTION,
   BRAIN_CODING_COMMAND,
   BRAIN_CODING_COMMAND_DESCRIPTION,
+  BRAIN_TRADING_COMMAND,
+  BRAIN_TRADING_COMMAND_DESCRIPTION,
   BRAIN_DOMAIN_BRAIN_RESULT_SCHEMA,
   BRAIN_MODIFY_NAMED_BRAIN_COMMAND,
   BRAIN_MODIFY_NAMED_BRAIN_COMMAND_DESCRIPTION,
@@ -138,6 +151,7 @@ export {
   BRAIN_CODING_LIVE_PREVIEW_COMMAND_DESCRIPTION,
   BRAIN_SCIENCE_VISIBLE_CATALOG,
   BRAIN_CODING_VISIBLE_CATALOG,
+  BRAIN_TRADING_VISIBLE_CATALOG,
   BRAIN_NEWMODULE_COMMAND,
   BRAIN_NEWMODULE_COMMAND_DESCRIPTION,
   BRAIN_NEWOBJECT_COMMAND,
@@ -146,6 +160,15 @@ export {
   BRAIN_RUST_PORT_ADAPTER_COMMAND_DESCRIPTION,
   BRAIN_RUST_STATE_STORE_COMMAND,
   BRAIN_RUST_STATE_STORE_COMMAND_DESCRIPTION,
+  BRAIN_CHART_COMMAND,
+  BRAIN_CHART_COMMAND_DESCRIPTION,
+  BRAIN_CHART_RESULT_SCHEMA,
+  BRAIN_EDIT_CHART_COMMAND,
+  BRAIN_EDIT_CHART_COMMAND_DESCRIPTION,
+  BRAIN_EDIT_CHART_RESULT_SCHEMA,
+  BRAIN_MARKET_ORDER_COMMAND,
+  BRAIN_MARKET_ORDER_COMMAND_DESCRIPTION,
+  BRAIN_MARKET_ORDER_RESULT_SCHEMA,
   BRAIN_SEARCHARCHIVE_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND_DESCRIPTION,
   BRAIN_SEARCHARCHIVE_RESULT_SCHEMA,
@@ -1919,6 +1942,371 @@ export interface BangerGoogleTilesConfigResult {
   error?: IpcError;
 }
 
+export type TradingTimeframe = "H1" | "H4" | "D1";
+
+export interface TradingCandle {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  complete: boolean;
+}
+
+export interface TradingCandlesRequest {
+  instrument?: string;
+  timeframe: TradingTimeframe;
+  from?: string;
+  count?: number;
+}
+
+export type TradingMarketDataSource = "oanda_rest_v20";
+
+export interface TradingCandlesResult {
+  accepted: boolean;
+  schema: "forge.trading.oanda.candles.v1";
+  source: TradingMarketDataSource;
+  instrument: string;
+  timeframe: TradingTimeframe;
+  baseUrl: string;
+  accountIdMasked: string;
+  candles: TradingCandle[];
+  fetchedAt: string;
+  nextFrom?: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
+export interface TradingTickRequest {
+  instrument?: string;
+  includeHistory?: boolean;
+}
+
+export interface TradingChartWindowSnapshot {
+  schema: "forge.trading.chart_window_snapshot.v1";
+  source: "renderer_trading_chart";
+  instrument: string;
+  displayName: string;
+  timeframe: TradingTimeframe;
+  availableTimeframes: TradingTimeframe[];
+  loadedCandleCount: number;
+  visibleCandleCount: number;
+  firstLoadedTime?: string;
+  lastLoadedTime?: string;
+  firstVisibleTime?: string;
+  lastVisibleTime?: string;
+  pricePrecision: number;
+  dataSource: TradingMarketDataSource;
+  chartUpdatedAt: string;
+  proofHash: string;
+}
+
+export interface TradingChartWindowSnapshotResult {
+  accepted: boolean;
+  schema: "forge.trading.chart_window_snapshot_result.v1";
+  proofHash: string;
+  error?: IpcError;
+}
+
+export interface TradingChartRequestEvent {
+  schema: "forge.trading.chart_request.v1";
+  requestId: string;
+  instrument: string;
+  timeframe: TradingTimeframe;
+  candleCount: number;
+  includeScreenshot: boolean;
+  includeOhlc: boolean;
+  requestedAt: string;
+  proofHash: string;
+}
+
+export interface TradingChartResult {
+  accepted: boolean;
+  schema: "forge.trading.chart.result.v1";
+  source: "renderer_trading_chart";
+  instrument: string;
+  displayName: string;
+  timeframe: TradingTimeframe;
+  candleCount: number;
+  candles: TradingCandle[];
+  screenshotPngDataUrl?: string;
+  screenshotWidth?: number;
+  screenshotHeight?: number;
+  screenshotHash?: string;
+  firstCandleTime?: string;
+  lastCandleTime?: string;
+  chartWindowSnapshot?: TradingChartWindowSnapshot;
+  capturedAt: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
+export type TradingChartEditKind = "select_candles" | "ray" | "horizontal_line" | "vertical_line" | "moving_average" | "vwap" | "donchian_channel" | "clear";
+
+export interface TradingChartEditAction {
+  kind: TradingChartEditKind;
+  id?: string;
+  label?: string;
+  tag?: string;
+  color?: string;
+  candleTimes?: string[];
+  time?: string;
+  timeEnd?: string;
+  price?: number;
+  priceEnd?: number;
+  period?: number;
+  source?: "llm" | "user";
+}
+
+export interface TradingChartEditElement extends TradingChartEditAction {
+  id: string;
+  label: string;
+  tag: string;
+  instrument: string;
+  timeframe: TradingTimeframe;
+  createdAt: string;
+  proofHash: string;
+}
+
+export interface TradingChartEditRequestEvent {
+  schema: "forge.trading.edit_chart.request.v1";
+  requestId: string;
+  instrument: string;
+  timeframe: TradingTimeframe;
+  actions: TradingChartEditAction[];
+  chartWindowSnapshotHash: string;
+  requestedAt: string;
+  proofHash: string;
+}
+
+export interface TradingChartEditResult {
+  accepted: boolean;
+  schema: "forge.trading.edit_chart.result.v1";
+  source: "renderer_trading_chart";
+  instrument: string;
+  timeframe: TradingTimeframe;
+  appliedCount: number;
+  refusedCount: number;
+  elements: TradingChartEditElement[];
+  conversationTags: Array<{ tag: string; elementId: string; label: string }>;
+  chartWindowSnapshot?: TradingChartWindowSnapshot;
+  capturedAt: string;
+  proofHash: string;
+  error?: IpcError;
+}
+export interface TradingUnitsAvailableSide {
+  long?: string;
+  short?: string;
+}
+
+export interface TradingUnitsAvailable {
+  default?: TradingUnitsAvailableSide;
+  openOnly?: TradingUnitsAvailableSide;
+  reduceFirst?: TradingUnitsAvailableSide;
+  reduceOnly?: TradingUnitsAvailableSide;
+}
+export interface TradingTickResult {
+  accepted: boolean;
+  schema: "forge.trading.oanda.tick.v1";
+  source: "oanda_rest_v20";
+  instrument: string;
+  baseUrl: string;
+  accountIdMasked: string;
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  tradeable: boolean;
+  unitsAvailable?: TradingUnitsAvailable;
+  time: string;
+  fetchedAt: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
+export type TradingOrderSide = "buy" | "sell";
+export type TradingOrderType = "MARKET" | "LIMIT";
+export type TradingOrderTimeInForce = "FOK" | "IOC" | "GTC";
+
+export interface TradingOrderRequest {
+  instrument?: string;
+  side: TradingOrderSide;
+  type: TradingOrderType;
+  units: string;
+  price?: string;
+  stopLossPrice?: string;
+  takeProfitPrice?: string;
+  trailingStopDistance?: string;
+  trailingTakeProfitDistance?: string;
+  timeInForce?: TradingOrderTimeInForce;
+  clientExtensionsTag?: string;
+  confirmLiveOrder: boolean;
+}
+
+export interface TradingOrderResult {
+  accepted: boolean;
+  schema: "forge.trading.oanda.order.v1";
+  source: "oanda_rest_v20";
+  instrument: string;
+  side: TradingOrderSide;
+  type: TradingOrderType;
+  units: string;
+  price?: string;
+  stopLossPrice?: string;
+  takeProfitPrice?: string;
+  trailingStopDistance?: string;
+  trailingTakeProfitDistance?: string;
+  baseUrl: string;
+  accountIdMasked: string;
+  fetchedAt: string;
+  relatedTransactionIDs: string[];
+  lastTransactionID?: string;
+  orderCreateTransactionID?: string;
+  orderFillTransactionID?: string;
+  orderCancelTransactionID?: string;
+  orderRejectTransactionID?: string;
+  rejectReason?: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
+export interface TradingOrderWindowSnapshot {
+  schema: "forge.trading.order_window_snapshot.v1";
+  source: "renderer_order_window_oanda";
+  instrument: string;
+  side: TradingOrderSide;
+  type: TradingOrderType;
+  units: string;
+  price?: string;
+  stopLossPrice?: string;
+  takeProfitPrice?: string;
+  trailingStopDistance?: string;
+  trailingTakeProfitDistance?: string;
+  confirmLiveOrder: boolean;
+  livePrice?: {
+    bid: number | null;
+    ask: number | null;
+    mid: number | null;
+    tradeable: boolean;
+    time: string;
+    fetchedAt: string;
+    unitsAvailable?: TradingUnitsAvailable;
+  };
+  account?: {
+    accountIdMasked: string;
+    currency?: string;
+    balance?: string;
+    nav?: string;
+    unrealizedPL?: string;
+    marginAvailable?: string;
+    marginUsed?: string;
+    pendingOrderCount: number;
+    openTradeCount: number;
+    openPositionCount: number;
+  };
+  windowUpdatedAt: string;
+  proofHash: string;
+}
+
+export interface TradingOrderWindowSnapshotResult {
+  accepted: boolean;
+  schema: "forge.trading.order_window_snapshot_result.v1";
+  proofHash: string;
+  error?: IpcError;
+}
+
+export interface TradingOrderDraftEvent {
+  schema: "forge.trading.order_draft_event.v1";
+  source: "market_order_codeact";
+  instrument: string;
+  side: TradingOrderSide;
+  type: "MARKET";
+  units: string;
+  unitsAvailable?: string;
+  maxUnitsAfterSafetyBuffer?: string;
+  unitsSafetyBufferPercent: "1";
+  stopLossPrice?: string;
+  takeProfitPrice?: string;
+  trailingStopDistance?: string;
+  timeInForce: TradingOrderTimeInForce;
+  positionFill: string;
+  orderWindowSnapshotHash: string;
+  livePriceTime: string;
+  accountIdMasked: string;
+  executionMode: "stage_only" | "live_oanda_order";
+  userConfirmation: "none" | "user_confirmed_live_order";
+  receivedAt: string;
+  proofHash: string;
+}
+export interface TradingAccountStateResult {
+  accepted: boolean;
+  schema: "forge.trading.oanda.account_state.v1";
+  source: "oanda_rest_v20";
+  instrument: string;
+  baseUrl: string;
+  accountIdMasked: string;
+  fetchedAt: string;
+  currency?: string;
+  balance?: string;
+  nav?: string;
+  unrealizedPL?: string;
+  marginAvailable?: string;
+  marginUsed?: string;
+  pendingOrderCount: number;
+  openTradeCount: number;
+  openPositionCount: number;
+  pendingOrders: Array<{ id: string; type?: string; instrument?: string; units?: string; price?: string; state?: string; createTime?: string; tradeId?: string; clientTradeId?: string }>;
+  openTrades: Array<{ id: string; instrument?: string; currentUnits?: string; price?: string; unrealizedPL?: string; state?: string; openTime?: string; stopLossPrice?: string; takeProfitPrice?: string }>;
+  openPositions: Array<{ instrument: string; longUnits?: string; shortUnits?: string; unrealizedPL?: string }>;
+  transactionHistoryCount: number;
+  transactionHistoryError?: string;
+  closedOrderCount: number;
+  financingTransactionCount: number;
+  marginCallTransactionCount: number;
+  orderEventCount: number;
+  closedOrders: Array<{ id: string; type?: string; instrument?: string; units?: string; price?: string; pl?: string; financing?: string; reason?: string; orderId?: string; tradeId?: string; time?: string }>;
+  financingTransactions: Array<{ id: string; type?: string; instrument?: string; units?: string; financing?: string; accountBalance?: string; time?: string }>;
+  marginCallTransactions: Array<{ id: string; type?: string; accountBalance?: string; marginUsed?: string; reason?: string; time?: string }>;
+  orderEvents: Array<{ id: string; type?: string; instrument?: string; units?: string; price?: string; reason?: string; orderId?: string; tradeId?: string; time?: string }>;
+  proofHash: string;
+  error?: IpcError;
+}
+export interface BloombergNewsArticle {
+  id: string;
+  title: string;
+  url: string;
+  summary: string;
+  imageUrl: string;
+  section: string;
+  publishedAt: string;
+  source: string;
+}
+
+export interface BloombergEuropeNewsResult {
+  accepted: boolean;
+  schema: "forge.trading.bloomberg_europe_news.v1";
+  sourceUrl: string;
+  fetchedAt: string;
+  nextRefreshMs: number;
+  articles: BloombergNewsArticle[];
+  providerStatus: Array<{
+    backend: "scrapling" | "crawl4ai";
+    status: "ok" | "partial" | "error";
+    durationMs: number;
+    error?: string;
+    counts: {
+      urls: number;
+      fields: number;
+      markdownChars: number;
+      links: number;
+      media: number;
+      artifacts: number;
+    };
+  }>;
+  warnings: string[];
+  proofHash: string;
+  error?: IpcError;
+}
 export interface ForgeShellApi extends GeneratedForgeShellApi {
   connectLlmProvider: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
@@ -1934,6 +2322,22 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   getBangerPreviewFrame?: () => Promise<BangerPreviewFrameResult>;
   getBangerPresentLoopBootstrap?: (request?: unknown) => Promise<BangerPresentLoopBootstrapResult>;
   getBangerGoogleTilesConfig?: () => Promise<BangerGoogleTilesConfigResult>;
+  getTradingCandles?: (request: TradingCandlesRequest) => Promise<TradingCandlesResult>;
+  getTradingTick?: (request?: TradingTickRequest) => Promise<TradingTickResult>;
+  submitTradingOrder?: (request: TradingOrderRequest) => Promise<TradingOrderResult>;
+  updateTradingOrderWindowSnapshot?: (snapshot: TradingOrderWindowSnapshot) => Promise<TradingOrderWindowSnapshotResult>;
+  onTradingOrderDraftEvent?: (listener: (event: TradingOrderDraftEvent) => void) => () => void;
+  updateTradingChartWindowSnapshot?: (snapshot: TradingChartWindowSnapshot) => Promise<TradingChartWindowSnapshotResult>;
+  onTradingChartRequestEvent?: (listener: (event: TradingChartRequestEvent) => void) => () => void;
+  completeTradingChartRequest?: (result: TradingChartResult & { requestId?: string }) => Promise<TradingChartResult>;
+  onTradingChartEditRequestEvent?: (listener: (event: TradingChartEditRequestEvent) => void) => () => void;
+  completeTradingChartEditRequest?: (result: TradingChartEditResult & { requestId?: string }) => Promise<TradingChartEditResult>;
+  getTradingAccountState?: (request?: TradingTickRequest) => Promise<TradingAccountStateResult>;
+  getBloombergEuropeNews?: (request?: { forceRefresh?: boolean }) => Promise<BloombergEuropeNewsResult>;
+  showNativeBloomberg?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
+  updateNativeBloombergBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
+  navigateNativeBloomberg?: (url: string) => Promise<NativeWebExplorerResult>;
+  hideNativeBloomberg?: () => Promise<NativeWebExplorerResult>;
   showNativeBanger?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   updateNativeBangerBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   hideNativeBanger?: () => Promise<NativeWebExplorerResult>;

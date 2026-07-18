@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BRAIN_AIRBNB_COMMAND,
   BRAIN_GMAIL_COMMAND,
@@ -15,7 +15,7 @@ import {
 import tokens from "../shared/generated/design-tokens.generated.json";
 import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice";
 import { BrainWorkspaceChrome, type BrainSpace } from "./BrainCanvas";
-import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
+import { PanelsChatBottomSlice, TranscriptCanvas } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
 import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
@@ -30,9 +30,12 @@ import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
+import { TradingCanvas } from "./TradingCanvas";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 import { WidgetSystemTray } from "./WidgetSystemTray";
 import { selectWelcomeMessage } from "./welcome-message-store";
+
+const CONVERSATION_TRANSCRIPT_RENDERING_DISABLED: boolean = false;
 
 function cssTokenStyle(): React.CSSProperties {
   return Object.fromEntries(
@@ -99,6 +102,9 @@ function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModul
 
 function assistantTextHasMapsSignal(text: string): boolean {
   const normalized = text.toLowerCase();
+  if (normalized.includes("render_mode=inline_transcript")) {
+    return false;
+  }
   return normalized.includes("maps_result") || normalized.includes(BRAIN_MAPS_COMMAND);
 }
 
@@ -317,6 +323,24 @@ function clearDocumentWidgetModeClasses(): void {
   document.body.classList.remove("ingen-widget-mode");
 }
 
+function TradingConversationSplitIcon() {
+  return (
+    <svg className="tradingConversationSplitIcon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <rect x="2.5" y="3" width="5" height="12" rx="1" />
+      <rect x="10.5" y="3" width="5" height="12" rx="1" />
+    </svg>
+  );
+}
+function OandaBrokerMark() {
+  return (
+    <svg className="workspaceHeader__brokerMark" viewBox="0 0 37.1 36.7" aria-hidden="true" focusable="false">
+      <polygon fill="#ffffff" points="8.5,26.4 2.9,26.4 0,15.4 5.6,15.4" />
+      <polygon fill="#00d37e" points="32.5,16.9 26.9,16.9 31.4,0 37.1,0" />
+      <polygon fill="#00d37e" points="21.2,8.5 16.4,26.3 13.7,36.7 19.2,36.7 19.3,36.7 26.8,8.5" />
+      <polygon fill="#ffffff" points="14.6,19.5 9,19.5 13.5,36.7 13.6,36.7 19.2,36.7" />
+    </svg>
+  );
+}
 function sectionGroup(section: NativeSection): string {
   if (section === "trading") {
     return "PAPERTRADING";
@@ -325,6 +349,13 @@ function sectionGroup(section: NativeSection): string {
     return "Forge";
   }
   return "Choose workspace";
+}
+
+function isWebSearchVisualAttachment(file: ComposerUploadPreview): boolean {
+  if (file.kind !== "image" && file.kind !== "video") {
+    return false;
+  }
+  return [file.name, file.textPreview, file.url].some((value) => value.includes("web_search=true"));
 }
 
 export function App() {
@@ -338,6 +369,7 @@ export function App() {
   const [canvasActivePane, setCanvasActivePane] = useState<CanvasToolPane | "">("");
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
+  const [canvasWebMediaOpen, setCanvasWebMediaOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [canvasMapsClosing, setCanvasMapsClosing] = useState(false);
   const [brainSpace, setBrainSpace] = useState<BrainSpace>("memory");
@@ -346,6 +378,7 @@ export function App() {
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetRestoring, setWidgetRestoring] = useState(false);
+  const [tradingConversationSplit, setTradingConversationSplit] = useState(false);
   const [widgetWallpaperLight, setWidgetWallpaperLight] = useState(false);
   /* Tracks whether the user toggled the real Windows taskbar back on (via the
      Windows icon) while in widget mode. The replicated system tray shows only
@@ -457,6 +490,7 @@ export function App() {
   // closable from the workspace-header cross.
   const isFullPageCanvas = isLlmProviderCanvas || isBrainCanvas;
   const isBangerPage = snapshot.activeSection === "banger" && !isFullPageCanvas;
+  const isTradingPage = snapshot.activeSection === "trading" && !isFullPageCanvas;
   const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas;
   const canvasSurfaceOpen =
     canvasSplitOpen ||
@@ -464,6 +498,7 @@ export function App() {
     canvasTerminalOpen ||
     canvasPlanetsOpen ||
     canvasWebExplorerOpen ||
+    canvasWebMediaOpen ||
     canvasMapsOpen ||
     codingLivePreview !== null ||
     parallelPrompts.length > 1;
@@ -483,12 +518,26 @@ export function App() {
     if (!sessionId) {
       return "New session";
     }
-    return items.find((item) => item.sessionId !== "" && item.sessionId === sessionId)?.label || "New session";
-  }, [panelsChatSnapshot.activeSessionId, sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
+    const activeItem = items.find((item) => item.sessionId !== "" && item.sessionId === sessionId);
+    if (isTradingPage && activeItem?.section !== "trading") {
+      return "New session";
+    }
+    return activeItem?.label || "New session";
+  }, [isTradingPage, panelsChatSnapshot.activeSessionId, sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
   const widgetRecentSessions = useMemo(
-    () => sidebarSnapshot.recentItems.filter((item) => item.rowVisible && item.sessionId.trim().length > 0).slice(0, 8),
-    [sidebarSnapshot.recentItems]
+    () => sidebarSnapshot.recentItems
+      .filter((item) => item.rowVisible && item.sessionId.trim().length > 0 && (!isTradingPage || item.section === "trading"))
+      .slice(0, 8),
+    [isTradingPage, sidebarSnapshot.recentItems]
   );
+  const activeSidebarSession = useMemo(() => {
+    const sessionId = panelsChatSnapshot.activeSessionId || sidebarSnapshot.recentSessionId;
+    if (!sessionId) {
+      return undefined;
+    }
+    return [...sidebarSnapshot.recentItems, ...sidebarSnapshot.archivedItems].find((item) => item.sessionId === sessionId);
+  }, [panelsChatSnapshot.activeSessionId, sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
+  const forceTradingDrawerEmpty = isTradingPage && activeSidebarSession?.section !== "trading";
   useEffect(() => {
     if (canvasMapsOpen) {
       return;
@@ -585,6 +634,37 @@ export function App() {
     }
     return files;
   }, [panelsChatSnapshot.transcript]);
+  const latestWebMediaAttachments = useMemo<ComposerUploadPreview[]>(() => {
+    for (let index = panelsChatSnapshot.transcript.length - 1; index >= 0; index -= 1) {
+      const message = panelsChatSnapshot.transcript[index];
+      if (message.role !== "assistant") {
+        continue;
+      }
+      const visualAttachments = (message.attachments ?? []).filter(isWebSearchVisualAttachment);
+      if (visualAttachments.length > 0) {
+        return visualAttachments.slice(0, 8);
+      }
+    }
+    return [];
+  }, [panelsChatSnapshot.transcript]);
+  const latestWebMediaKey = useMemo(
+    () => latestWebMediaAttachments.map((file) => file.id).join("|"),
+    [latestWebMediaAttachments]
+  );
+  useEffect(() => {
+    setCanvasWebMediaOpen(latestWebMediaKey.length > 0);
+  }, [latestWebMediaKey, panelsChatSnapshot.activeSessionId]);
+  useEffect(() => {
+    if (!CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && sessionHasStarted) {
+      setTradingConversationSplit(true);
+    }
+  }, [isTradingPage, panelsChatSnapshot.activeSessionId, sessionHasStarted]);
+  const toggleTradingConversationSplit = useCallback(() => {
+    if (!isTradingPage) {
+      return;
+    }
+    setTradingConversationSplit((value) => !value);
+  }, [isTradingPage]);
   const shellClassName = [
     "shell",
     snapshot.leftPanelOpen ? "shell--left-open" : "shell--left-collapsed",
@@ -593,12 +673,15 @@ export function App() {
     canvasFilesOpen || canvasTerminalOpen ? "shell--canvas-files-open" : "",
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
+    canvasWebMediaOpen ? "shell--web-media-canvas-open" : "",
     canvasMapsOpen ? "shell--maps-canvas-open" : "",
     canvasMapsClosing ? "shell--maps-canvas-closing" : "",
     codingLivePreview ? "shell--coding-live-preview-open" : "",
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
+    isTradingPage ? "shell--trading-page" : "",
+    !CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && tradingConversationSplit ? "shell--trading-conversation-split" : "",
     widgetMinimizingPhase !== "" ? "shell--widget-minimizing" : "",
     widgetMinimizingPhase === "canvas" ? "shell--widget-canvas-hidden" : "",
     widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
@@ -1126,6 +1209,7 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasWebExplorerOpen(false);
+    setCanvasWebMediaOpen(false);
     setCodingLivePreview(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
@@ -1139,6 +1223,7 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
+    setCanvasWebMediaOpen(false);
     setCodingLivePreview(null);
     if (!options?.keepMapsOpen) {
       canvasMapsOpenRef.current = false;
@@ -1171,6 +1256,7 @@ export function App() {
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCanvasWebMediaOpen(false);
     setCodingLivePreview(null);
     setMapsParallelIndex(parallelSessionIndex);
     mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft";
@@ -1208,6 +1294,7 @@ export function App() {
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCanvasWebMediaOpen(false);
     setWebExplorerModuleId(null);
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
@@ -1622,7 +1709,7 @@ export function App() {
               <div className="workspaceHeader__menuHost" ref={workspaceMenuRef}>
                 <button
                   type="button"
-                  className="workspaceHeader__markButton"
+                  className={isTradingPage ? "workspaceHeader__markButton workspaceHeader__markButton--trading" : "workspaceHeader__markButton"}
                   aria-label="Workspace actions"
                   aria-haspopup="menu"
                   aria-expanded={workspaceMenuOpen}
@@ -1631,9 +1718,13 @@ export function App() {
                     setWorkspaceMenuOpen((open) => !open);
                   }}
                 >
-                  <svg className="workspaceHeader__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-                    <path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h4.15l2 2H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25v-9.5Z" />
-                  </svg>
+                  {isTradingPage ? (
+                    <OandaBrokerMark />
+                  ) : (
+                    <svg className="workspaceHeader__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                      <path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h4.15l2 2H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25v-9.5Z" />
+                    </svg>
+                  )}
                 </button>
                 {workspaceMenuOpen ? (
                   <div className="workspaceMiniMenu" role="menu" aria-label="Workspace actions">
@@ -1666,7 +1757,7 @@ export function App() {
                     className={workspaceGateActive ? "workspaceHeader__group workspaceHeader__group--pick workspaceHeader__group--required" : "workspaceHeader__group workspaceHeader__group--pick"}
                     onClick={() => void chooseWorkspace()}
                   >
-                    {workspaceFolder ?? sectionGroup(snapshot.activeSection)}
+                    {isTradingPage ? "Natural Gas" : workspaceFolder ?? sectionGroup(snapshot.activeSection)}
                   </button>
                   <span className="workspaceHeader__slash">/</span>
                   <strong className={snapshot.activeSection === "trading" ? "workspaceHeader__title accent" : "workspaceHeader__title"}>
@@ -1687,7 +1778,7 @@ export function App() {
                   : control.id === "webexplorer-workspace"
                     ? canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing
                   : control.selected;
-            return (
+            const button = (
               <button
                 type="button"
                 className={selected ? "navIconButton navIconButton--selected" : "navIconButton"}
@@ -1714,6 +1805,23 @@ export function App() {
                 <span className={`shellIcon ${iconClass(control)}`} aria-hidden="true" />
               </button>
             );
+            if (!CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && control.id === "plan") {
+              return (
+                <Fragment key="trading-plan-controls">
+                  <button
+                    type="button"
+                    className={tradingConversationSplit ? "tradingConversationSplitButton tradingConversationSplitButton--active" : "tradingConversationSplitButton"}
+                    aria-label="Toggle trading conversation split"
+                    aria-pressed={tradingConversationSplit}
+                    onClick={toggleTradingConversationSplit}
+                  >
+                    <TradingConversationSplitIcon />
+                  </button>
+                  {button}
+                </Fragment>
+              );
+            }
+            return button;
           })}
         </div>
       </section>
@@ -1725,13 +1833,29 @@ export function App() {
       {isBangerPage ? (
         <HeaderSurfaceRouter snapshot={headerSurfaceSnapshot} />
       ) : null}
+      {isTradingPage ? (
+        <TradingCanvas parallelCount={parallelPrompts.length} />
+      ) : null}
 
-      {!isFullPageCanvas && !isBangerPage && !sessionHasStarted ? (
+      {!isFullPageCanvas && !isBangerPage && !isTradingPage && !sessionHasStarted ? (
         <section className="canvasCover" aria-label="Forge home canvas">
           <ProfileCoverBanner key={`home-canvas-${homeCanvasResetId}`} leftPanelOpen={snapshot.leftPanelOpen} welcomeMessage={welcomeMessage} />
         </section>
       ) : null}
 
+      {!CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && tradingConversationSplit ? (
+        <section className="tradingConversationSplitPane" aria-label="Trading conversation">
+          <TranscriptCanvas
+            activeSessionId={panelsChatSnapshot.activeSessionId}
+            messages={panelsChatSnapshot.transcript.filter((message) => message.role !== "system")}
+            agentName={brainAgentMemory.preferredFirstName}
+            userName={brainUserMemory.preferredFirstName}
+            parallelSessionIndex={0}
+            className="chatCanvas chatCanvas--tradingSplit"
+            assistantBusy={Boolean(panelsChatSnapshot.composer.assistantBusy)}
+          />
+        </section>
+      ) : null}
       <SidebarSlice
         open={snapshot.leftPanelOpen}
         activeParallelLaneCount={parallelPrompts.length}
@@ -1751,12 +1875,15 @@ export function App() {
       {!isFullPageCanvas && !isBangerPage ? (
         <CanvasSurfacesSlice
           split={canvasSurfaceOpen}
+          tradingMode={isTradingPage}
           actionsOpen={canvasSplitOpen}
           filesOpen={canvasFilesOpen}
           terminalOpen={canvasTerminalOpen}
           activePane={canvasActivePane}
           planetsOpen={canvasPlanetsOpen}
           webExplorerOpen={canvasWebExplorerOpen}
+          webMediaOpen={canvasWebMediaOpen}
+          webMediaFiles={latestWebMediaAttachments}
           webExplorerParallelIndex={webExplorerParallelIndex}
           webExplorerModuleId={webExplorerModuleId}
           mapsOpen={canvasMapsOpen}
@@ -1780,6 +1907,7 @@ export function App() {
           onPlanetsClose={() => setCanvasPlanetsOpen(false)}
           onWebExplorerOpen={openCanvasWebExplorer}
           onWebExplorerClose={closeCanvasWebExplorer}
+          onWebMediaClose={() => setCanvasWebMediaOpen(false)}
           onMapsClose={closeCanvasMaps}
           onCodingLivePreviewClose={closeCodingLivePreview}
           onParallelAdd={addParallelCanvas}
@@ -1788,7 +1916,7 @@ export function App() {
       ) : null}
       {renderPanelsChatBottom ? (
         <PanelsChatBottomSlice
-          composerOnly={isBangerPage}
+          composerOnly={!CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && tradingConversationSplit}
           parallelPrompts={parallelPrompts}
           onParallelPromptChange={updateParallelPrompt}
           webExplorerOpen={canvasWebExplorerOpen}
@@ -1798,8 +1926,11 @@ export function App() {
           activeSessionId={sidebarSnapshot.recentSessionId}
           onParallelClose={closeParallelCanvas}
           widgetRecentSessions={widgetRecentSessions}
+          forceWidgetSessionDrawer={!CONVERSATION_TRANSCRIPT_RENDERING_DISABLED && isTradingPage && !tradingConversationSplit}
+          forceWidgetSessionDrawerEmpty={forceTradingDrawerEmpty}
           widgetMode={widgetMode || widgetMinimizingPhase !== ""}
           widgetModeTransitioning={widgetModeTransitioning}
+          deferFirstUserMessageUntilWave={!widgetMode && widgetMinimizingPhase === "" && !isBangerPage && !isTradingPage}
           onWidgetNewSession={resetNewSessionCanvas}
           onWidgetSessionOpen={openWidgetSession}
           onWidgetModeChange={setWidgetModeEnabled}

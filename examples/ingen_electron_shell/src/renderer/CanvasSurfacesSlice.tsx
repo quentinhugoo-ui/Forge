@@ -1,5 +1,6 @@
 import {
   Fragment,
+  createElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,7 +9,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { BangerGoogleTilesConfigResult, ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
+import type { BangerGoogleTilesConfigResult, ComposerUploadPreview, SessionFilesGroup, TradingAccountStateResult, TradingOrderDraftEvent, TradingOrderResult, TradingOrderSide, TradingOrderType, TradingOrderWindowSnapshot, TradingTickResult } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
@@ -31,11 +32,17 @@ interface PaneTabsProps {
   onSessionFilesTabClose?: () => void;
   onSessionFilesGroupSelect?: (group: SessionFilesGroup) => void;
   onTerminalOpen: () => void;
+  tradingMode?: boolean;
+  tradingHeaderTab?: TradingOrderPaneTab;
+  onTradingHeaderTabChange?: (tab: TradingOrderPaneTab) => void;
 }
 
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "web_search" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
+const BLOOMBERG_NATIVE_HOME_URL = "https://www.bloomberg.com/europe";
+const BLOOMBERG_LIVE_VIDEO_URL = "https://www.youtube.com/embed/QB5BNdBFujE?si=X1XrnvMR_16sVceN";
+const BLOOMBERG_WEBVIEW_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 interface MapsViewportTarget {
   target?: string;
   latitude?: number;
@@ -411,15 +418,8 @@ function WebSearchFilesIcon() {
     </svg>
   );
 }
-function TerminalGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
-  return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
-      <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5">
-        <rect width="18.5" height="15.5" x="2.75" y="4.25" rx="3.5" />
-        <path d="m7.25 9l3 3l-3 3m5.5 0h4" />
-      </g>
-    </svg>
-  );
+function BloombergGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
+  return <img className={`${className} canvasBloombergLogo`} src="/shell-assets/bloomberg-ar21.svg" alt="" aria-hidden="true" />;
 }
 
 function GoogleWordmarkMono() {
@@ -601,7 +601,10 @@ function PaneTabs({
   onSessionFilesTabActivate,
   onSessionFilesTabClose,
   onSessionFilesGroupSelect,
-  onTerminalOpen
+  onTerminalOpen,
+  tradingMode = false,
+  tradingHeaderTab,
+  onTradingHeaderTabChange
 }: PaneTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sessionFilesOpen, setSessionFilesOpen] = useState(false);
@@ -656,10 +659,10 @@ function PaneTabs({
   return (
     <div className="canvasPaneTabs" role="tablist" aria-label="Canvas tool tabs">
       <div className="canvasPaneTabs__tabs">
-        {openPanes.map((pane, index) => {
+        {!tradingHeaderTab ? openPanes.map((pane, index) => {
           const selected = pane === activePane && !(pane === "files" && sessionFilesTab?.active);
-          const title = pane === "files" ? "Files" : "Terminal";
-          const detail = pane === "files" ? filesLabel : sessionName;
+          const title = pane === "files" ? "Files" : tradingMode ? "Bloomberg Live" : "Terminal";
+          const detail = pane === "files" ? filesLabel : tradingMode ? "Open Bloomberg channel" : "Open a command terminal";
           return (
             <Fragment key={pane}>
               <div className={selected ? "canvasPaneTabs__tab canvasPaneTabs__tab--active" : "canvasPaneTabs__tab"} role="presentation">
@@ -717,8 +720,8 @@ function PaneTabs({
                         <SessionFilesMenuBody groups={sessionFilesGroups} loading={sessionFilesLoading} error={sessionFilesError} onSelectGroup={chooseSessionFilesGroup} />
                       ) : (
                         <button type="button" role="menuitem" onClick={() => choose(onTerminalOpen)}>
-                          <TerminalGlyph className="canvasPaneTabs__menuIcon" />
-                          <span>Open Terminal</span>
+                          {tradingMode ? <BloombergGlyph className="canvasPaneTabs__menuIcon" /> : <svg className="canvasPaneTabs__menuIcon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5"><rect width="18.5" height="15.5" x="2.75" y="4.25" rx="3.5" /><path d="m7.25 9l3 3l-3 3m5.5 0h4" /></g></svg>}
+                          <span>{tradingMode ? "Bloomberg Live" : "Open Terminal"}</span>
                         </button>
                       )}
                     </div>
@@ -727,7 +730,15 @@ function PaneTabs({
               ) : null}
             </Fragment>
           );
-        })}
+        }) : null}
+        {tradingHeaderTab && onTradingHeaderTabChange ? (
+          <div className="canvasPaneTabs__tradingHeader" role="group" aria-label="Trading order view">
+            <div className="canvasPaneTabs__tradingTabs" role="tablist" aria-label="Trading order panel tabs">
+              <button type="button" role="tab" aria-selected={tradingHeaderTab === "order"} className={tradingHeaderTab === "order" ? "canvasPaneTabs__tradingTab canvasPaneTabs__tradingTab--active" : "canvasPaneTabs__tradingTab"} onClick={() => onTradingHeaderTabChange("order")}>Order</button>
+              <button type="button" role="tab" aria-selected={tradingHeaderTab === "history"} className={tradingHeaderTab === "history" ? "canvasPaneTabs__tradingTab canvasPaneTabs__tradingTab--active" : "canvasPaneTabs__tradingTab"} onClick={() => onTradingHeaderTabChange("history")}>History</button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -857,6 +868,24 @@ function CanvasFilePreview({
   );
 }
 
+function WebMediaCanvas({ files }: { files: ComposerUploadPreview[] }) {
+  const mediaFiles = files.filter((file) => file.kind === "image" || file.kind === "video").slice(0, 8);
+  if (mediaFiles.length === 0) {
+    return null;
+  }
+  const countClass = `webMediaBento--count${Math.min(mediaFiles.length, 4)}`;
+  return (
+    <div className={`webMediaBento ${countClass}`} aria-label="Web search media results">
+      {mediaFiles.map((file, index) => (
+        <figure className="webMediaBento__item" key={file.id} style={{ "--web-media-index": index } as CSSProperties}>
+          <CanvasFilePreview file={file} activeMotionPreview />
+          <figcaption className="webMediaBento__caption">{file.name}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
 function AllFilesIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -885,6 +914,446 @@ function fileKindIconKind(kind: FileKindFilter): ComposerUploadPreview["kind"] {
   return kind;
 }
 
+type TradingOrderPaneTab = "order" | "history";
+
+type TradingAccountHistoryItem = {
+  id: string;
+  type?: string;
+  instrument?: string;
+  units?: string;
+  price?: string;
+  pl?: string;
+  financing?: string;
+  accountBalance?: string;
+  marginUsed?: string;
+  reason?: string;
+  orderId?: string;
+  tradeId?: string;
+  time?: string;
+};
+
+type TradingOpenTrade = TradingAccountStateResult["openTrades"][number];
+type TradingLivePrice = { bid: number | null; ask: number | null; mid: number | null; tradeable: boolean; time: string; fetchedAt: string; unitsAvailable?: TradingTickResult["unitsAvailable"] };
+
+function tradingHistoryTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function formatTradingAccountValue(value?: string, currency?: string): string {
+  if (!value) return "--";
+  const parsed = Number.parseFloat(value);
+  const formatted = Number.isFinite(parsed)
+    ? parsed.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : value;
+  return currency ? `${formatted} ${currency}` : formatted;
+}
+function tradingNumber(value?: string): number | null {
+  if (!value) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function tradingPipSize(instrument?: string): number {
+  const normalized = (instrument ?? "").toUpperCase();
+  if (normalized === "NATGAS_USD") return 0.01;
+  if (normalized.includes("JPY")) return 0.01;
+  if (normalized.includes("_")) return 0.0001;
+  return 0.01;
+}
+
+function tradingTradeSide(units?: string): "LONG" | "SHORT" | "--" {
+  const parsed = tradingNumber(units);
+  if (parsed === null || parsed === 0) return "--";
+  return parsed > 0 ? "LONG" : "SHORT";
+}
+
+function formatTradingUnits(units?: string): string {
+  const parsed = tradingNumber(units);
+  if (parsed === null) return "--";
+  return Math.abs(parsed).toLocaleString("fr-FR", { maximumFractionDigits: 4 });
+}
+
+function tradingAvailableUnitsForSide(side: TradingOrderSide, livePrice: TradingLivePrice | null): string {
+  const available = livePrice?.unitsAvailable?.default;
+  const value = side === "sell" ? available?.short : available?.long;
+  return value ?? "";
+}
+function tradingBufferedAvailableUnitsForSide(side: TradingOrderSide, livePrice: TradingLivePrice | null): string {
+  const parsed = tradingNumber(tradingAvailableUnitsForSide(side, livePrice));
+  if (parsed === null || parsed <= 0) return "";
+  return String(Math.max(0, Math.floor(parsed * 0.99)));
+}
+function tradingExitReferencePrice(side: "LONG" | "SHORT" | "--", livePrice: TradingLivePrice | null): number | null {
+  if (!livePrice) return null;
+  if (side === "LONG") return livePrice.bid ?? livePrice.mid ?? livePrice.ask;
+  if (side === "SHORT") return livePrice.ask ?? livePrice.mid ?? livePrice.bid;
+  return livePrice.mid ?? livePrice.bid ?? livePrice.ask;
+}
+
+function formatTradingPipDistance(trade: TradingOpenTrade, targetPrice: string | undefined, livePrice: TradingLivePrice | null): string {
+  const side = tradingTradeSide(trade.currentUnits);
+  const current = tradingExitReferencePrice(side, livePrice);
+  const target = tradingNumber(targetPrice);
+  if (current === null || target === null) return "--";
+  const pipSize = tradingPipSize(trade.instrument);
+  const distance = Math.abs(target - current) / pipSize;
+  return `${distance.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} pips`;
+}
+function formatTradingOrderPipDistance(side: TradingOrderSide, instrument: string, targetPrice: string | undefined, entryPrice: string, livePrice: TradingLivePrice | null): string {
+  const target = tradingNumber(targetPrice);
+  const explicitEntry = tradingNumber(entryPrice);
+  const current = explicitEntry ?? (side === "buy" ? livePrice?.ask ?? livePrice?.mid ?? livePrice?.bid ?? null : livePrice?.bid ?? livePrice?.mid ?? livePrice?.ask ?? null);
+  if (current === null || target === null) return "--";
+  const distance = Math.abs(target - current) / tradingPipSize(instrument);
+  return `${distance.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} pips`;
+}
+function TradingHistorySection({ title, empty, items, render }: {
+  title: string;
+  empty: string;
+  items: TradingAccountHistoryItem[];
+  render: (item: TradingAccountHistoryItem) => string;
+}) {
+  return (
+    <section className="tradingOrderPane__historySection">
+      <h3>{title}</h3>
+      {items.length > 0 ? items.map((item) => (
+        <div key={`${title}-${item.id}`} className="tradingOrderPane__historyItem">
+          <span>{tradingHistoryTime(item.time)}</span>
+          <p>{render(item)}</p>
+        </div>
+      )) : <p className="tradingOrderPane__historyEmpty">{empty}</p>}
+    </section>
+  );
+}
+
+function TradingOrderPane({ activePane, openPanes, draft, onActivatePane, onClosePane, onTerminalOpen }: {
+  activePane: CanvasToolPane;
+  openPanes: CanvasToolPane[];
+  draft?: TradingOrderDraftEvent | null;
+  onActivatePane: (pane: CanvasToolPane) => void;
+  onClosePane: (pane: CanvasToolPane) => void;
+  onTerminalOpen: () => void;
+}) {
+  const [side, setSide] = useState<TradingOrderSide>("buy");
+  const [type, setType] = useState<TradingOrderType>("MARKET");
+  const [units, setUnits] = useState("");
+  const [entryPrice, setEntryPrice] = useState("");
+  const [stopLossPrice, setStopLossPrice] = useState("");
+  const [takeProfitPrice, setTakeProfitPrice] = useState("");
+  const [trailingStopDistance, setTrailingStopDistance] = useState("");
+  const [trailingTakeProfitDistance, setTrailingTakeProfitDistance] = useState("");
+  const [confirmLiveOrder, setConfirmLiveOrder] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<TradingOrderResult | null>(null);
+  const [activeTradingTab, setActiveTradingTab] = useState<TradingOrderPaneTab>("order");
+  const [appliedDraft, setAppliedDraft] = useState<TradingOrderDraftEvent | null>(null);
+  const [accountState, setAccountState] = useState<TradingAccountStateResult | null>(null);
+  const [, setAccountStateLoading] = useState(false);
+  const [livePrice, setLivePrice] = useState<TradingLivePrice | null>(null);
+  const accountStateInFlightRef = useRef(false);
+  const unitsTouchedRef = useRef(false);
+  const appliedDraftProofRef = useRef("");
+
+
+  const refreshAccountState = useCallback(async (includeHistory = false, showLoading = true) => {
+    const api = globalThis.window?.forgeShell?.getTradingAccountState;
+    if (!api || accountStateInFlightRef.current) return;
+    accountStateInFlightRef.current = true;
+    if (showLoading) setAccountStateLoading(true);
+    try {
+      const nextState = await api({ instrument: "NATGAS_USD", includeHistory });
+      setAccountState((previousState) => {
+        if (includeHistory || !previousState) return nextState;
+        return {
+          ...nextState,
+          transactionHistoryCount: previousState.transactionHistoryCount,
+          transactionHistoryError: previousState.transactionHistoryError,
+          closedOrderCount: previousState.closedOrderCount,
+          financingTransactionCount: previousState.financingTransactionCount,
+          marginCallTransactionCount: previousState.marginCallTransactionCount,
+          orderEventCount: previousState.orderEventCount,
+          closedOrders: previousState.closedOrders,
+          financingTransactions: previousState.financingTransactions,
+          marginCallTransactions: previousState.marginCallTransactions,
+          orderEvents: previousState.orderEvents
+        };
+      });
+    } finally {
+      accountStateInFlightRef.current = false;
+      if (showLoading) setAccountStateLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAccountState(false, true);
+  }, [refreshAccountState]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => void refreshAccountState(false, false), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [refreshAccountState]);
+
+  useEffect(() => {
+    if (activeTradingTab === "history") {
+      void refreshAccountState(true, true);
+    }
+  }, [activeTradingTab, refreshAccountState]);
+  useEffect(() => {
+    let cancelled = false;
+    const refreshTick = async () => {
+      const api = globalThis.window?.forgeShell?.getTradingTick;
+      if (!api) return;
+      const tick = await api({ instrument: "NATGAS_USD" });
+      if (!cancelled && tick.accepted) {
+        setLivePrice({ bid: tick.bid, ask: tick.ask, mid: tick.mid, tradeable: tick.tradeable, time: tick.time, fetchedAt: tick.fetchedAt, unitsAvailable: tick.unitsAvailable });
+      }
+    };
+    void refreshTick();
+    const intervalId = window.setInterval(() => void refreshTick(), 260);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+  useEffect(() => {
+    if (unitsTouchedRef.current) return;
+    const availableUnits = tradingBufferedAvailableUnitsForSide(side, livePrice) || tradingAvailableUnitsForSide(side, livePrice);
+    if (availableUnits) setUnits(availableUnits);
+  }, [livePrice, side]);
+
+  useEffect(() => {
+    if (!draft || draft.proofHash === appliedDraftProofRef.current) return;
+    appliedDraftProofRef.current = draft.proofHash;
+    setAppliedDraft(draft);
+    setActiveTradingTab("order");
+    setSide(draft.side);
+    setType("MARKET");
+    setEntryPrice("");
+    setUnits(draft.units);
+    unitsTouchedRef.current = true;
+    setStopLossPrice(draft.stopLossPrice ?? "");
+    setTakeProfitPrice(draft.takeProfitPrice ?? "");
+    setTrailingStopDistance(draft.trailingStopDistance ?? "");
+    setTrailingTakeProfitDistance("");
+    setConfirmLiveOrder(draft.executionMode === "live_oanda_order" && draft.userConfirmation === "user_confirmed_live_order");
+    setResult(null);
+    void refreshAccountState(false, false);
+  }, [draft, refreshAccountState]);
+
+  const availableOrderUnits = tradingAvailableUnitsForSide(side, livePrice);
+  const bufferedAvailableOrderUnits = tradingBufferedAvailableUnitsForSide(side, livePrice);
+  const formattedAvailableOrderUnits = availableOrderUnits ? formatTradingUnits(availableOrderUnits) : "--";
+  const formattedBufferedAvailableOrderUnits = bufferedAvailableOrderUnits ? formatTradingUnits(bufferedAvailableOrderUnits) : "--";
+  const stopLossPips = formatTradingOrderPipDistance(side, "NATGAS_USD", stopLossPrice, entryPrice, livePrice);
+  const takeProfitPips = formatTradingOrderPipDistance(side, "NATGAS_USD", takeProfitPrice, entryPrice, livePrice);
+  const trailingStopPips = trailingStopDistance ? `${(Math.abs(Number(trailingStopDistance)) / tradingPipSize("NATGAS_USD")).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} pips` : "--";
+  const tradingAccountMetrics = [
+    { label: "Capital", value: formatTradingAccountValue(accountState?.balance, accountState?.currency) },
+    { label: "NAV", value: formatTradingAccountValue(accountState?.nav, accountState?.currency) },
+    { label: "Margin used", value: formatTradingAccountValue(accountState?.marginUsed, accountState?.currency) },
+    { label: "Margin available", value: formatTradingAccountValue(accountState?.marginAvailable, accountState?.currency) },
+    { label: "Currency", value: accountState?.currency ?? "--" }
+  ];
+  const openTrades = accountState?.openTrades ?? [];
+
+  useEffect(() => {
+    const api = globalThis.window?.forgeShell?.updateTradingOrderWindowSnapshot;
+    if (!api) return;
+    const snapshot: TradingOrderWindowSnapshot = {
+      schema: "forge.trading.order_window_snapshot.v1",
+      source: "renderer_order_window_oanda",
+      instrument: "NATGAS_USD",
+      side,
+      type,
+      units,
+      price: type === "LIMIT" ? entryPrice : undefined,
+      stopLossPrice: stopLossPrice || undefined,
+      takeProfitPrice: takeProfitPrice || undefined,
+      trailingStopDistance: trailingStopDistance || undefined,
+      trailingTakeProfitDistance: trailingTakeProfitDistance || undefined,
+      confirmLiveOrder,
+      livePrice: livePrice ? { ...livePrice } : undefined,
+      account: accountState ? {
+        accountIdMasked: accountState.accountIdMasked,
+        currency: accountState.currency,
+        balance: accountState.balance,
+        nav: accountState.nav,
+        unrealizedPL: accountState.unrealizedPL,
+        marginAvailable: accountState.marginAvailable,
+        marginUsed: accountState.marginUsed,
+        pendingOrderCount: accountState.pendingOrderCount,
+        openTradeCount: accountState.openTradeCount,
+        openPositionCount: accountState.openPositionCount
+      } : undefined,
+      windowUpdatedAt: new Date().toISOString(),
+      proofHash: "renderer-pending"
+    };
+    void api(snapshot);
+  }, [accountState, confirmLiveOrder, entryPrice, livePrice, side, stopLossPrice, takeProfitPrice, trailingStopDistance, trailingTakeProfitDistance, type, units]);
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const api = globalThis.window?.forgeShell?.submitTradingOrder;
+      if (!api) {
+        setResult({
+          accepted: false,
+          schema: "forge.trading.oanda.order.v1",
+          source: "oanda_rest_v20",
+          instrument: "NATGAS_USD",
+          side,
+          type,
+          units,
+          price: entryPrice || undefined,
+          stopLossPrice: stopLossPrice || undefined,
+          takeProfitPrice: takeProfitPrice || undefined,
+          trailingStopDistance: trailingStopDistance || undefined,
+          trailingTakeProfitDistance: trailingTakeProfitDistance || undefined,
+          baseUrl: "unavailable",
+          accountIdMasked: "unavailable",
+          fetchedAt: new Date().toISOString(),
+          relatedTransactionIDs: [],
+          proofHash: "renderer-missing-trading-order-bridge",
+          error: { code: "bad_payload", message: "Trading order bridge unavailable.", proofHash: "renderer-missing-trading-order-bridge" }
+        });
+        return;
+      }
+      const response = await api({
+        instrument: "NATGAS_USD",
+        side,
+        type,
+        units,
+        price: type === "LIMIT" ? entryPrice : undefined,
+        stopLossPrice: stopLossPrice || undefined,
+        takeProfitPrice: takeProfitPrice || undefined,
+        trailingStopDistance: trailingStopDistance || undefined,
+        trailingTakeProfitDistance: trailingTakeProfitDistance || undefined,
+        clientExtensionsTag: "forge-trading",
+        confirmLiveOrder
+      });
+      setResult(response);
+      void refreshAccountState(false, false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <aside id="canvas-files-pane" className="canvasFilesPane canvasFilesPane--tradingOrder" aria-label="Market Order" role="tabpanel" aria-labelledby="canvas-files-tab">
+      <div className="canvasFilesPane__inner tradingOrderPane">
+        <PaneTabs
+          activePane={activePane}
+          openPanes={openPanes}
+          filesLabel="Market Order"
+          sessionName="Natural Gas"
+          onActivatePane={onActivatePane}
+          onClosePane={onClosePane}
+          onTerminalOpen={onTerminalOpen}
+          tradingMode
+          tradingHeaderTab={activeTradingTab}
+          onTradingHeaderTabChange={setActiveTradingTab}
+        />
+        <div className="tradingOrderPane__body">
+          {activeTradingTab === "order" ? (
+            <div className="tradingOrderPane__orderTab" role="tabpanel">
+              <div className="tradingOrderPane__accountMetrics" aria-label="Account capital">
+                {tradingAccountMetrics.map((item) => (
+                  <div key={item.label} className="tradingOrderPane__accountMetric">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+              {appliedDraft ? <p className="tradingOrderPane__result tradingOrderPane__result--ok">CodeAct draft loaded {appliedDraft.side.toUpperCase()} {formatTradingUnits(appliedDraft.units)} safe units, proof {appliedDraft.proofHash.slice(0, 10)}</p> : null}
+              <div className="tradingOrderPane__side" role="group" aria-label="Order side">
+                <button type="button" className={side === "sell" ? "tradingOrderPane__sideButton tradingOrderPane__sideButton--sell tradingOrderPane__sideButton--active" : "tradingOrderPane__sideButton tradingOrderPane__sideButton--sell"} onClick={() => { setSide("sell"); if (!unitsTouchedRef.current) setUnits(tradingBufferedAvailableUnitsForSide("sell", livePrice) || tradingAvailableUnitsForSide("sell", livePrice)); }}>SELL</button>
+                <button type="button" className={side === "buy" ? "tradingOrderPane__sideButton tradingOrderPane__sideButton--long tradingOrderPane__sideButton--active" : "tradingOrderPane__sideButton tradingOrderPane__sideButton--long"} onClick={() => { setSide("buy"); if (!unitsTouchedRef.current) setUnits(tradingBufferedAvailableUnitsForSide("buy", livePrice) || tradingAvailableUnitsForSide("buy", livePrice)); }}>LONG</button>
+              </div>
+              <label className="tradingOrderPane__row"><span>Order</span><select value={type} onChange={(event) => setType(event.currentTarget.value as TradingOrderType)}><option value="MARKET">Market</option><option value="LIMIT">Price order</option></select></label>
+              {type === "LIMIT" ? <label className="tradingOrderPane__row"><span>Entry</span><input inputMode="decimal" value={entryPrice} onChange={(event) => setEntryPrice(event.currentTarget.value)} placeholder="price" /></label> : null}
+              <label className="tradingOrderPane__row"><span className="tradingOrderPane__rowLabel">Unit <em>safe {formattedBufferedAvailableOrderUnits} / OANDA {formattedAvailableOrderUnits}</em></span><input inputMode="decimal" value={units} onChange={(event) => { unitsTouchedRef.current = true; setUnits(event.currentTarget.value); }} placeholder={bufferedAvailableOrderUnits || availableOrderUnits || "OANDA"} /></label>
+              <label className="tradingOrderPane__row"><span className="tradingOrderPane__rowLabel">SL <em>{stopLossPips}</em></span><input inputMode="decimal" value={stopLossPrice} onChange={(event) => setStopLossPrice(event.currentTarget.value)} placeholder="optional" /></label>
+              <label className="tradingOrderPane__row"><span className="tradingOrderPane__rowLabel">TP <em>{takeProfitPips}</em></span><input inputMode="decimal" value={takeProfitPrice} onChange={(event) => setTakeProfitPrice(event.currentTarget.value)} placeholder="optional" /></label>
+              <label className="tradingOrderPane__row"><span className="tradingOrderPane__rowLabel">Trailing stop <em>{trailingStopPips}</em></span><input inputMode="decimal" value={trailingStopDistance} onChange={(event) => setTrailingStopDistance(event.currentTarget.value)} placeholder="distance" /></label>
+              <label className="tradingOrderPane__row"><span>Trailing TP</span><input inputMode="decimal" value={trailingTakeProfitDistance} onChange={(event) => setTrailingTakeProfitDistance(event.currentTarget.value)} placeholder="local only" /></label>
+              <label className="tradingOrderPane__confirm"><input type="checkbox" checked={confirmLiveOrder} onChange={(event) => setConfirmLiveOrder(event.currentTarget.checked)} /><span>Confirm live OANDA order</span></label>
+              <button type="button" className="tradingOrderPane__submit" disabled={!confirmLiveOrder || submitting} onClick={submit}>{submitting ? "Sending" : side === "sell" ? "Send SELL" : "Send LONG"}</button>
+              {result ? <p className={result.accepted ? "tradingOrderPane__result tradingOrderPane__result--ok" : "tradingOrderPane__result"}>{result.accepted ? `Order accepted ${result.orderCreateTransactionID ?? result.lastTransactionID ?? ""}` : result.error?.message ?? "Order rejected"}</p> : null}
+              <section className="tradingOrderPane__positions" aria-label="Open positions">
+                <h3>Positions ouvertes</h3>
+                {openTrades.length > 0 ? openTrades.map((trade) => {
+                  const tradeSide = tradingTradeSide(trade.currentUnits);
+                  const numericUnits = Number.parseFloat(trade.currentUnits ?? "");
+                  const absoluteUnits = Number.isFinite(numericUnits) ? String(Math.abs(numericUnits)) : "";
+                  const prepareModify = () => {
+                    if (tradeSide !== "--") setSide(tradeSide === "LONG" ? "buy" : "sell");
+                    unitsTouchedRef.current = true;
+                    if (absoluteUnits) setUnits(absoluteUnits);
+                    setType("MARKET");
+                    setStopLossPrice(trade.stopLossPrice ?? "");
+                    setTakeProfitPrice(trade.takeProfitPrice ?? "");
+                    setResult(null);
+                  };
+                  const prepareClose = () => {
+                    if (tradeSide !== "--") setSide(tradeSide === "LONG" ? "sell" : "buy");
+                    unitsTouchedRef.current = true;
+                    if (absoluteUnits) setUnits(absoluteUnits);
+                    setType("MARKET");
+                    setEntryPrice("");
+                    setStopLossPrice("");
+                    setTakeProfitPrice("");
+                    setTrailingStopDistance("");
+                    setTrailingTakeProfitDistance("");
+                    setResult(null);
+                  };
+                  return (
+                    <div key={trade.id} className="tradingOrderPane__position">
+                      <div className="tradingOrderPane__positionTop">
+                        <div className="tradingOrderPane__positionHead">
+                          <span>{trade.instrument ?? "--"}</span>
+                          <time>{tradingHistoryTime(trade.openTime)}</time>
+                        </div>
+                        <div className="tradingOrderPane__positionActions" aria-label="Position actions">
+                          <button type="button" className="tradingOrderPane__positionAction" aria-label={`Modifier ${trade.instrument ?? "position"}`} title="Preparer modification SL/TP" onClick={prepareModify}>
+                            <svg className="tradingOrderPane__modifyIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" aria-hidden="true">
+                              <path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" d="M5 12.24L.5 13.5L1.76 9L10 .8a1 1 0 0 1 1.43 0l1.77 1.78a1 1 0 0 1 0 1.42Z" />
+                            </svg>
+                          </button>
+                          <button type="button" className="tradingOrderPane__positionAction tradingOrderPane__positionAction--close" aria-label={`Fermer ${trade.instrument ?? "position"}`} title="Preparer fermeture" onClick={prepareClose}>
+                            <svg className="tradingOrderPane__closeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" aria-hidden="true">
+                              <path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" d="M1 1l12 12M13 1L1 13" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="tradingOrderPane__positionGrid">
+                        <span>{tradeSide} {formatTradingUnits(trade.currentUnits)}</span>
+                        <span>P/L {formatTradingAccountValue(trade.unrealizedPL, accountState?.currency)}</span>
+                        <span>SL {formatTradingPipDistance(trade, trade.stopLossPrice, livePrice)}</span>
+                        <span>TP {formatTradingPipDistance(trade, trade.takeProfitPrice, livePrice)}</span>
+                      </div>
+                    </div>
+                  );
+                }) : <p className="tradingOrderPane__positionsEmpty">Aucune position ouverte.</p>}
+              </section>
+            </div>
+          ) : (
+            <div className="tradingOrderPane__history" role="tabpanel">
+              <TradingHistorySection title="Closed orders" empty="No closed order found in the last 14 days." items={accountState?.closedOrders ?? []} render={(item) => `${item.type ?? "ORDER"} ${item.instrument ?? ""} ${item.units ?? ""} @ ${item.price ?? "n/a"} P/L ${item.pl ?? "n/a"} ${item.reason ?? ""}`} />
+              <TradingHistorySection title="Order events" empty="No modify or cancel event found in the last 14 days." items={accountState?.orderEvents ?? []} render={(item) => `${item.type ?? "EVENT"} ${item.orderId ? `order ${item.orderId}` : ""} ${item.reason ?? ""}`} />
+              <TradingHistorySection title="Financing" empty="No financing fee found in the last 14 days." items={accountState?.financingTransactions ?? []} render={(item) => `${item.type ?? "FINANCING"} ${item.instrument ?? ""} ${item.financing ?? "n/a"} balance ${item.accountBalance ?? "n/a"}`} />
+              <TradingHistorySection title="Margin calls" empty="No margin-call event found in the last 14 days." items={accountState?.marginCallTransactions ?? []} render={(item) => `${item.type ?? "MARGIN"} ${item.reason ?? ""} balance ${item.accountBalance ?? "n/a"} margin ${item.marginUsed ?? "n/a"}`} />
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
 function CanvasFilesPane({
   sessionName,
   files,
@@ -892,7 +1361,7 @@ function CanvasFilesPane({
   openPanes,
   onActivatePane,
   onClosePane,
-  onTerminalOpen
+  onTerminalOpen,
 }: {
   sessionName: string;
   files: ComposerUploadPreview[];
@@ -1064,11 +1533,47 @@ function CanvasFilesPane({
   );
 }
 
+function BloombergYoutubeVideo() {
+  return (
+    <iframe
+      className="canvasTerminalPane__bloombergFrame"
+      width="560"
+      height="315"
+      src={BLOOMBERG_LIVE_VIDEO_URL}
+      title="YouTube video player"
+      frameBorder="0"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      referrerPolicy="strict-origin-when-cross-origin"
+      allowFullScreen
+    />
+  );
+}
+function BloombergWebview({ url }: { url: string }) {
+  const webviewProps = {
+    className: "canvasTerminalPane__bloombergDomWebview",
+    src: url,
+    useragent: BLOOMBERG_WEBVIEW_USER_AGENT,
+    partition: "persist:ingen-bloomberg",
+    webpreferences: "contextIsolation=yes,nodeIntegration=no,sandbox=yes",
+    autosize: "on",
+    minwidth: "1",
+    minheight: "1",
+    maxwidth: "9999",
+    maxheight: "9999"
+  } as Record<string, unknown>;
+
+  return (
+    <div className="canvasTerminalPane__bloombergWebviewHost" aria-label="Bloomberg site webview">
+      {createElement("webview", webviewProps)}
+    </div>
+  );
+}
 function CanvasTerminalPane({
   sessionName,
   activePane,
   openPanes,
   filesLabel,
+  tradingMode,
   onActivatePane,
   onClosePane,
   onTerminalOpen
@@ -1077,14 +1582,17 @@ function CanvasTerminalPane({
   activePane: CanvasToolPane;
   openPanes: CanvasToolPane[];
   filesLabel: string;
+  tradingMode: boolean;
   onActivatePane: (pane: CanvasToolPane) => void;
   onClosePane: (pane: CanvasToolPane) => void;
   onTerminalOpen: () => void;
 }) {
   const terminalSlotRef = useRef<HTMLDivElement>(null);
   const [terminalError, setTerminalError] = useState("");
+  const bloombergUrl = BLOOMBERG_NATIVE_HOME_URL;
 
   useEffect(() => {
+    if (tradingMode) return undefined;
     const api = globalThis.window?.forgeShell;
     const slot = terminalSlotRef.current;
     if (!api?.showNativeTerminal || !api.updateNativeTerminalBounds || !api.hideNativeTerminal || !slot) {
@@ -1133,10 +1641,10 @@ function CanvasTerminalPane({
       window.removeEventListener("resize", scheduleSync);
       void hideNativeTerminal();
     };
-  }, []);
+  }, [tradingMode]);
 
   return (
-    <aside id="canvas-terminal-pane" className="canvasTerminalPane" aria-label="Terminal" role="tabpanel" aria-labelledby="canvas-terminal-tab">
+    <aside id="canvas-terminal-pane" className={tradingMode ? "canvasTerminalPane canvasTerminalPane--bloomberg" : "canvasTerminalPane"} aria-label={tradingMode ? "Bloomberg Live" : "Terminal"} role="tabpanel" aria-labelledby="canvas-terminal-tab">
       <div className="canvasTerminalPane__inner">
         <PaneTabs
           activePane={activePane}
@@ -1146,23 +1654,35 @@ function CanvasTerminalPane({
           onActivatePane={onActivatePane}
           onClosePane={onClosePane}
           onTerminalOpen={onTerminalOpen}
+          tradingMode={tradingMode}
         />
-        <div ref={terminalSlotRef} className="canvasTerminalPane__nativeHost" aria-label="Embedded Windows PowerShell">
-          {terminalError ? <p className="canvasTerminalPane__nativeError">{terminalError}</p> : null}
-        </div>
+        {tradingMode ? (
+          <>
+            <div className="canvasTerminalPane__bloombergHost" aria-label="Bloomberg video player">
+              <BloombergYoutubeVideo />
+            </div>
+            <BloombergWebview url={bloombergUrl} />
+          </>
+        ) : (
+          <div ref={terminalSlotRef} className="canvasTerminalPane__nativeHost" aria-label="Embedded Windows PowerShell">
+            {terminalError ? <p className="canvasTerminalPane__nativeError">{terminalError}</p> : null}
+          </div>
+        )}
       </div>
     </aside>
   );
 }
-
 export function CanvasSurfacesSlice({
   split,
+  tradingMode = false,
   actionsOpen,
   filesOpen,
   terminalOpen,
   activePane,
   planetsOpen,
   webExplorerOpen,
+  webMediaOpen,
+  webMediaFiles,
   webExplorerParallelIndex = 0,
   webExplorerModuleId = null,
   mapsOpen,
@@ -1185,18 +1705,22 @@ export function CanvasSurfacesSlice({
   onPlanetsClose,
   onWebExplorerOpen,
   onWebExplorerClose,
+  onWebMediaClose,
   onMapsClose,
   onCodingLivePreviewClose,
   onParallelAdd,
   onParallelRemove
 }: {
   split: boolean;
+  tradingMode?: boolean;
   actionsOpen: boolean;
   filesOpen: boolean;
   terminalOpen: boolean;
   activePane: CanvasToolPane | "";
   planetsOpen: boolean;
   webExplorerOpen: boolean;
+  webMediaOpen: boolean;
+  webMediaFiles: ComposerUploadPreview[];
   webExplorerParallelIndex?: number;
   webExplorerModuleId?: string | null;
   mapsOpen: boolean;
@@ -1220,6 +1744,7 @@ export function CanvasSurfacesSlice({
   onPlanetsClose: () => void;
   onWebExplorerOpen: () => void;
   onWebExplorerClose: () => void;
+  onWebMediaClose: () => void;
   onMapsClose: () => void;
   onCodingLivePreviewClose: () => void;
   onParallelAdd: () => void;
@@ -1241,6 +1766,7 @@ export function CanvasSurfacesSlice({
   const activeToolPane: CanvasToolPane | "" = activePane && openToolPanes.includes(activePane)
     ? activePane
     : openToolPanes[0] ?? "";
+  const [tradingOrderDraft, setTradingOrderDraft] = useState<TradingOrderDraftEvent | null>(null);
   const filesLabel = sessionFiles.length === 1 ? "1 file" : `${sessionFiles.length} files`;
   const closeToolPane = (pane: CanvasToolPane) => {
     if (pane === "files") {
@@ -1249,11 +1775,22 @@ export function CanvasSurfacesSlice({
     }
     onTerminalClose();
   };
+
+  useEffect(() => {
+    if (!tradingMode) return undefined;
+    const unsubscribe = globalThis.window?.forgeShell?.onTradingOrderDraftEvent?.((event) => {
+      setTradingOrderDraft(event);
+      onFilesOpen();
+      onActivePaneChange("files");
+    });
+    return unsubscribe;
+  }, [tradingMode, onFilesOpen, onActivePaneChange]);
   const webExplorerCanvasOpen = split && webExplorerOpen && !parallelOpen;
   const parallelWebExplorerOpen = split && webExplorerOpen && parallelOpen;
   const mapsCanvasOpen = split && mapsOpen && !parallelOpen;
   const parallelMapsOpen = split && mapsOpen && parallelOpen;
   const codingLivePreviewOpen = split && codingLivePreview !== null && !parallelOpen;
+  const webMediaCanvasOpen = split && webMediaOpen && webMediaFiles.length > 0 && !parallelOpen && !webExplorerOpen && !mapsOpen && codingLivePreview === null;
   const dualNativeBrowserOpen = split && webExplorerOpen && mapsOpen;
   const boundedWebExplorerParallelIndex = Math.max(0, Math.min(webExplorerParallelIndex, parallelPrompts.length - 1));
   const boundedMapsParallelIndex = Math.max(0, Math.min(mapsParallelIndex, parallelPrompts.length - 1));
@@ -1263,11 +1800,13 @@ export function CanvasSurfacesSlice({
   const surfaceClassName = [
     "canvasSurfaces",
     "canvasSurfaces--split",
+    tradingMode ? "canvasSurfaces--tradingMode" : "",
     actionsOpen ? "canvasSurfaces--actionsOpen" : "",
     filesOpen ? "canvasSurfaces--filesOpen" : "",
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
-    parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen || codingLivePreviewOpen ? "canvasSurfaces--parallelOpen" : "",
+    parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen || codingLivePreviewOpen || webMediaCanvasOpen ? "canvasSurfaces--parallelOpen" : "",
     activeWebExplorerSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
+    webMediaCanvasOpen ? "canvasSurfaces--webMediaOpen" : "",
     codingLivePreviewOpen ? "canvasSurfaces--codingLivePreviewOpen" : "",
     activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
     mapsClosing ? "canvasSurfaces--mapsClosing" : "",
@@ -1537,6 +2076,16 @@ export function CanvasSurfacesSlice({
               <CodingLivePreviewFrame preview={codingLivePreview} />
             </section>
           </div>
+        ) : webMediaCanvasOpen ? (
+          <div className="parallelCanvasGrid parallelCanvasGrid--count2 webMediaCanvasGrid">
+            <section className="parallelCanvasPane" aria-label="Primary canvas" />
+            <section className="parallelCanvasPane webMediaCanvasPane" aria-label="Web search media canvas">
+              <button type="button" className="webExplorerClose webMediaCanvasPane__close" aria-label="Close Web search media" onClick={onWebMediaClose}>
+                <span aria-hidden="true" />
+              </button>
+              <WebMediaCanvas files={webMediaFiles} />
+            </section>
+          </div>
         ) : webExplorerCanvasOpen && mapsCanvasOpen ? (
           <div className={["parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid", nativeBrowserPage === "maps" ? "mapsCanvasGrid--earthActive" : ""].filter(Boolean).join(" ")}>
             <section className="parallelCanvasPane" aria-label="Primary canvas" />
@@ -1606,11 +2155,21 @@ export function CanvasSurfacesSlice({
         <CanvasPlanetRail />
       ) : actionsOpen ? (
         <aside className="canvasSplitPane" aria-label="Parallel canvas actions">
-          <button type="button" className="canvasSplitCard" onClick={onFilesOpen} aria-expanded={filesOpen} aria-controls="canvas-files-pane">
-            <span className="shellIcon shellIcon--assets" aria-hidden="true" />
-            <strong>Files</strong>
-            <small>Browse project files</small>
-          </button>
+          {tradingMode ? (
+            <button type="button" className="canvasSplitCard canvasSplitCard--marketOrder" aria-label="Market Order" onClick={onFilesOpen} aria-expanded={filesOpen} aria-controls="canvas-files-pane">
+              <svg className="canvasSplitIcon" width="200" height="200" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+                <path fill="currentColor" d="M27 16h-2v2h-1c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h4v2h-6v2h3v2h2v-2h1c1.1 0 2-.9 2-2v-2c0-1.1-.9-2-2-2h-4v-2h6v-2h-3zm1-8h-6V4c0-1.1-.9-2-2-2h-8c-1.1 0-2 .9-2 2v4H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h15v-2H4V10h24v4h2v-4c0-1.1-.9-2-2-2m-8 0h-8V4h8z" />
+              </svg>
+              <strong>Market Order</strong>
+              <small>Execute live order</small>
+            </button>
+          ) : (
+            <button type="button" className="canvasSplitCard" onClick={onFilesOpen} aria-expanded={filesOpen} aria-controls="canvas-files-pane">
+              <span className="shellIcon shellIcon--assets" aria-hidden="true" />
+              <strong>Files</strong>
+              <small>Browse project files</small>
+            </button>
+          )}
           <button type="button" className="canvasSplitCard" onClick={onParallelAdd} disabled={parallelPrompts.length >= 4}>
             <svg className="canvasSplitIcon" xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M14 3v2H4v13.385L5.763 17H20v-7h2v8a1 1 0 0 1-1 1H6.455L2 22.5V4a1 1 0 0 1 1-1h11Zm5 0V0h2v3h3v2h-3v3h-2V5h-3V3h3Z" />
@@ -1629,27 +2188,40 @@ export function CanvasSurfacesSlice({
             <small>Search the web with Google</small>
           </button>
           <button type="button" className="canvasSplitCard" onClick={onTerminalOpen} aria-expanded={terminalOpen} aria-controls="canvas-terminal-pane">
-            <svg className="canvasSplitIcon" xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
-              <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5">
-                <rect width="18.5" height="15.5" x="2.75" y="4.25" rx="3.5" />
-                <path d="m7.25 9l3 3l-3 3m5.5 0h4" />
-              </g>
-            </svg>
-            <strong>Open Terminal</strong>
-            <small>Open a command terminal</small>
+            {tradingMode ? <BloombergGlyph /> : (
+              <svg className="canvasSplitIcon" xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 24 24" aria-hidden="true">
+                <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5">
+                  <rect width="18.5" height="15.5" x="2.75" y="4.25" rx="3.5" />
+                  <path d="m7.25 9l3 3l-3 3m5.5 0h4" />
+                </g>
+              </svg>
+            )}
+            <strong>{tradingMode ? "Bloomberg Live" : "Open Terminal"}</strong>
+            <small>{tradingMode ? "Open Bloomberg channel" : "Open a command terminal"}</small>
           </button>
         </aside>
       ) : null}
       {activeToolPane === "files" ? (
-        <CanvasFilesPane
-          sessionName={sessionName}
-          files={sessionFiles}
-          activePane={activeToolPane}
-          openPanes={openToolPanes}
-          onActivatePane={onActivePaneChange}
-          onClosePane={closeToolPane}
-          onTerminalOpen={onTerminalOpen}
-        />
+        tradingMode ? (
+          <TradingOrderPane
+            activePane={activeToolPane}
+            openPanes={openToolPanes}
+            draft={tradingOrderDraft}
+            onActivatePane={onActivePaneChange}
+            onClosePane={closeToolPane}
+            onTerminalOpen={onTerminalOpen}
+          />
+        ) : (
+          <CanvasFilesPane
+            sessionName={sessionName}
+            files={sessionFiles}
+            activePane={activeToolPane}
+            openPanes={openToolPanes}
+            onActivatePane={onActivePaneChange}
+            onClosePane={closeToolPane}
+            onTerminalOpen={onTerminalOpen}
+          />
+        )
       ) : null}
       {activeToolPane === "terminal" ? (
         <CanvasTerminalPane
@@ -1657,6 +2229,7 @@ export function CanvasSurfacesSlice({
           activePane={activeToolPane}
           openPanes={openToolPanes}
           filesLabel={filesLabel}
+          tradingMode={tradingMode}
           onActivatePane={onActivePaneChange}
           onClosePane={closeToolPane}
           onTerminalOpen={onTerminalOpen}

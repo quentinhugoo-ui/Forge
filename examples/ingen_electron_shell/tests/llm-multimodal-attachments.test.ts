@@ -182,14 +182,57 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain('line === "SEARCHARCHIVE_RESULT"');
     expect(rendererSource).toContain("function SearchArchiveResultCard");
     expect(rendererSource).toContain("highlightedSearchArchiveSnippet");
-    expect(rendererSource).toContain("SearchArchiveDemoStartCard");
-    expect(rendererSource).toContain("[[searcharchive_demo_start]]");
+    expect(rendererSource).toContain('line === "GOOGLEPLACE_RESULT"');
+    expect(rendererSource).toContain("function GooglePlaceResultCard");
+    expect(rendererSource).toContain("function GooglePlaceRatingStars");
+    expect(rendererSource).toContain('line === "MAPS_RESULT"');
+    expect(rendererSource).toContain("function MapsInlineResultCard");
+    expect(rendererSource).toContain("function isManualLoopStreamNarrationLine");
+    expect(rendererSource).toContain("isManualLoopStreamNarrationLine(line)");
+    expect(rendererSource).toContain("current_opening_hours");
+    expect(rendererSource).toContain("googlePlaceResultCard__photos");
     expect(stylesSource).toContain(".searchArchiveResultCard");
-    expect(stylesSource).toContain(".searchArchiveDemoCard__start");
+    expect(stylesSource).toContain(".googlePlaceResultCard");
+    expect(stylesSource).toContain(".mapsInlineResultCard");
+    expect(stylesSource).toContain(".googlePlaceResultCard__star--filled");
+    expect(appSource).toContain('normalized.includes("render_mode=inline_transcript")');
     expect(mainSource).toContain("SEARCHARCHIVE_LOOP_DEMO_SESSION_ID");
     expect(mainSource).toContain("ensureSearchArchiveLoopDemoSession");
     expect(mainSource).toContain("Loop stream archive test");
-    expect(mainSource).toContain("budget croissant");
+    expect(mainSource).toContain("rectorat de lille");
+    expect(mainSource).toContain("Je verifie l'adresse du rectorat de Lille pour etre sur.");
+    expect(mainSource).toContain("GOOGLEPLACE_RESULT");
+    expect(mainSource).toContain("witcherScrapersAttachments");
+    expect(mainSource).toContain("the_witcher_3_wild_hunt_key_visual");
+    expect(mainSource).toContain("official key visual");
+    expect(mainSource).toContain("scrapersVisualAttachments(witcherScrapersResult)");
+    expect(mainSource).toContain("witcherCharactersWebSearchLine");
+    expect(mainSource).toContain("Recupere des images des personnages principaux de The Witcher 3");
+    expect(mainSource).toContain("witcherCharactersAttachments");
+    expect(mainSource).toContain("/shell-assets/witcher-characters/geralt.png");
+    expect(mainSource).toContain("/shell-assets/witcher-characters/ciri.png");
+    expect(mainSource).toContain("/shell-assets/witcher-characters/yennefer.jpg");
+    expect(mainSource).toContain("/shell-assets/witcher-characters/triss.png");
+    expect(mainSource).toContain("Collect displayable character images for the main Witcher 3 cast");
+    expect(mainSource).toContain("businessStatus");
+    expect(mainSource).toContain("currentOpeningHours");
+    expect(mainSource).toContain("userRatingCount");
+    expect(mainSource).toContain("MAPS_TEMPLATE_RESULT");
+    expect(mainSource).toContain("MAPS_RESULT");
+    expect(mainSource).toContain('open_mode="inline_transcript"');
+    expect(mainSource).toContain("render_mode=inline_transcript");
+    expect(mainSource).not.toContain("Loop stream event:");
+    expect(mainSource).not.toContain("Tool called:");
+    expect(mainSource).not.toContain('turnId: "searcharchive-demo-maps-template-tool"');
+    expect(mainSource).not.toContain('turnId: "searcharchive-demo-maps-execute-tool"');
+    expect(mainSource).not.toContain('turnId: "searcharchive-demo-maps-final"');
+    expect(mainSource).not.toContain("Maps CodeAct template gate.");
+    expect(mainSource).not.toContain("Carte du rectorat de Lille affichee.");
+    expect(mainSource).not.toContain("Maps visual surface.");
+    expect(rendererSource).toContain("Resolve Google Place");
+    expect(mainSource).not.toContain("Maintenant montre Paris en 3D.");
+    expect(mainSource).not.toContain("direct_maps");
+    expect(mainSource).not.toContain("Google Places verification skipped");
   });
 
   it("documents the two-round-trip CodeAct loop contract", () => {
@@ -287,10 +330,11 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("transcriptHasOpenQuestionnaire(panelsChatBottomState.transcript)");
   });
 
-  it("registers the English questionnaire CodeAct and renders it above the composer", () => {
+  it("registers the language-matched questionnaire CodeAct and renders it above the composer", () => {
     expect(brainSource).toContain('pub const BRAIN_QUESTIONNAIRE_COMMAND: &str = "/questionnaire_"');
     expect(brainSource).toContain("brain_questionnaire_codeact_template()");
-    expect(brainSource).toContain("Use /questionnaire_ from General, Science or Coding Brain");
+    expect(brainSource).toContain("Use /questionnaire_ from General, Science, Coding or Trading Brain");
+    expect(brainSource).toContain("write questionnaire title, intro, questions and options in the user's current language");
     expect(brainSource).toContain("brain_questionnaire_codeact_template()");
     expect(brainSource).toContain("brain_questionnaire_codeact_template(),");
     expect(brainSource).toContain("BRAIN_SCIENCE_VISIBLE_CATALOG.contains(BRAIN_QUESTIONNAIRE_COMMAND)");
@@ -301,6 +345,7 @@ describe("LLM multimodal attachments", () => {
     expect(brainSource).toContain("host adds Other");
     expect(brainSource).toContain("No Option 1/2/3, vague answers or Other");
     expect(brainSource).toContain("three concrete expert options");
+    expect(brainSource).toContain("in the user's current language");
     expect(brainSource).toContain("benefit, tradeoff, when to choose");
     expect(brainSource).toContain("Max 5 questions");
     expect(brainSource).toContain("Skip trivial tasks or obvious safe defaults");
@@ -501,17 +546,17 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("say only that you are checking recent mail");
     expect(mainSource).toContain("do not mention dedicated access, templates, API, authorization, or result lists before the Gmail result");
     expect(brainSource).toContain("Gmail visible prose must be short and user-facing");
-    expect(mainSource).not.toContain(`BRAIN_GMAIL_${"COM"}_COMMAND`);
+    expect(mainSource).not.toContain("BRAIN_GMAIL_COM_COMMAND");
     expect(appSource).toContain('latestAssistant?.text.includes("GMAIL_RESULT")');
     expect(rendererSource).not.toContain("stripGmailCodeActLines");
-    expect(rendererSource).not.toContain("J'ouvre Gmail dans Web Explorer.");
-    expect(rendererSource).toContain('Opening Gmail mailbox');
-    expect(rendererSource).toContain('Gmail template received');
-    expect(rendererSource).toContain('Gmail API response received');
+    expect(rendererSource).toContain("Opening Gmail mailbox");
+    expect(rendererSource).not.toContain("Gmail template received");
+    expect(rendererSource).toContain("Gmail API response received");
     expect(rendererSource).toContain('line === "GMAIL_TEMPLATE_RESULT" || line === "GMAIL_RESULT"');
-    expect(mainSource).toContain('if (commands.includes(BRAIN_GMAIL_COMMAND))');
-    expect(mainSource).toContain('params.assistantText.includes("GMAIL_TEMPLATE_RESULT") && !params.assistantText.includes("GMAIL_RESULT")');
+    expect(mainSource).toContain("function hasPendingBrainCodeActTemplateResult");
+    expect(mainSource).not.toContain('params.assistantText.includes("GMAIL_TEMPLATE_RESULT") && !params.assistantText.includes("GMAIL_RESULT")');
     expect(rendererSource).toContain('event.command === BRAIN_GMAIL_COMMAND) {');
+    expect(rendererSource).not.toContain("J'ouvre Gmail dans Web Explorer.");
   });
 
   it("registers Airbnb as a Brain-backed module CodeAct", () => {
@@ -544,18 +589,23 @@ describe("LLM multimodal attachments", () => {
 
   it("registers Maps as a Brain-backed Google Earth CodeAct", () => {
     expect(brainSource).toContain('pub const BRAIN_MAPS_COMMAND: &str = "/maps_"');
+    expect(brainSource).toContain('pub const BRAIN_GOOGLEPLACE_COMMAND: &str = "/googleplace_"');
+    expect(brainSource).toContain("brain_googleplace_codeact_template()");
     expect(brainSource).toContain("brain_maps_codeact_template()");
-    expect(brainSource).toContain("Google Earth");
-    expect(brainSource).toContain("explicit map, localization, route, coordinates");
+    expect(brainSource).toContain("Google Photorealistic 3D Tiles");
+    expect(brainSource).toContain("Skip /googleplace_ and go directly to /maps_");
+    expect(brainSource).toContain("only for very specific or ambiguous public places");
+    expect(brainSource).toContain("The camera is host-fixed");
+    expect(brainSource).toContain("explicit map/localization/route/coordinates");
     expect(brainSource).toContain("historical, literary, vocabulary, table, classification or explanation request");
     expect(brainSource).toContain("use /websearch_ and then /scrapers_");
     expect(brainSource).toContain("bare /maps_ opens a neutral Earth view");
     expect(brainSource).toContain("never the saved home city");
     expect(brainSource).not.toContain("geographic place detected alone means /maps_");
     expect(brainSource).not.toContain("Default uses the Brain home city");
-    expect(mainSource).toContain("${BRAIN_MAPS_COMMAND} exige une intention carte/localisation/itineraire");
-    expect(mainSource).toContain("ne suffit jamais: utilise plutot ${BRAIN_WEBSEARCH_COMMAND}");
-    expect(mainSource).toContain("n'utilise jamais user_home_location comme cible par defaut");
+    expect(mainSource).toContain("readMapsCodeAct");
+    expect(mainSource).toContain("mapsTemplateProofHash");
+    expect(mainSource).toContain("executeAssistantGooglePlaceCodeAct");
     expect(mainSource).toContain("Never treat user_home_location as live device geolocation or as the default /maps_ target");
     expect(mainSource).toContain("function inferMapsTargetFromUserText");
     expect(mainSource).toContain("function userTextHasDirectMapsIntent");
@@ -564,7 +614,10 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("commands.includes(BRAIN_MAPS_COMMAND) && textLooksLikeMapBackedAnswerIntent");
     expect(mainSource).toContain("suppressedMapsCodeAct");
     expect(mainSource).toContain("applyGeographicMapsFallback");
-    expect(mainSource).toContain('return `${BRAIN_MAPS_COMMAND} target="${target}"`;');
+    expect(mainSource).toContain('template_proof_hash="sha256:${mapsTemplateProofHash()}"');
+    expect(mainSource).toContain("executeAssistantGooglePlaceCodeAct");
+    expect(mainSource).toContain("GOOGLEPLACE_RESULT");
+    expect(mainSource).toContain("renderMapsTemplateResult");
     expect(mainSource).not.toContain("(?:parle|parles|raconte|dis)[-\\s]+moi");
     expect(mainSource).not.toContain("simplePlaceIntro");
     expect(mainSource).toContain("stripCompetingGeographicCodeActLines");
@@ -572,7 +625,9 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("host_geographic_fallback");
     expect(brainSource).toContain("Device location must never be read silently");
     expect(contractSource).toContain("BRAIN_MAPS_COMMAND");
+    expect(contractSource).toContain("BRAIN_GOOGLEPLACE_COMMAND");
     expect(mainSource).toContain("extractMapsCodeAct");
+    expect(mainSource).toContain("extractGooglePlaceCodeAct");
     expect(mainSource).toContain("navigateNativeWebExplorerToMaps");
     expect(mainSource).toContain("nativeMapsView: WebContentsView | null");
     expect(mainSource).toContain("new WebContentsView");
@@ -586,7 +641,8 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain('parsed.hostname === "earth.google.com"');
     expect(preloadCjsSource).toContain("showNativeMaps(bounds)");
     expect(preloadCjsSource).toContain('ipcRenderer.invoke("forge:maps-show", bounds)');
-    expect(appSource).toContain('latestAssistant?.text.includes("MAPS_RESULT")');
+    expect(appSource).toContain("function assistantTextHasMapsSignal");
+    expect(appSource).toContain('normalized.includes("maps_result")');
     expect(appSource).toContain("canvasMapsOpen");
     expect(appSource).toContain("onNativeMapsCodeAct");
     expect(appSource).toContain("setMapsWebviewUrl(event.url");
@@ -594,10 +650,11 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain("mapsOwnerSessionIdRef");
     expect(appSource).toContain('mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft"');
     expect(appSource).toContain("hideNativeMaps");
-    expect(canvasSource).toContain("GoogleEarthDomWebview");
-    expect(canvasSource).toContain("<webview");
-    expect(canvasSource).toContain("googleEarthDomUrl");
-    expect(rendererSource).toContain("export function blobPathForAttachment");
+    expect(canvasSource).toContain("BangerMapsNativeViewport");
+    expect(canvasSource).toContain("google_photorealistic_3d_tiles");
+    expect(canvasSource).toContain("getBangerGoogleTilesConfig");
+    expect(rendererSource).toContain("function TranscriptAttachmentStack");
+    expect(rendererSource).toContain("transcriptAttachmentStack--bento");
     expect(canvasSource).toContain("NativeBrowserPager");
     expect(canvasSource).toContain("GoogleEarthIcon");
     expect(canvasSource).toContain("webExplorerModuleId");
@@ -607,32 +664,34 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".shell--maps-canvas-open .panelsChatBottom");
     expect(stylesSource).toContain(".shell--maps-canvas-open .chatCanvas");
     expect(stylesSource).toContain(".googleEarthDomFrame");
-    expect(stylesSource).toContain(".googleEarthDomWebview");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .mapsCanvasPane");
-    expect(stylesSource).toContain("bottom: calc(-1 * var(--chat-canvas-bottom))");
+    expect(stylesSource).toContain(".bangerSphereNativeFrame__fallbackSphere");
     expect(stylesSource).toContain("z-index: 2");
-    expect(stylesSource).toContain(".webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted");
+    expect(stylesSource).toContain(".webExplorerNativeSlot--accepted");
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).not.toContain(".mapsEarthBlobFade");
     expect(mainSource).toContain("NATIVE_MAPS_EARTH_OVERSCAN_PX.leftRatio");
     expect(mainSource).toContain("requestedLeftOverscan");
     expect(mainSource).toContain("owner.contentView.addChildView(view);");
     expect(mainSource).not.toContain("owner.contentView.addChildView(view, 0)");
-    expect(canvasSource).not.toContain("showNativeMaps");
-    expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
+    expect(canvasSource).toContain("showNativeMaps");
+    expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Search on Google Earth"]');
+    expect(rendererSource).toContain("function GoogleEarthCodeActIcon");
+    expect(stylesSource).toContain('mask-image: url("/shell-assets/nav_planet_bounded.svg")');
   });
 
   it("renders module CodeAct events with their shared sidebar logos", () => {
     expect(rendererSource).toContain('command === BRAIN_GMAIL_COMMAND');
     expect(rendererSource).toContain('<ModuleLogo id="gmail" />');
+    expect(stylesSource).toContain(".transcriptCommandSummaryLine--gmail");
+    expect(stylesSource).toContain(".transcriptCommandTree__gmailLogo");
     expect(rendererSource).toContain('if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />');
     expect(rendererSource).toContain('if (command === BRAIN_SEARCHARCHIVE_COMMAND) return <ModuleLogo id="searcharchive" />');
     expect(sidebarSource).toContain('{ id: "searcharchive", label: "Search Archive" }');
     expect(moduleLogosSource).toContain("export function SearchArchiveIcon");
     expect(moduleLogosSource).toContain('if (id === "searcharchive") return <SearchArchiveIcon />');
     expect(stylesSource).toContain(".transcriptCodeActEvent__icon .sidebarModule__logo");
-    expect(stylesSource).toContain(".transcriptCommandSummaryLine--gmail");
-    expect(stylesSource).toContain(".transcriptCommandTree__gmailLogo");
   });
 
   it("registers Compute as a module that injects formulas into the composer", () => {
@@ -824,8 +883,15 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantThinkingEvent__label strong");
   });
 
+  it("keeps a new foreground session independent while an older assistant run is still streaming", () => {
+    expect(mainSource).toContain("const requestSessionId = activeSession.sessionId;");
+    expect(mainSource).toContain("if (panelsChatBottomState.activeSessionId !== requestSessionId) {\n        return;\n      }");
+    expect(mainSource).toContain("activeAssistantRunControl.sessionId === panelsChatBottomState.activeSessionId");
+  });
+
   it("keeps uploaded visual media uncut while assistant thinking is pending", () => {
-    expect(rendererSource).toContain('preserveAspectRatio="xMidYMid meet"');
+    expect(rendererSource).toContain("setAspectRatio(`${width} / ${height}`)");
+    expect(rendererSource).toContain("...(aspectRatio && !fused ? { aspectRatio } : {})");
     expect(stylesSource).toContain(".transcriptAttachment--video .transcriptAttachment__media");
     expect(stylesSource).toContain("object-fit: contain");
     expect(stylesSource).not.toContain("Fill the blob so no straight letterbox edge cuts through the feathered mask.");
@@ -1012,6 +1078,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__quote");
     expect(stylesSource).toContain(".assistantText__quote::before");
+    expect(stylesSource).toContain(".assistantText__quote p:last-child::after");
+    expect(stylesSource).toContain('content: "\\201D"');
     expect(stylesSource).toContain("border-left: 1px solid var(--assistant-mark-line)");
     expect(stylesSource).toContain("overflow: visible");
     expect(stylesSource).not.toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
@@ -1100,9 +1168,10 @@ describe("LLM multimodal attachments", () => {
     expect(canvasSource).toContain("const fileCountLabel = files.length === 1 ? \"1 file\" : `${files.length} files`");
     expect(canvasSource).toContain("filesLabel={fileCountLabel}");
     expect(canvasSource).toContain("sessionName={sessionName}");
-    expect(canvasSource).toContain("type FileKindFilter = \"all\" | \"document\" | ComposerUploadPreview[\"kind\"]");
+    expect(canvasSource).toContain("type FileKindFilter = \"all\" | \"web_search\" | \"document\" | ComposerUploadPreview[\"kind\"]");
     expect(canvasSource).toContain("const FILE_KIND_FILTERS");
-    expect(canvasSource).toContain("{ id: \"image\", label: \"Images et photos\" }");
+    expect(canvasSource).toContain("{ id: \"web_search\", label: \"Web search\" }");
+    expect(canvasSource).toContain("{ id: \"image\", label: \"Images and photos\" }");
     expect(canvasSource).toContain("{ id: \"video\", label: \"Videos\" }");
     expect(canvasSource).toContain("{ id: \"model3d\", label: \"Objets 3D\" }");
     expect(canvasSource).toContain("{ id: \"document\", label: \"Documents\", kinds: [\"pdf\", \"spreadsheet\", \"text\"] }");
