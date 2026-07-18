@@ -55,6 +55,16 @@ describe("edit chart CodeAct", () => {
     expect(request?.proofHash).toHaveLength(64);
   });
 
+  it("normalizes LLM candle highlight aliases to select_candles", () => {
+    const hash = editChartTemplateProofHash();
+    const request = parseEditChartCodeAct(`/edit_chart_ template_proof_hash="sha256:${hash}" instrument="NATGAS_USD" timeframe="H1" actions='[{"kind":"highlight_candles","label":"3 bullish candles","candle_times":["2026-07-16T14:00:00.000000000Z","16/07 15h"],"time_start":"2026-07-16T14:00:00.000000000Z","time_end":"2026-07-16T16:00:00.000000000Z"}]' chart_window_snapshot_hash="chart-snapshot-proof"`, snapshot);
+    expect(request?.actions).toHaveLength(1);
+    expect(request?.actions[0]?.kind).toBe("select_candles");
+    expect(request?.actions[0]?.candleTimes).toEqual(["2026-07-16T14:00:00.000000000Z", "16/07 15h"]);
+    expect(request?.actions[0]?.time).toBe("2026-07-16T14:00:00.000000000Z");
+    expect(request?.actions[0]?.timeEnd).toBe("2026-07-16T16:00:00.000000000Z");
+  });
+
   it("exposes the renderer IPC bridge used to apply chart edits", () => {
     expect(preloadSource).toContain("onTradingChartEditRequestEvent(listener)");
     expect(preloadSource).toContain("forge:trading-chart-edit-request");

@@ -328,6 +328,92 @@ function normalizeChartEditActionKind(action: TradingChartEditAction): TradingCh
   return kind === action.kind ? action : { ...action, kind };
 }
 
+function normalizeTradingTimeLiteral(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:?\d{2})$/i, "$1$2");
+}
+
+function parseTradingTimeMs(value: string | undefined): number {
+  if (!value) return Number.NaN;
+  const parsed = Date.parse(normalizeTradingTimeLiteral(value));
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function candleBucketKey(value: string | undefined, timeframe: TradingTimeframe): string {
+  const parsed = parseTradingTimeMs(value);
+  if (!Number.isFinite(parsed)) return "";
+  const bucket = Math.floor(parsed / TIMEFRAME_MS[timeframe]) * TIMEFRAME_MS[timeframe];
+  return new Date(bucket).toISOString();
+}
+
+function asciiTimeToken(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function candidateYearsForCandles(candles: TradingCandle[]): number[] {
+  const years = new Set<number>();
+  for (const candle of candles) {
+    const parsed = parseTradingTimeMs(candle.time);
+    if (Number.isFinite(parsed)) years.add(new Date(parsed).getUTCFullYear());
+  }
+  if (years.size === 0) years.add(new Date().getUTCFullYear());
+  return [...years].sort((left, right) => right - left);
+}
+
+function parseLooseCandleTimeToken(value: string, candles: TradingCandle[], timeframe: TradingTimeframe): string | null {
+  const token = asciiTimeToken(value).replace(/\s+/g, " ").trim();
+  if (!token) return null;
+  const monthByName = new Map([
+    ["jan", 1], ["janv", 1], ["janvier", 1],
+    ["fev", 2], ["fevr", 2], ["fevrier", 2],
+    ["mar", 3], ["mars", 3],
+    ["avr", 4], ["avril", 4],
+    ["mai", 5],
+    ["juin", 6],
+    ["juil", 7], ["juillet", 7],
+    ["aou", 8], ["aout", 8],
+    ["sep", 9], ["sept", 9], ["septembre", 9],
+    ["oct", 10], ["octobre", 10],
+    ["nov", 11], ["novembre", 11],
+    ["dec", 12], ["decembre", 12]
+  ]);
+  const numeric = /\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?(?:\s+(?:a\s+)?(\d{1,2})(?:\s*h|:)(\d{0,2}))?/.exec(token);
+  const named = /\b(\d{1,2})\s+([a-z]{3,9})\.?(?:\s+(?:a\s+)?(\d{1,2})(?:\s*h|:)(\d{0,2}))?/.exec(token);
+  const day = numeric ? Number(numeric[1]) : named ? Number(named[1]) : Number.NaN;
+  const month = numeric ? Number(numeric[2]) : named ? monthByName.get(named[2] ?? "") ?? Number.NaN : Number.NaN;
+  const rawYear = numeric?.[3] ? Number(numeric[3]) : Number.NaN;
+  const hour = Number(numeric?.[4] ?? named?.[3] ?? 0);
+  const minute = Number(numeric?.[5] || named?.[4] || 0);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(hour) || day < 1 || month < 1 || month > 12 || hour > 23 || minute > 59) {
+    return null;
+  }
+  const years = Number.isFinite(rawYear)
+    ? [rawYear < 100 ? 2000 + rawYear : rawYear]
+    : candidateYearsForCandles(candles);
+  const byBucket = new Map(candles.map((candle) => [candleBucketKey(candle.time, timeframe), candle.time]));
+  for (const year of years) {
+    const key = candleBucketKey(new Date(Date.UTC(year, month - 1, day, hour, minute)).toISOString(), timeframe);
+    const match = byBucket.get(key);
+    if (match) return match;
+  }
+  return null;
+}
+
+function resolveCandleTimeToken(value: string, candles: TradingCandle[], timeframe: TradingTimeframe): string | null {
+  const normalized = normalizeTradingTimeLiteral(value);
+  const targetKey = candleBucketKey(normalized, timeframe);
+  if (targetKey) {
+    const match = candles.find((candle) => candleBucketKey(candle.time, timeframe) === targetKey);
+    if (match) return match.time;
+  }
+  return parseLooseCandleTimeToken(value, candles, timeframe);
+}
+
+function uniqueCandleTimes(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
 function normalizeChartEditElementId(action: TradingChartEditAction, label: string): string {
   const raw = (action.id || label).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return raw || `edit-${action.kind}`;
@@ -359,10 +445,12 @@ function chartEditMatchesTag(element: TradingChartEditElement, raw: string): boo
 function candleTimesForEditRange(action: TradingChartEditAction, candles: TradingCandle[], timeframe: TradingTimeframe): string[] {
   if (action.kind !== "select_candles") return action.candleTimes ?? [];
   const explicit = (action.candleTimes ?? []).filter(Boolean);
-  if (explicit.length > 0) return explicit;
-  const start = Date.parse(action.time ?? "");
+  if (explicit.length > 0) {
+    return uniqueCandleTimes(explicit.map((time) => resolveCandleTimeToken(time, candles, timeframe) ?? normalizeTradingTimeLiteral(time)));
+  }
+  const start = parseTradingTimeMs(action.time);
   if (!Number.isFinite(start)) return [];
-  const rawEnd = Date.parse(action.timeEnd ?? "");
+  const rawEnd = parseTradingTimeMs(action.timeEnd);
   const duration = TIMEFRAME_MS[timeframe];
   const end = Number.isFinite(rawEnd) ? rawEnd : start + duration - 1;
   const min = Math.min(start, end);
@@ -408,7 +496,7 @@ function captureTradingChartScreenshot(): { dataUrl: string; width: number; heig
   return { dataUrl: output.toDataURL("image/png"), width, height };
 }
 
-function tradingIpcError(code: string, message: string): TradingChartResult["error"] {
+function tradingIpcError(code: string, message: string): NonNullable<TradingChartResult["error"]> {
   return { code: "bad_payload", message: `${code}: ${message}`, proofHash: "" };
 }
 
@@ -1060,9 +1148,9 @@ function drawChartEdits(ctx: CanvasRenderingContext2D, projection: MarketCanvasP
     ctx.shadowBlur = highlighted ? 16 : 0;
 
     if (element.kind === "select_candles") {
-      const selected = new Set(element.candleTimes ?? []);
+      const selected = new Set(uniqueCandleTimes((element.candleTimes ?? []).map((time) => resolveCandleTimeToken(time, metrics.visible, projection.timeframe) ?? candleBucketKey(time, projection.timeframe))));
       metrics.visible.forEach((candle, index) => {
-        if (!selected.has(candle.time)) return;
+        if (!selected.has(candle.time) && !selected.has(candleBucketKey(candle.time, projection.timeframe))) return;
         const x = metrics.plot.left + index * metrics.xStep + metrics.xStep / 2;
         const left = x - Math.max(metrics.bodyWidth, metrics.xStep * 0.42);
         const width = Math.max(metrics.bodyWidth * 2.2, metrics.xStep * 0.84);
@@ -1696,74 +1784,97 @@ export function TradingCanvas({ parallelCount = 1 }: { parallelCount?: number })
     const dispose = api.onTradingChartEditRequestEvent((event: TradingChartEditRequestEvent) => {
       void (async () => {
         const capturedAt = new Date().toISOString();
-        const currentCandles = candlesByTimeframe[event.timeframe] ?? [];
-        const visible = latestChartCandles(currentCandles, event.timeframe === timeframe ? viewportOffset : 0, 80);
-        const baseSnapshot = {
-          schema: "forge.trading.chart_window_snapshot.v1" as const,
-          source: "renderer_trading_chart" as const,
-          instrument: MARKET_ASSET.instrument,
-          displayName: MARKET_ASSET.displayName,
-          timeframe: event.timeframe,
-          availableTimeframes: TIMEFRAMES,
-          loadedCandleCount: currentCandles.length,
-          visibleCandleCount: visible.length,
-          firstLoadedTime: currentCandles[0]?.time,
-          lastLoadedTime: currentCandles.at(-1)?.time,
-          firstVisibleTime: visible[0]?.time,
-          lastVisibleTime: visible.at(-1)?.time,
-          pricePrecision: MARKET_ASSET.pricePrecision,
-          dataSource: MARKET_ASSET.source.cacheNamespace as "oanda_rest_v20",
-          chartUpdatedAt: capturedAt
-        };
-        const chartWindowSnapshot: TradingChartWindowSnapshot = { ...baseSnapshot, proofHash: await chartSnapshotProof(baseSnapshot) };
-        const requestInstrument = normalizeTradingInstrument(event.instrument);
-        const wrongInstrument = Boolean(event.instrument && requestInstrument !== MARKET_ASSET.instrument);
-        const unsupportedTimeframe = !TIMEFRAMES.includes(event.timeframe);
-        const normalizedActions = event.actions.map((action) => normalizeChartEditActionForCandles(action, currentCandles, event.timeframe));
-        const clearRequested = normalizedActions.some((action) => action.kind === "clear");
-        const created = (await Promise.all(normalizedActions.map((action, index) => chartEditElementFromAction(action, event, index)))).filter((element): element is TradingChartEditElement => Boolean(element));
-        const error = wrongInstrument
-          ? tradingIpcError("edit_chart_instrument_not_loaded", `Chart renderer has ${MARKET_ASSET.instrument}, not ${event.instrument}.`)
-          : unsupportedTimeframe
-            ? tradingIpcError("edit_chart_timeframe_not_loaded", `Chart renderer has no loaded ${event.timeframe} data.`)
-            : event.actions.length === 0
-              ? tradingIpcError("edit_chart_empty_actions", "No chart edit actions were provided.")
-              : undefined;
-        if (error) {
-          error.proofHash = await sha256Hex(stableJson({ code: error.code, message: error.message, capturedAt }));
-        }
-        const accepted = !error;
-        if (accepted) {
-          setChartEdits((current) => {
-            const kept = clearRequested ? [] : current.filter((element) => element.timeframe !== event.timeframe || element.instrument !== MARKET_ASSET.instrument || !created.some((next) => next.id === element.id));
-            return [...kept, ...created];
-          });
-          const last = created.at(-1);
-          if (last) {
-            setHighlightedChartEditId(last.id);
-            window.setTimeout(() => setHighlightedChartEditId((current) => current === last.id ? null : current), 1800);
+        let chartWindowSnapshot: TradingChartWindowSnapshot | undefined;
+        try {
+          const currentCandles = candlesByTimeframe[event.timeframe] ?? [];
+          const visible = latestChartCandles(currentCandles, event.timeframe === timeframe ? viewportOffset : 0, 80);
+          const baseSnapshot = {
+            schema: "forge.trading.chart_window_snapshot.v1" as const,
+            source: "renderer_trading_chart" as const,
+            instrument: MARKET_ASSET.instrument,
+            displayName: MARKET_ASSET.displayName,
+            timeframe: event.timeframe,
+            availableTimeframes: TIMEFRAMES,
+            loadedCandleCount: currentCandles.length,
+            visibleCandleCount: visible.length,
+            firstLoadedTime: currentCandles[0]?.time,
+            lastLoadedTime: currentCandles.at(-1)?.time,
+            firstVisibleTime: visible[0]?.time,
+            lastVisibleTime: visible.at(-1)?.time,
+            pricePrecision: MARKET_ASSET.pricePrecision,
+            dataSource: MARKET_ASSET.source.cacheNamespace as "oanda_rest_v20",
+            chartUpdatedAt: capturedAt
+          };
+          chartWindowSnapshot = { ...baseSnapshot, proofHash: await chartSnapshotProof(baseSnapshot) };
+          const requestInstrument = normalizeTradingInstrument(event.instrument);
+          const wrongInstrument = Boolean(event.instrument && requestInstrument !== MARKET_ASSET.instrument);
+          const unsupportedTimeframe = !TIMEFRAMES.includes(event.timeframe);
+          const normalizedActions = event.actions.map((action) => normalizeChartEditActionForCandles(action, currentCandles, event.timeframe));
+          const clearRequested = normalizedActions.some((action) => action.kind === "clear");
+          const created = (await Promise.all(normalizedActions.map((action, index) => chartEditElementFromAction(action, event, index)))).filter((element): element is TradingChartEditElement => Boolean(element));
+          const error = wrongInstrument
+            ? tradingIpcError("edit_chart_instrument_not_loaded", `Chart renderer has ${MARKET_ASSET.instrument}, not ${event.instrument}.`)
+            : unsupportedTimeframe
+              ? tradingIpcError("edit_chart_timeframe_not_loaded", `Chart renderer has no loaded ${event.timeframe} data.`)
+              : event.actions.length === 0
+                ? tradingIpcError("edit_chart_empty_actions", "No chart edit actions were provided.")
+                : undefined;
+          if (error) {
+            error.proofHash = await sha256Hex(stableJson({ code: error.code, message: error.message, capturedAt }));
           }
+          const accepted = !error;
+          if (accepted) {
+            setChartEdits((current) => {
+              const kept = clearRequested ? [] : current.filter((element) => element.timeframe !== event.timeframe || element.instrument !== MARKET_ASSET.instrument || !created.some((next) => next.id === element.id));
+              return [...kept, ...created];
+            });
+            const last = created.at(-1);
+            if (last) {
+              setHighlightedChartEditId(last.id);
+              window.setTimeout(() => setHighlightedChartEditId((current) => current === last.id ? null : current), 1800);
+            }
+          }
+          const baseResult = {
+            accepted,
+            schema: "forge.trading.edit_chart.result.v1" as const,
+            source: "renderer_trading_chart" as const,
+            instrument: MARKET_ASSET.instrument,
+            timeframe: event.timeframe,
+            appliedCount: accepted ? event.actions.filter((action) => action.kind === "clear").length + created.length : 0,
+            refusedCount: accepted ? 0 : event.actions.length,
+            elements: accepted ? created : [],
+            conversationTags: accepted ? created.map((element) => ({ tag: element.tag, elementId: element.id, label: element.label })) : [],
+            chartWindowSnapshot,
+            capturedAt,
+            error
+          };
+          const result: TradingChartEditResult & { requestId: string } = { ...baseResult, requestId: event.requestId, proofHash: await chartEditResultProof(baseResult) };
+          await api.completeTradingChartEditRequest?.(result).catch(() => undefined);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown chart edit renderer failure.";
+          const rendererError = tradingIpcError("edit_chart_renderer_exception", message);
+          rendererError.proofHash = await sha256Hex(stableJson({ code: rendererError.code, message: rendererError.message, capturedAt }));
+          const baseResult = {
+            accepted: false,
+            schema: "forge.trading.edit_chart.result.v1" as const,
+            source: "renderer_trading_chart" as const,
+            instrument: MARKET_ASSET.instrument,
+            timeframe: event.timeframe,
+            appliedCount: 0,
+            refusedCount: event.actions.length,
+            elements: [],
+            conversationTags: [],
+            chartWindowSnapshot,
+            capturedAt,
+            error: rendererError
+          };
+          const result: TradingChartEditResult & { requestId: string } = { ...baseResult, requestId: event.requestId, proofHash: await chartEditResultProof(baseResult) };
+          await api.completeTradingChartEditRequest?.(result).catch(() => undefined);
         }
-        const baseResult = {
-          accepted,
-          schema: "forge.trading.edit_chart.result.v1" as const,
-          source: "renderer_trading_chart" as const,
-          instrument: MARKET_ASSET.instrument,
-          timeframe: event.timeframe,
-          appliedCount: accepted ? event.actions.filter((action) => action.kind === "clear").length + created.length : 0,
-          refusedCount: accepted ? 0 : event.actions.length,
-          elements: accepted ? created : [],
-          conversationTags: accepted ? created.map((element) => ({ tag: element.tag, elementId: element.id, label: element.label })) : [],
-          chartWindowSnapshot,
-          capturedAt,
-          error
-        };
-        const result: TradingChartEditResult & { requestId: string } = { ...baseResult, requestId: event.requestId, proofHash: await chartEditResultProof(baseResult) };
-        await api.completeTradingChartEditRequest?.(result).catch(() => undefined);
       })();
     });
     return dispose;
-  }, [candlesByTimeframe, chartEdits, timeframe, viewportOffset]);
+  }, [candlesByTimeframe, timeframe, viewportOffset]);
   const lastCandle = activeCandles.at(-1) ?? null;
   const subtitle = useMemo(() => {
     const state = importState[timeframe] ?? "pending";

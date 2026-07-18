@@ -18,6 +18,19 @@ const EDIT_CHART_ACTION_KINDS = ["select_candles", "ray", "horizontal_line", "ve
 const MAX_ACTIONS = 24;
 const MAX_LABEL_CHARS = 64;
 
+function normalizeEditChartActionKind(value: unknown): TradingChartEditAction["kind"] | null {
+  const compact = String(value ?? "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  if (compact === "selectcandles" || compact === "selectcandle" || compact === "highlightcandles" || compact === "highlightcandle" || compact === "markcandles" || compact === "markcandle" || compact === "bluecandles" || compact === "bluecandle" || compact === "candles" || compact === "candle") return "select_candles";
+  if (compact === "horizontalline" || compact === "level" || compact === "pricelevel") return "horizontal_line";
+  if (compact === "verticalline" || compact === "timemarker") return "vertical_line";
+  if (compact === "movingaverage" || compact === "ma" || compact === "sma") return "moving_average";
+  if (compact === "donchianchannel" || compact === "donchian") return "donchian_channel";
+  if (compact === "vwap") return "vwap";
+  if (compact === "ray" || compact === "trendline") return "ray";
+  if (compact === "clear" || compact === "remove" || compact === "reset") return "clear";
+  return null;
+}
+
 export interface EditChartCodeActRequest {
   schema: "forge.trading.edit_chart.request.v1";
   command: typeof EDIT_CHART_COMMAND;
@@ -216,17 +229,25 @@ function parseActions(value: string): TradingChartEditAction[] {
 }
 
 function normalizeAction(value: unknown): TradingChartEditAction | null {
-  const record = value && typeof value === "object" ? value as Partial<TradingChartEditAction> : undefined;
-  if (!record || !EDIT_CHART_ACTION_KINDS.includes(record.kind as (typeof EDIT_CHART_ACTION_KINDS)[number])) return null;
+  const record = value && typeof value === "object" ? value as Partial<TradingChartEditAction> & Record<string, unknown> : undefined;
+  const kind = normalizeEditChartActionKind(record?.kind);
+  if (!record || !kind) return null;
+  const rawCandleTimes = Array.isArray(record.candleTimes)
+    ? record.candleTimes
+    : Array.isArray(record.candle_times)
+      ? record.candle_times
+      : Array.isArray(record.times)
+        ? record.times
+        : undefined;
   const action: TradingChartEditAction = {
-    kind: record.kind as TradingChartEditAction["kind"],
+    kind,
     id: clampText(record.id, MAX_LABEL_CHARS),
     label: clampText(record.label, MAX_LABEL_CHARS),
     tag: clampText(record.tag, MAX_LABEL_CHARS + 2),
     color: clampText(record.color, 32),
-    candleTimes: Array.isArray(record.candleTimes) ? record.candleTimes.filter((time): time is string => typeof time === "string").slice(0, 80) : undefined,
-    time: clampText(record.time, 80),
-    timeEnd: clampText(record.timeEnd, 80),
+    candleTimes: Array.isArray(rawCandleTimes) ? rawCandleTimes.filter((time): time is string => typeof time === "string").slice(0, 80) : undefined,
+    time: clampText(stringField(record.time ?? record.timeStart ?? record.time_start ?? record.start_time ?? record.start), 80),
+    timeEnd: clampText(stringField(record.timeEnd ?? record.time_end ?? record.timeStop ?? record.time_stop ?? record.end_time ?? record.end), 80),
     price: finiteNumber(record.price),
     priceEnd: finiteNumber(record.priceEnd),
     period: Number.isFinite(Number(record.period)) ? Math.max(1, Math.min(500, Math.floor(Number(record.period)))) : undefined,
@@ -238,6 +259,10 @@ function normalizeAction(value: unknown): TradingChartEditAction | null {
 function finiteNumber(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function compactChartSnapshotForRender(snapshot: TradingChartWindowSnapshot): Record<string, unknown> {
