@@ -1228,12 +1228,11 @@ function prefersReducedMotion() {
 }
 
 const TRANSCRIPT_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
-const TRANSCRIPT_INITIAL_VISIBLE_MESSAGES = 48;
 const TRANSCRIPT_PREPEND_BATCH_MESSAGES = 48;
 const TRANSCRIPT_TOP_PRELOAD_THRESHOLD_PX = 96;
 
 function initialTranscriptWindowSize(total: number): number {
-  return Math.min(total, TRANSCRIPT_INITIAL_VISIBLE_MESSAGES);
+  return total;
 }
 
 function transcriptIsNearBottom(container: HTMLElement) {
@@ -4706,7 +4705,7 @@ export function TranscriptCanvas({
   const messageCountRef = useRef(messages.length);
   const visibleMessageCountRef = useRef(initialTranscriptWindowSize(messages.length));
   const focusedMessageScrollRef = useRef("");
-  const [messageWindow, setMessageWindow] = useState(() => ({
+  const [, setMessageWindow] = useState(() => ({
     sessionId: activeSessionId,
     count: initialTranscriptWindowSize(messages.length)
   }));
@@ -4719,14 +4718,9 @@ export function TranscriptCanvas({
     ? messages.findIndex((message) => message.id === normalizedFocusMessageId)
     : -1;
   const hasArchiveFocusTarget = Boolean(normalizedFocusMessageId && focusedMessageIndex >= 0);
-  const baseVisibleMessageCount = Math.min(
-    messages.length,
-    messageWindow.sessionId === activeSessionId ? messageWindow.count : initialTranscriptWindowSize(messages.length)
-  );
-  const focusVisibleMessageCount = focusedMessageIndex >= 0 ? messages.length - focusedMessageIndex : 0;
-  const visibleMessageCount = Math.min(messages.length, Math.max(baseVisibleMessageCount, focusVisibleMessageCount));
-  const visibleStartIndex = Math.max(0, messages.length - visibleMessageCount);
-  const visibleMessages = useMemo(() => messages.slice(visibleStartIndex), [messages, visibleStartIndex]);
+  const visibleMessageCount = messages.length;
+  const visibleStartIndex = 0;
+  const visibleMessages = messages;
   const visibleMessageIds = useMemo(() => new Set(visibleMessages.map((message) => message.id)), [visibleMessages]);
   const assistantMessageIds = useMemo(
     () => messages

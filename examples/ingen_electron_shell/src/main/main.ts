@@ -15929,6 +15929,7 @@ function createAssistantLiveTextSink(params: {
   renameSession?: SidebarSessionItem;
 }): ProviderLiveTextSink {
   let lastText = "";
+  let liveTranscript = params.baseTranscript;
   let liveRenameApplied = false;
   return {
     onText: (text) => {
@@ -15963,7 +15964,8 @@ function createAssistantLiveTextSink(params: {
         text: trimmed,
         proofHash: hashJson({ liveAssistantMessage: params.assistantMessageId, text: trimmed })
       };
-      params.commitTranscript(transcriptWithReplacedMessage(params.baseTranscript, liveMessage));
+      liveTranscript = transcriptWithReplacedMessage(liveTranscript, liveMessage);
+      params.commitTranscript(liveTranscript);
       emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.agentEvents.sessionId);
     },
     shouldStop: (text) => Boolean(params.assistantRun?.cancelled || extractAgentActionJsonRequest(text))

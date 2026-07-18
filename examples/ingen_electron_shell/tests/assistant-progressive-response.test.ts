@@ -52,7 +52,8 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("const keepDraftResponseLive = previous.hadPending");
     expect(animationSource).toContain("lengths: Map<string, number>");
     expect(animationSource).toContain("const assistantTextGrew = assistantAnimationLength > previousAnimationLength");
-    expect(animationSource).toContain("assistantTextGrew && message.id === latestAssistantMessageId");
+    expect(animationSource).toContain("!animationState.known.has(message.id) || assistantTextGrew");
+    expect(animationSource).toContain("const visibleMessages = messages");
     expect(animationSource).not.toContain("kind: \"assistant_write_complete\", value: message.id");
     expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
   });
@@ -87,7 +88,7 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("function assistantInlineAtomicRanges");
     expect(animationSource).toContain("function assistantBreakpointInsideAtomicRange");
     expect(animationSource).toContain("const atomicRanges = assistantInlineAtomicRanges(text)");
-    expect(animationSource).toContain("!assistantBreakpointInsideAtomicRange(point, atomicRanges)");
+    expect(animationSource).toContain("!assistantBreakpointInsideAtomicRange(cursor, atomicRanges)");
     expect(animationSource).toContain("while ((match = ASSISTANT_INLINE_ATOMIC_PATTERN.exec(text)) !== null)");
     expect(animationSource).toContain("__[^_\\n]+?__");
     expect(animationSource).toContain("_[^_\\n]+?_");
@@ -156,7 +157,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
     expect(mainSource).not.toContain('outcome: "max_steps"');
     expect(mainSource).toContain("tool_steps=");
-    expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
+    expect(mainSource).toContain("commitLoopTranscript(transcriptWithMessage(loopTranscript, snapshot))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
     expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");
     expect(agentActionLoopSource).toContain("export function jsonObjectEndIndex");
@@ -187,7 +188,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("renameSession?: SidebarSessionItem");
     expect(mainSource).toContain("renameChatSession(params.renameSession, request)");
     expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
-    expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
+    expect(mainSource).toContain("let liveTranscript = params.baseTranscript");
+    expect(mainSource).toContain("liveTranscript = transcriptWithReplacedMessage(liveTranscript, liveMessage)");
     expect(mainSource).toContain("renameSession: session");
     expect(storeSource).toContain('event.reason === "assistant_progressive_seed"');
     expect(storeSource).toContain("void sidebarShadowStore.boot()");
