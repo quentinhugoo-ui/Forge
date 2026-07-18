@@ -44,8 +44,13 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("assistantRenderableText(text)");
     expect(animationSource).toContain("function AnimatedAssistantText");
     expect(animationSource).toContain("const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);");
-    expect(animationSource).toContain("const animationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);");
+    expect(animationSource).toContain("const incomingAnimationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);");
+    expect(animationSource).toContain("const [animationSource, setAnimationSource] = useState(incomingAnimationSource)");
     expect(animationSource).toContain("const visibleText = animationSource.slice(0, visibleCharacters);");
+    expect(animationSource).toContain("const pendingAnimationSourceRef = useRef(\"\")");
+    expect(animationSource).toContain("pendingAnimationSourceRef.current = incomingAnimationSource");
+    expect(animationSource).toContain("if (visibleCharactersRef.current < currentSource.length)");
+    expect(animationSource).toContain("setAnimationSource(pendingAnimationSource)");
   });
 
   it("keeps pending-response animation live across session materialization", () => {

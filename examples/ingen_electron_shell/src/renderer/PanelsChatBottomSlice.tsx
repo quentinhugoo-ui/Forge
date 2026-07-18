@@ -4370,7 +4370,8 @@ function AnimatedAssistantText({
   const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
   const accessibleText = useMemo(() => assistantAccessibleText(renderableText), [renderableText]);
   const containsLearningInterrupt = renderableText.includes("[[learn");
-  const animationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);
+  const incomingAnimationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);
+  const [animationSource, setAnimationSource] = useState(incomingAnimationSource);
   const revealBreakpoints = useMemo(() => assistantRevealBreakpoints(animationSource), [animationSource]);
   const totalCharacters = animationSource.length;
   const totalRevealSteps = revealBreakpoints.length;
@@ -4378,6 +4379,8 @@ function AnimatedAssistantText({
   const [animationSettled, setAnimationSettled] = useState(false);
   const completionReportedRef = useRef(false);
   const visibleCharactersRef = useRef(0);
+  const animationSourceRef = useRef(animationSource);
+  const pendingAnimationSourceRef = useRef("");
   const lineGrowthStartHeightRef = useRef<number | null>(null);
   const lineGrowthFrameRef = useRef<number | null>(null);
   const lineGrowthTimerRef = useRef<number | null>(null);
@@ -4402,13 +4405,34 @@ function AnimatedAssistantText({
   }, []);
 
   useEffect(() => {
+    animationSourceRef.current = animationSource;
+  }, [animationSource]);
+
+  useEffect(() => {
     completionReportedRef.current = false;
     clearLineGrowthTransition();
+    pendingAnimationSourceRef.current = "";
+    setAnimationSource(incomingAnimationSource);
     lineGrowthStartHeightRef.current = null;
     setAnimationSettled(false);
     visibleCharactersRef.current = 0;
     setVisibleCharacters(0);
   }, [clearLineGrowthTransition, message.id]);
+
+  useEffect(() => {
+    const currentSource = animationSourceRef.current;
+    if (incomingAnimationSource === currentSource || incomingAnimationSource === pendingAnimationSourceRef.current) {
+      return;
+    }
+    if (visibleCharactersRef.current < currentSource.length) {
+      pendingAnimationSourceRef.current = incomingAnimationSource;
+      return;
+    }
+    pendingAnimationSourceRef.current = "";
+    completionReportedRef.current = false;
+    setAnimationSettled(false);
+    setAnimationSource(incomingAnimationSource);
+  }, [incomingAnimationSource, message.id]);
 
   useEffect(() => () => clearLineGrowthTransition(), [clearLineGrowthTransition]);
 
@@ -4517,13 +4541,21 @@ function AnimatedAssistantText({
   }, [totalCharacters]);
 
   useEffect(() => {
+    const pendingAnimationSource = pendingAnimationSourceRef.current;
+    if (animationSettled && pendingAnimationSource && pendingAnimationSource !== animationSource) {
+      pendingAnimationSourceRef.current = "";
+      completionReportedRef.current = false;
+      setAnimationSettled(false);
+      setAnimationSource(pendingAnimationSource);
+      return;
+    }
     if (completionReportedRef.current || totalCharacters === 0 || !animationSettled || visibleCharacters < totalCharacters) {
       return;
     }
     completionReportedRef.current = true;
     sidebarShadowStore.finishChatSessionPreview();
     onAnimationComplete?.(message.id);
-  }, [animationSettled, message.id, onAnimationComplete, totalCharacters, visibleCharacters]);
+  }, [animationSettled, animationSource, message.id, onAnimationComplete, totalCharacters, visibleCharacters]);
 
   useEffect(() => {
     const container = latestTranscriptContainerFor(textRef.current) ?? transcriptContainerFor(textRef.current);
