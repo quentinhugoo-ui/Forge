@@ -8385,14 +8385,7 @@ async function executeAssistantAgentActionLoop(params: {
     params.commitTranscript(transcriptUpdate);
   };
   const commitLoopSnapshot = (message: TranscriptMessage) => {
-    const snapshot: TranscriptMessage = loopTranscript.some((existing) => existing.id === message.id)
-      ? {
-          ...message,
-          id: `assistant-loop-${message.id}-${hashJson({ text: message.text, proofHash: message.proofHash }).slice(0, 10)}`,
-          proofHash: hashJson({ loopStreamSnapshotFor: message.id, text: message.text, proofHash: message.proofHash })
-        }
-      : message;
-    commitLoopTranscript(transcriptWithMessage(loopTranscript, snapshot));
+    commitLoopTranscript(transcriptWithFinalizedAssistantMessage(loopTranscript, message));
   };
   let loopState = createAgentActionLoopState(params.originalUserText);
   let step = 0;
@@ -15843,6 +15836,16 @@ function transcriptWithReplacedMessage(messages: TranscriptMessage[], message: T
   return nextMessages;
 }
 
+function transcriptWithoutAssistantDraftMessages(messages: TranscriptMessage[], assistantMessageId: string): TranscriptMessage[] {
+  const liveMessageId = `assistant-live-${assistantMessageId}`;
+  const seedMessageId = `assistant-progressive-seed-${assistantMessageId}`;
+  return messages.filter((message) => message.id !== liveMessageId && message.id !== seedMessageId);
+}
+
+function transcriptWithFinalizedAssistantMessage(messages: TranscriptMessage[], message: TranscriptMessage): TranscriptMessage[] {
+  return transcriptWithReplacedMessage(transcriptWithoutAssistantDraftMessages(messages, message.id), message);
+}
+
 function transcriptWithoutMessage(messages: TranscriptMessage[], messageId: string): TranscriptMessage[] {
   return messageId ? messages.filter((message) => message.id !== messageId) : messages;
 }
@@ -15894,13 +15897,13 @@ async function commitAssistantMessageWithProgressiveSeed(
 ): Promise<TranscriptMessage[]> {
   const text = assistantMessage.text;
   if (text.length < ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS || assistantTextContainsAgentActionEvents(text)) {
-    const finalTranscript = transcriptWithMessage(baseTranscript, assistantMessage);
+    const finalTranscript = transcriptWithFinalizedAssistantMessage(baseTranscript, assistantMessage);
     commitTranscript(finalTranscript);
     return finalTranscript;
   }
   const seedText = assistantProgressiveSeedText(text);
   if (!seedText.trim() || seedText.length >= text.length) {
-    const finalTranscript = transcriptWithMessage(baseTranscript, assistantMessage);
+    const finalTranscript = transcriptWithFinalizedAssistantMessage(baseTranscript, assistantMessage);
     commitTranscript(finalTranscript);
     return finalTranscript;
   }
@@ -15910,11 +15913,11 @@ async function commitAssistantMessageWithProgressiveSeed(
     text: seedText,
     proofHash: hashJson({ progressiveSeedFor: assistantMessage.id, fullProofHash: assistantMessage.proofHash, text: seedText })
   };
-  const seedTranscript = transcriptWithMessage(baseTranscript, seedMessage);
+  const seedTranscript = transcriptWithMessage(transcriptWithoutAssistantDraftMessages(baseTranscript, assistantMessage.id), seedMessage);
   commitTranscript(seedTranscript);
   emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", sessionId);
   await delayAssistantProgressiveSeed(ASSISTANT_PROGRESSIVE_SEED_DELAY_MS);
-  const finalTranscript = transcriptWithMessage(seedTranscript, assistantMessage);
+  const finalTranscript = transcriptWithFinalizedAssistantMessage(seedTranscript, assistantMessage);
   commitTranscript(finalTranscript);
   return finalTranscript;
 }

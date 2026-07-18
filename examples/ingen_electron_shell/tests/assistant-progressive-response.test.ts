@@ -157,7 +157,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
     expect(mainSource).not.toContain('outcome: "max_steps"');
     expect(mainSource).toContain("tool_steps=");
-    expect(mainSource).toContain("commitLoopTranscript(transcriptWithMessage(loopTranscript, snapshot))");
+    expect(mainSource).toContain("commitLoopTranscript(transcriptWithFinalizedAssistantMessage(loopTranscript, message))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
     expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");
     expect(agentActionLoopSource).toContain("export function jsonObjectEndIndex");
@@ -185,6 +185,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("params.profile");
     expect(mainSource).toContain("params.providerUserText");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
+    expect(mainSource).toContain("function transcriptWithoutAssistantDraftMessages");
+    expect(mainSource).toContain("function transcriptWithFinalizedAssistantMessage");
+    expect(mainSource).toContain("message.id !== liveMessageId && message.id !== seedMessageId");
     expect(mainSource).toContain("renameSession?: SidebarSessionItem");
     expect(mainSource).toContain("renameChatSession(params.renameSession, request)");
     expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
@@ -358,6 +361,8 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain('[BRAIN_CHART_COMMAND, "Inspect active chart"]');
     expect(animationSource).toContain('[BRAIN_EDIT_CHART_COMMAND, "Edit active chart"]');
     expect(animationSource).toContain('[BRAIN_MARKET_ORDER_COMMAND, "Prepare market order"]');
+    expect(animationSource).toContain('[BRAIN_TRADING_COMMAND, "Changed from General Brain to Trading Brain"]');
+    expect(animationSource).toContain("command === BRAIN_TRADING_COMMAND");
     expect(animationSource).toContain("function fallbackCodeActEventText");
     expect(animationSource).not.toContain("BRAIN_CODEACT_DESCRIPTION_BY_COMMAND");
     expect(animationSource).toContain("function appendGenericCodeActResultEvent");

@@ -21,6 +21,7 @@ import {
   BRAIN_NEWBRAIN_COMMAND,
   BRAIN_SCIENCE_COMMAND,
   BRAIN_CODING_COMMAND,
+  BRAIN_TRADING_COMMAND,
   BRAIN_CODING_LIVE_PREVIEW_COMMAND,
   BRAIN_EDITIMAGE_COMMAND,
   BRAIN_MODIFY_NAMED_BRAIN_COMMAND,
@@ -1383,6 +1384,7 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_PLAN_COMMAND, "Plan panel opened"],
   [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
   [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
+  [BRAIN_TRADING_COMMAND, "Changed from General Brain to Trading Brain"],
   [BRAIN_NEWBRAIN_COMMAND, "New specialized Brain prepared"],
   [BRAIN_MODIFY_NAMED_BRAIN_COMMAND, "Specialized Brain update prepared"],
   [BRAIN_CODING_LIVE_PREVIEW_COMMAND, "Live preview opened"],
@@ -3312,7 +3314,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
   if (isAgentActionCommand(command)) return <AgentActionCodeActIcon command={command} />;
   if (command === BRAIN_GMAIL_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
-  if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
+  if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND || command === BRAIN_TRADING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
   if (command === BRAIN_NEWBRAIN_COMMAND || command === BRAIN_MODIFY_NAMED_BRAIN_COMMAND) return <BrainSegmentCodeActIcon phase="changed" />;
   if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
   if (isSpecializedBrainActivationCommand(command)) return <BrainSegmentCodeActIcon phase="changed" />;
@@ -3327,7 +3329,7 @@ function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command:
 }
 
 function isBrainSegmentCommand(command: TranscriptCodeActCommand): boolean {
-  return command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND;
+  return command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND || command === BRAIN_TRADING_COMMAND;
 }
 
 function isBrainStyledCommand(command: TranscriptCodeActCommand): boolean {
@@ -3339,7 +3341,9 @@ function isContextCompactionCommand(command: TranscriptCodeActCommand): command 
 }
 
 function brainSegmentName(command: TranscriptCodeActCommand): string {
-  return command === BRAIN_CODING_COMMAND ? "Coding Brain" : "Science Brain";
+  if (command === BRAIN_CODING_COMMAND) return "Coding Brain";
+  if (command === BRAIN_TRADING_COMMAND) return "Trading Brain";
+  return "Science Brain";
 }
 
 function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changing" | "changed"): string {
@@ -4074,6 +4078,7 @@ function specializedBrainActivationCommandsFromText(text: string): string[] {
     if (
       command !== BRAIN_SCIENCE_COMMAND &&
       command !== BRAIN_CODING_COMMAND &&
+      command !== BRAIN_TRADING_COMMAND &&
       command !== BRAIN_NEWBRAIN_COMMAND &&
       command !== BRAIN_MODIFY_NAMED_BRAIN_COMMAND &&
       brainSpecializedBrainNameFromActivationCommand(command)
@@ -5111,7 +5116,7 @@ export function TranscriptCanvas({
               assistantQueued = !assistantShouldAnimate;
             }
           }
-          const assistantAwaitingAnimation = assistantPending || assistantQueued;
+          const assistantAwaitingAnimation = assistantPending;
           const renderedMessage = message;
           const showMessageActions = role !== "assistant" || !assistantContinuesLoop;
           const actions = (
@@ -5163,9 +5168,7 @@ export function TranscriptCanvas({
                       className={
                         assistantPending
                           ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
-                          : assistantQueued
-                            ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
-                            : assistantError
+                          : assistantError
                             ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError"
                             : "transcriptPill transcriptPill--assistant"
                       }
