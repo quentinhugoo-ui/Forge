@@ -5129,10 +5129,9 @@ export function TranscriptCanvas({
             const animationState = assistantAnimationRef.current;
             const assistantAnimationLength = assistantAnimationLengthForText(message.text);
             const previousAnimationLength = animationState.lengths.get(message.id) ?? 0;
-            const assistantTextGrew = assistantAnimationLength > previousAnimationLength;
             const shouldStartAnimation =
               assistantAnimationLength > 0 &&
-              (!animationState.known.has(message.id) || assistantTextGrew);
+              !animationState.known.has(message.id);
             if (shouldStartAnimation) {
               animationState.known.add(message.id);
               animationState.active.add(message.id);

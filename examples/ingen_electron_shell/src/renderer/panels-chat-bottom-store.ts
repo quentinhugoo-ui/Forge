@@ -133,35 +133,78 @@ function mergeInFlightPendingTranscript(
   incomingMessages: TranscriptMessage[],
   currentMessages: TranscriptMessage[]
 ): TranscriptMessage[] {
-  const existingIds = new Set(incomingMessages.map((message) => message.id));
   const currentIds = new Set(currentMessages.map((message) => message.id));
-  const incomingHasFreshAssistantResponse = incomingMessages.some(
-    (message) =>
-      message.role === "assistant" &&
-      !message.id.startsWith("assistant-pending-") &&
-      message.text.trim().length > 0 &&
-      !currentIds.has(message.id)
-  );
-  if (incomingHasFreshAssistantResponse) {
-    return incomingMessages;
+  const incomingIds = new Set(incomingMessages.map((message) => message.id));
+  const obsoleteDraftIds = obsoleteAssistantDraftIdsForIncoming(incomingMessages);
+  const replacementTargets = new Set<string>();
+  for (const message of currentMessages) {
+    if (message.role === "assistant" && message.id.startsWith("assistant-pending-")) {
+      const targetId = replacementTargetIdFromPending(message.id);
+      if (targetId) {
+        replacementTargets.add(targetId);
+      }
+    }
   }
-  const pendingMessages = currentMessages.filter((message) =>
+  const incomingHasRealUser = incomingMessages.some((message) =>
+    message.role === "user" &&
+    !message.id.startsWith("optimistic-user-") &&
+    !currentIds.has(message.id)
+  );
+  const incomingHasRealAssistant = incomingMessages.some((message) =>
     message.role === "assistant" &&
-    message.id.startsWith("assistant-pending-") &&
-    !existingIds.has(message.id)
+    !message.id.startsWith("assistant-pending-") &&
+    !message.id.startsWith("assistant-live-") &&
+    !message.id.startsWith("assistant-progressive-seed-") &&
+    message.text.trim().length > 0 &&
+    !currentIds.has(message.id)
   );
-  if (pendingMessages.length === 0) {
-    return incomingMessages;
+  const incomingById = new Map(incomingMessages.map((message) => [message.id, message]));
+  const merged: TranscriptMessage[] = [];
+  const seen = new Set<string>();
+  for (const current of currentMessages) {
+    if (current.id.startsWith("optimistic-user-") && incomingHasRealUser) {
+      continue;
+    }
+    if (obsoleteDraftIds.has(current.id)) {
+      continue;
+    }
+    if (current.role === "assistant" && current.id.startsWith("assistant-pending-")) {
+      if (incomingHasRealAssistant || (replacementTargets.size > 0 && [...replacementTargets].some((id) => incomingIds.has(id)))) {
+        continue;
+      }
+    }
+    if (replacementTargets.has(current.id) && incomingIds.has(current.id)) {
+      continue;
+    }
+    const incoming = incomingById.get(current.id);
+    merged.push(incoming ?? current);
+    seen.add(current.id);
   }
-  const replacementTargets = new Set(
-    pendingMessages
-      .map((message) => replacementTargetIdFromPending(message.id))
-      .filter((id): id is string => Boolean(id))
-  );
-  const visibleIncomingMessages = replacementTargets.size > 0
-    ? incomingMessages.filter((message) => !replacementTargets.has(message.id))
-    : incomingMessages;
-  return [...visibleIncomingMessages, ...pendingMessages];
+  for (const incoming of incomingMessages) {
+    if (!seen.has(incoming.id)) {
+      merged.push(incoming);
+      seen.add(incoming.id);
+    }
+  }
+  return merged;
+}
+
+function obsoleteAssistantDraftIdsForIncoming(incomingMessages: TranscriptMessage[]): Set<string> {
+  const draftIds = new Set<string>();
+  for (const message of incomingMessages) {
+    if (
+      message.role !== "assistant" ||
+      !message.id ||
+      message.id.startsWith("assistant-live-") ||
+      message.id.startsWith("assistant-progressive-seed-") ||
+      message.id.startsWith("assistant-pending-")
+    ) {
+      continue;
+    }
+    draftIds.add(`assistant-live-${message.id}`);
+    draftIds.add(`assistant-progressive-seed-${message.id}`);
+  }
+  return draftIds;
 }
 
 function replacementTargetIdFromPending(id: string): string | undefined {
@@ -178,7 +221,9 @@ function mergeInFlightPendingSnapshot(
   const nextAssistantBusy = assistantStopSuppressed
     ? false
     : incomingSnapshot.composer.assistantBusy || currentSnapshot.composer.assistantBusy;
-  if (inFlightChatRequests <= 0) {
+  const shouldMergeTranscript = inFlightChatRequests > 0 ||
+    (!assistantStopSuppressed && (incomingSnapshot.composer.assistantBusy || currentSnapshot.composer.assistantBusy));
+  if (!shouldMergeTranscript) {
     return assistantStopSuppressed
       ? {
           ...incomingSnapshot,

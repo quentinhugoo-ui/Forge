@@ -30,7 +30,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS");
     expect(mainSource).toContain("commitAssistantMessageWithProgressiveSeed");
     expect(mainSource).toContain('emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed"');
-    expect(storeSource).toContain("incomingHasFreshAssistantResponse");
+    expect(storeSource).toContain("mergeInFlightPendingTranscript");
+    expect(storeSource).toContain("obsoleteAssistantDraftIdsForIncoming");
+    expect(storeSource).not.toContain("incomingHasFreshAssistantResponse");
   });
 
   it("merges live transcript commits instead of erasing existing canvas messages", () => {
@@ -65,8 +67,9 @@ describe("assistant progressive response feed", () => {
   it("keeps pending-response animation live across session materialization", () => {
     expect(animationSource).toContain("const keepDraftResponseLive = previous.hadPending");
     expect(animationSource).toContain("lengths: Map<string, number>");
-    expect(animationSource).toContain("const assistantTextGrew = assistantAnimationLength > previousAnimationLength");
-    expect(animationSource).toContain("!animationState.known.has(message.id) || assistantTextGrew");
+    expect(animationSource).toContain("const shouldStartAnimation =");
+    expect(animationSource).toContain("!animationState.known.has(message.id)");
+    expect(animationSource).not.toContain("assistantTextGrew");
     expect(animationSource).toContain("const visibleMessages = messages");
     expect(animationSource).not.toContain("kind: \"assistant_write_complete\", value: message.id");
     expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
