@@ -15924,6 +15924,46 @@ function transcriptWithoutMessage(messages: TranscriptMessage[], messageId: stri
   return messageId ? messages.filter((message) => message.id !== messageId) : messages;
 }
 
+function obsoleteAssistantDraftIdsForTranscript(messages: TranscriptMessage[]): Set<string> {
+  const draftIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.id) {
+      continue;
+    }
+    draftIds.add(`assistant-live-${message.id}`);
+    draftIds.add(`assistant-progressive-seed-${message.id}`);
+  }
+  return draftIds;
+}
+
+function mergeTranscriptCommit(currentTranscript: TranscriptMessage[], transcriptUpdate: TranscriptMessage[]): TranscriptMessage[] {
+  if (currentTranscript.length === 0) {
+    return transcriptUpdate;
+  }
+  const obsoleteDraftIds = obsoleteAssistantDraftIdsForTranscript(transcriptUpdate);
+  const updateById = new Map(transcriptUpdate.map((message) => [message.id, message]));
+  const merged: TranscriptMessage[] = [];
+  const seen = new Set<string>();
+
+  for (const current of currentTranscript) {
+    if (obsoleteDraftIds.has(current.id)) {
+      continue;
+    }
+    const update = updateById.get(current.id);
+    merged.push(update ?? current);
+    seen.add(current.id);
+  }
+
+  for (const update of transcriptUpdate) {
+    if (!seen.has(update.id)) {
+      merged.push(update);
+      seen.add(update.id);
+    }
+  }
+
+  return merged;
+}
+
 function contextCompactionEventMessage(state: "compressing" | "compressed", seed: string): TranscriptMessage {
   const id = `assistant-status-context-compaction-${seed}`;
   return {
@@ -18989,7 +19029,7 @@ async function submitPanelsChatDraft(
     internalPrompt,
     replaceAssistantMessageId,
     (nextTranscript) => {
-      panelsChatBottomState.transcript = nextTranscript;
+      panelsChatBottomState.transcript = mergeTranscriptCommit(panelsChatBottomState.transcript, nextTranscript);
       emitPanelsChatBottomSnapshotEvent("transcript_committed", activeSession.sessionId);
     }
   );
@@ -19410,7 +19450,7 @@ async function submitParallelPanelsChatDraft(
     command.internalPrompt === true,
     typeof command.replaceAssistantMessageId === "string" ? command.replaceAssistantMessageId.trim() : "",
     (nextTranscript) => {
-      lane.transcript = nextTranscript;
+      lane.transcript = mergeTranscriptCommit(lane.transcript, nextTranscript);
       emitPanelsChatBottomSnapshotEvent("transcript_committed", lane.sessionId);
     }
   );

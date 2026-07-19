@@ -33,6 +33,15 @@ describe("assistant progressive response feed", () => {
     expect(storeSource).toContain("incomingHasFreshAssistantResponse");
   });
 
+  it("merges live transcript commits instead of erasing existing canvas messages", () => {
+    expect(mainSource).toContain("function mergeTranscriptCommit");
+    expect(mainSource).toContain("obsoleteAssistantDraftIdsForTranscript");
+    expect(mainSource).toContain("panelsChatBottomState.transcript = mergeTranscriptCommit(panelsChatBottomState.transcript, nextTranscript)");
+    expect(mainSource).toContain("lane.transcript = mergeTranscriptCommit(lane.transcript, nextTranscript)");
+    expect(mainSource).not.toContain("panelsChatBottomState.transcript = nextTranscript;");
+    expect(mainSource).not.toContain("lane.transcript = nextTranscript;");
+  });
+
   it("keeps the assistant writing animation from leaking silent rename tags", () => {
     expect(animationSource).toContain("function assistantRenderableText");
     expect(animationSource).toContain("BRAIN_RENAME_SESSION_COMMAND");
