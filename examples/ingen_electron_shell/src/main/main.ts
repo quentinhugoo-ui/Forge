@@ -320,7 +320,7 @@ html::after {
   background: linear-gradient(to top, #0e0e0f 0%, rgba(14, 14, 15, 0.76) 44%, rgba(14, 14, 15, 0) 100%) !important;
 }
 `;
-const CODEX_DESKTOP_MODELS = ["GPT-5.5", "GPT-5.4", "GPT-5.4-Mini", "GPT-5.3-Codex-Spark"];
+const CODEX_DESKTOP_MODELS = ["GPT-5.6-Sol", "GPT-5.6-Terra", "GPT-5.6-Luna", "GPT-5.5", "GPT-5.3-Codex-Spark"];
 const CODEX_DESKTOP_REASONING = ["Low", "Medium", "High", "Deep"];
 const PANELS_CHAT_BOTTOM_MAX_UPLOADS = 20;
 const PANELS_CHAT_BOTTOM_MAX_PROVIDER_ATTACHMENTS = 6;
@@ -1956,8 +1956,8 @@ function applyStoredProviderRuntime(parsed: Partial<StoredProviderRuntime>): boo
     }
     target.connected = stored.connected === true;
     target.account = typeof stored.account === "string" && stored.account.trim() ? stored.account : target.account;
-    target.models = safeStringList(stored.models);
-    target.reasoning = provider === "codex" ? safeReasoningLabels(stored.reasoning) : safeStringList(stored.reasoning);
+    target.models = provider === "codex" ? [...CODEX_DESKTOP_MODELS] : safeStringList(stored.models);
+    target.reasoning = provider === "codex" ? [...CODEX_DESKTOP_REASONING] : safeStringList(stored.reasoning);
     target.quotaLabel = typeof stored.quotaLabel === "string" && stored.quotaLabel.trim() ? stored.quotaLabel : target.quotaLabel;
     target.events = storedEvents;
     if (target.connected && target.events.length === 0) {
@@ -2008,10 +2008,16 @@ async function restoreProviderRuntimeFromDisk(): Promise<void> {
       const decrypted = await decryptStoredProviderRuntime(parsed);
       if (decrypted) {
         applyStoredProviderRuntime(decrypted);
+        if (providerRuntime.codex.connected) {
+          await applyCodexLocalAuthProfile(["refresh Codex local model catalog"]);
+        }
       }
       return;
     }
     if (applyStoredProviderRuntime(parsed as Partial<StoredProviderRuntime>)) {
+      if (providerRuntime.codex.connected) {
+        await applyCodexLocalAuthProfile(["refresh Codex local model catalog"]);
+      }
       void persistProviderRuntime().catch((error: unknown) => {
         console.error("Failed to migrate LLM provider runtime to encrypted storage.", error);
       });
@@ -2046,6 +2052,15 @@ function normalizeReasoningLevel(value: string): string {
 
 function codexDesktopModelSlug(value: string): string {
   const model = value.trim().toLowerCase();
+  if (model === "gpt-5.6-sol" || model === "gpt-5-6-sol") {
+    return "gpt-5.6-sol";
+  }
+  if (model === "gpt-5.6-terra" || model === "gpt-5-6-terra") {
+    return "gpt-5.6-terra";
+  }
+  if (model === "gpt-5.6-luna" || model === "gpt-5-6-luna") {
+    return "gpt-5.6-luna";
+  }
   if (model === "gpt-5.5" || model === "gpt-5-5") {
     return "gpt-5.5";
   }
@@ -4415,6 +4430,13 @@ type CodexLocalAuth = {
   lastRefresh?: string;
 };
 
+type CodexLocalModelCatalogEntry = {
+  slug?: unknown;
+  display_name?: unknown;
+  priority?: unknown;
+  visibility?: unknown;
+};
+
 function randomClientId(): string {
   const hex = randomBytes(16).toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -4469,6 +4491,36 @@ async function readCodexLocalAuth(): Promise<CodexLocalAuth | undefined> {
   };
 }
 
+function fallbackCodexDesktopModels(): string[] {
+  return [...CODEX_DESKTOP_MODELS];
+}
+
+async function readCodexLocalModelCatalog(): Promise<string[]> {
+  const home = forgeHomeDir();
+  if (!home) {
+    return fallbackCodexDesktopModels();
+  }
+  const catalogPath = join(home, ".codex", "models_cache.json");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(catalogPath, "utf8")) as unknown;
+  } catch {
+    return fallbackCodexDesktopModels();
+  }
+  const models = parsed && typeof parsed === "object" && Array.isArray((parsed as { models?: unknown }).models)
+    ? (parsed as { models: unknown[] }).models
+    : [];
+  const visibleModels = models
+    .map((value) => value && typeof value === "object" ? value as CodexLocalModelCatalogEntry : undefined)
+    .filter((entry): entry is CodexLocalModelCatalogEntry => Boolean(entry))
+    .filter((entry) => String(entry.visibility ?? "list").toLowerCase() === "list")
+    .filter((entry) => !/^codex-auto-review$/i.test(String(entry.slug ?? "")))
+    .sort((left, right) => Number(left.priority ?? 999) - Number(right.priority ?? 999))
+    .map((entry) => String(entry.display_name || entry.slug || "").trim())
+    .filter(Boolean);
+  return visibleModels.length > 0 ? [...new Set(visibleModels)] : fallbackCodexDesktopModels();
+}
+
 async function applyCodexLocalAuthProfile(eventsPrefix: string[] = []): Promise<ProviderRuntimeProfile | undefined> {
   const auth = await readCodexLocalAuth();
   if (!auth || !auth.accessToken || !auth.accountId) {
@@ -4477,7 +4529,7 @@ async function applyCodexLocalAuthProfile(eventsPrefix: string[] = []): Promise<
   const profile = providerRuntime.codex;
   profile.connected = true;
   profile.account = auth.accountId ? `ChatGPT account ${auth.accountId.slice(0, 8)}...${auth.accountId.slice(-4)}` : "ChatGPT subscription account";
-  profile.models = [...CODEX_DESKTOP_MODELS];
+  profile.models = await readCodexLocalModelCatalog();
   profile.reasoning = [...CODEX_DESKTOP_REASONING];
   profile.quotaLabel = "quota unavailable: official token balance not returned";
   profile.proof = hashJson({
@@ -7425,6 +7477,13 @@ function friendlyAssistantErrorText(params: {
   if (unsupportedImageInput) {
     const failingModel = modelNameFromError(message, model);
     return `${failingModel || "Selected model"} cannot read images. Choose a vision model.`;
+  }
+  const unsupportedCodexModel = /The '([^']+)' model is not supported when using Codex with a ChatGPT account/i.exec(message);
+  if (unsupportedCodexModel) {
+    return `${unsupportedCodexModel[1] || model || "Selected model"} is not available for this ChatGPT Codex account. Select one of the listed Codex models.`;
+  }
+  if (/biscuit_baker_service_me_circuit_open|Service Unavailable|server had an error processing/i.test(message)) {
+    return `${params.providerLabel} is temporarily unavailable for ${model || "the selected model"}. Retry with GPT-5.6-Sol or a lower reasoning level.`;
   }
   return ASSISTANT_PROVIDER_UNAVAILABLE_TEXT;
 }
