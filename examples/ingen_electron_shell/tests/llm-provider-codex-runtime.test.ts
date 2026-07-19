@@ -12,8 +12,10 @@ describe("Codex LLM provider subscription runtime", () => {
     expect(mainSource).toContain("auth.json");
     expect(mainSource).toContain("models_cache.json");
     expect(mainSource).toContain("readCodexLocalModelCatalog");
+    expect(mainSource).toContain("sanitizeCodexProviderEvents");
     expect(mainSource).toContain('await applyCodexLocalAuthProfile(["refresh Codex local model catalog"])');
     expect(mainSource).toContain('String(entry.visibility ?? "list").toLowerCase() === "list"');
+    expect(mainSource).toContain('!/^(models|reasoning|quota)\\b/i.test(event)');
     expect(mainSource).toContain("GPT-5.6-Sol");
     expect(mainSource).toContain("GPT-5.6-Terra");
     expect(mainSource).toContain("GPT-5.6-Luna");

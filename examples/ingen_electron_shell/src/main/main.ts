@@ -1959,7 +1959,9 @@ function applyStoredProviderRuntime(parsed: Partial<StoredProviderRuntime>): boo
     target.models = provider === "codex" ? [...CODEX_DESKTOP_MODELS] : safeStringList(stored.models);
     target.reasoning = provider === "codex" ? [...CODEX_DESKTOP_REASONING] : safeStringList(stored.reasoning);
     target.quotaLabel = typeof stored.quotaLabel === "string" && stored.quotaLabel.trim() ? stored.quotaLabel : target.quotaLabel;
-    target.events = storedEvents;
+    target.events = provider === "codex" && target.connected
+      ? sanitizeCodexProviderEvents(storedEvents, target, "restored Codex provider session")
+      : storedEvents;
     if (target.connected && target.events.length === 0) {
       target.events = connectedProviderEvents([], target);
     }
@@ -2087,7 +2089,7 @@ function reasoningLevelsForModels(models: string[]): string[] {
 }
 
 function modelCatalogEvents(models: string[]): string[] {
-  const cleanModels = [...new Set(models.map(normalizeGptModelId).filter(Boolean))];
+  const cleanModels = [...new Set(models.map((model) => model.trim()).filter(Boolean))];
   if (cleanModels.length === 0) {
     return ["model catalog unavailable"];
   }
@@ -2099,6 +2101,19 @@ function modelCatalogEvents(models: string[]): string[] {
     `models ${cleanModels.slice(0, splitAt).join(" / ")}`,
     `models ${cleanModels.slice(splitAt).join(" / ")}`
   ];
+}
+
+function sanitizeCodexProviderEvents(events: string[], profile: ProviderRuntimeProfile, prefix?: string): string[] {
+  if (profile.connectId !== "codex") {
+    return events;
+  }
+  const preservedEvents = events.filter((event) => {
+    if (event === "ready") {
+      return false;
+    }
+    return !/^(models|reasoning|quota)\b/i.test(event);
+  });
+  return connectedProviderEvents(prefix ? [prefix, ...preservedEvents] : preservedEvents, profile);
 }
 
 function connectedProviderEvents(flowEvents: string[], profile: ProviderRuntimeProfile): string[] {
@@ -2281,7 +2296,7 @@ function createAgentRuntimeEventQueue(params: {
 
 function runtimeEventFromProviderProfile(profile: ProviderRuntimeProfile, prefix?: string): LlmProviderRuntimeEvent {
   const events = profile.connected && profile.events.includes("ready")
-    ? profile.events
+    ? sanitizeCodexProviderEvents(profile.events, profile, prefix)
     : profile.connected
     ? [
         prefix ?? `restored ${profile.label} session`,
