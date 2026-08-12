@@ -674,8 +674,15 @@ struct BangerNativeScenePipeline {
     single_layer_water_present_bind_group_layout: wgpu::BindGroupLayout,
     single_layer_water_present_pipeline: wgpu::RenderPipeline,
     single_layer_water_present_sampler: wgpu::Sampler,
-    bloom_present_bind_group_layout: wgpu::BindGroupLayout,
-    bloom_present_pipeline: wgpu::RenderPipeline,
+    bloom_sample_bind_group_layout: wgpu::BindGroupLayout,
+    bloom_prefilter_pipeline: wgpu::RenderPipeline,
+    bloom_downsample_pipeline: wgpu::RenderPipeline,
+    bloom_upsample_pipeline: wgpu::RenderPipeline,
+    bloom_sampler: wgpu::Sampler,
+    tonemap_bind_group_layout: wgpu::BindGroupLayout,
+    tonemap_pipeline: wgpu::RenderPipeline,
+    tonemap_params_buffer: wgpu::Buffer,
+    tonemap_srgb_output: f32,
     vertex_count: u32,
     index_count: u32,
     instance_count: u32,
@@ -717,10 +724,20 @@ struct BangerNativeFrameTarget {
     hzb: BangerNativeHzbResources,
     gbuffer: BangerNativeGBufferResources,
     water: BangerNativeSingleLayerWaterResources,
+    hdr: BangerNativeHdrResources,
     width: u32,
     height: u32,
     target_hash: String,
     depth_target_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeHdrResources {
+    _scene_texture: wgpu::Texture,
+    scene_view: wgpu::TextureView,
+    _bloom_texture: wgpu::Texture,
+    bloom_mip_views: Vec<wgpu::TextureView>,
+    _resource_hash: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -3924,7 +3941,7 @@ fn run_banger_native_host(
     height: u32,
     frame_limit: Option<u32>,
 ) -> Result<BangerNativeHostProjection, String> {
-    use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+    use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
     use std::ffi::c_void;
     use std::num::NonZeroIsize;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -4005,7 +4022,7 @@ fn run_banger_native_host(
     child_handle.hinstance = NonZeroIsize::new(hinstance as isize);
     let surface = unsafe {
         instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: None,
+            raw_display_handle: Some(RawDisplayHandle::Windows(WindowsDisplayHandle::new())),
             raw_window_handle: RawWindowHandle::Win32(child_handle),
         })
     }
@@ -4039,10 +4056,11 @@ fn run_banger_native_host(
         .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
         .or_else(|| capabilities.alpha_modes.first().copied())
         .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
+    let required_limits = adapter.limits();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("banger-native-child-host-device"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits,
         memory_hints: wgpu::MemoryHints::default(),
         experimental_features: wgpu::ExperimentalFeatures::default(),
         trace: wgpu::Trace::Off,
@@ -4340,11 +4358,11 @@ fn render_child_surface_frame(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-child-host-encoder"),
     });
-    present_banger_sky_atmosphere(device, &mut encoder, scene_pipeline, &view);
+    present_banger_sky_atmosphere(device, &mut encoder, scene_pipeline, &frame_target.hdr.scene_view);
     {
         let color_attachments = [
             Some(wgpu::RenderPassColorAttachment {
-                view: &view,
+                view: &frame_target.hdr.scene_view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -4404,7 +4422,13 @@ fn render_child_surface_frame(
     dispatch_banger_virtual_shadow_map_page_mark(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_physical_pages(device, &mut encoder, scene_pipeline);
     dispatch_banger_virtual_shadow_map_projection_filter(device, &mut encoder, scene_pipeline);
-    present_banger_screen_space_ambient_occlusion(device, &mut encoder, scene_pipeline, frame_target, &view);
+    present_banger_screen_space_ambient_occlusion(
+        device,
+        &mut encoder,
+        scene_pipeline,
+        frame_target,
+        &frame_target.hdr.scene_view,
+    );
     let spectral_params_bytes =
         banger_spectral_ocean_params_bytes(frame_target.width, frame_target.height, time_seconds, frame_index);
     queue.write_buffer(
@@ -4414,8 +4438,20 @@ fn render_child_surface_frame(
     );
     dispatch_banger_spectral_ocean_compute(device, &mut encoder, scene_pipeline, frame_target);
     dispatch_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target);
-    present_banger_single_layer_water_composite(device, &mut encoder, scene_pipeline, frame_target, &view);
-    present_banger_emissive_bloom(device, &mut encoder, scene_pipeline, frame_target, &view);
+    present_banger_single_layer_water_composite(
+        device,
+        &mut encoder,
+        scene_pipeline,
+        frame_target,
+        &frame_target.hdr.scene_view,
+    );
+    dispatch_banger_bloom_chain(device, &mut encoder, scene_pipeline, frame_target);
+    queue.write_buffer(
+        &scene_pipeline.tonemap_params_buffer,
+        0,
+        &banger_tonemap_params_bytes(time_seconds, scene_pipeline.tonemap_srgb_output),
+    );
+    present_banger_hdr_tonemap(device, &mut encoder, scene_pipeline, frame_target, &view);
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -4454,16 +4490,82 @@ fn create_banger_frame_target(
     let hzb = create_banger_hzb_resources(device, &depth_texture, width, height, allocation_index);
     let gbuffer = create_banger_gbuffer_resources(device, width, height, allocation_index);
     let water = create_banger_single_layer_water_resources(device, width, height, allocation_index);
+    let hdr = create_banger_hdr_resources(device, width, height, allocation_index);
     BangerNativeFrameTarget {
         _depth_texture: depth_texture,
         depth_view,
         hzb,
         gbuffer,
         water,
+        hdr,
         width,
         height,
         target_hash,
         depth_target_hash,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_hdr_resources(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    allocation_index: u32,
+) -> BangerNativeHdrResources {
+    let scene_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-hdr-scene-color-texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let bloom_width = (width / 2).max(1);
+    let bloom_height = (height / 2).max(1);
+    let bloom_mip_limit = 32 - bloom_width.min(bloom_height).leading_zeros();
+    let bloom_mip_count = bloom_mip_limit.clamp(1, 6);
+    let bloom_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-hdr-bloom-chain-texture"),
+        size: wgpu::Extent3d {
+            width: bloom_width,
+            height: bloom_height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: bloom_mip_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let bloom_mip_views = (0..bloom_mip_count)
+        .map(|mip| {
+            bloom_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("banger-native-hdr-bloom-mip-view"),
+                base_mip_level: mip,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let resource_hash = sha256_hex(
+        format!(
+            "banger-hdr-scene-v1:{width}:{height}:rgba16float:{allocation_index}:bloom:{bloom_width}:{bloom_height}:{bloom_mip_count}"
+        )
+        .as_bytes(),
+    );
+    BangerNativeHdrResources {
+        scene_view: scene_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        _scene_texture: scene_texture,
+        _bloom_texture: bloom_texture,
+        bloom_mip_views,
+        _resource_hash: resource_hash,
     }
 }
 
@@ -4578,7 +4680,7 @@ fn create_banger_single_layer_water_resources(
         "banger-native-water-single-layer-composite-texture",
         width,
         height,
-        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Rgba16Float,
         wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
     );
     let spectral_state_texture = banger_create_water_texture(
@@ -5417,29 +5519,55 @@ fn present_banger_single_layer_water_composite(
 }
 
 #[cfg(target_os = "windows")]
-fn present_banger_emissive_bloom(
+fn banger_tonemap_params_bytes(time_seconds: f32, srgb_output: f32) -> [u8; 32] {
+    let exposure = 1.0 + 0.03 * (time_seconds * 0.19).sin();
+    let bloom_intensity = 0.055f32;
+    let vignette_strength = 0.16f32;
+    let mut bytes = [0u8; 32];
+    bytes[0..4].copy_from_slice(&exposure.to_le_bytes());
+    bytes[4..8].copy_from_slice(&bloom_intensity.to_le_bytes());
+    bytes[8..12].copy_from_slice(&time_seconds.to_le_bytes());
+    bytes[12..16].copy_from_slice(&vignette_strength.to_le_bytes());
+    bytes[16..20].copy_from_slice(&srgb_output.to_le_bytes());
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn run_banger_bloom_pass(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     scene_pipeline: &BangerNativeScenePipeline,
-    frame_target: &BangerNativeFrameTarget,
-    output_view: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    source_view: &wgpu::TextureView,
+    target_view: &wgpu::TextureView,
+    clear_target: bool,
 ) {
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("banger-native-emissive-bloom-present-bind-group"),
-        layout: &scene_pipeline.bloom_present_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&frame_target.gbuffer.emissive_view),
-        }],
+        label: Some("banger-native-bloom-chain-bind-group"),
+        layout: &scene_pipeline.bloom_sample_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(source_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&scene_pipeline.bloom_sampler),
+            },
+        ],
     });
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("banger-native-emissive-bloom-present-pass"),
+        label: Some("banger-native-bloom-chain-pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: output_view,
+            view: target_view,
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
+                load: if clear_target {
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                } else {
+                    wgpu::LoadOp::Load
+                },
                 store: wgpu::StoreOp::Store,
             },
         })],
@@ -5448,7 +5576,99 @@ fn present_banger_emissive_bloom(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    pass.set_pipeline(&scene_pipeline.bloom_present_pipeline);
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_banger_bloom_chain(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+) {
+    let mip_views = &frame_target.hdr.bloom_mip_views;
+    run_banger_bloom_pass(
+        device,
+        encoder,
+        scene_pipeline,
+        &scene_pipeline.bloom_prefilter_pipeline,
+        &frame_target.hdr.scene_view,
+        &mip_views[0],
+        true,
+    );
+    for mip in 1..mip_views.len() {
+        run_banger_bloom_pass(
+            device,
+            encoder,
+            scene_pipeline,
+            &scene_pipeline.bloom_downsample_pipeline,
+            &mip_views[mip - 1],
+            &mip_views[mip],
+            true,
+        );
+    }
+    for mip in (0..mip_views.len().saturating_sub(1)).rev() {
+        run_banger_bloom_pass(
+            device,
+            encoder,
+            scene_pipeline,
+            &scene_pipeline.bloom_upsample_pipeline,
+            &mip_views[mip + 1],
+            &mip_views[mip],
+            false,
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn present_banger_hdr_tonemap(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
+    output_view: &wgpu::TextureView,
+) {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-hdr-tonemap-present-bind-group"),
+        layout: &scene_pipeline.tonemap_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_target.hdr.scene_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&frame_target.hdr.bloom_mip_views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&scene_pipeline.bloom_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: scene_pipeline.tonemap_params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("banger-native-hdr-tonemap-present-pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: output_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(&scene_pipeline.tonemap_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
 }
@@ -5646,7 +5866,7 @@ fn banger_hzb_mip_count(width: u32, height: u32) -> u32 {
     let mut size = width.max(height).max(1);
     let mut mips = 1u32;
     while size > 1 {
-        size = size.div_ceil(2);
+        size /= 2;
         mips += 1;
     }
     mips
@@ -5741,8 +5961,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let source_xy = vec2<i32>(
-        min(gid.x, max(hzb.dims.x, 1u) - 1u),
-        min(gid.y, max(hzb.dims.y, 1u) - 1u)
+        i32(min(gid.x, max(hzb.dims.x, 1u) - 1u)),
+        i32(min(gid.y, max(hzb.dims.y, 1u) - 1u))
     );
     let depth = textureLoad(source_depth, source_xy, 0);
     textureStore(target_hzb, vec2<i32>(gid.xy), vec4<f32>(depth, 0.0, 0.0, 0.0));
@@ -6017,11 +6237,7 @@ fn create_banger_first_scene_pipeline(
         ],
     });
     let targets = [
-        Some(wgpu::ColorTargetState {
-            format,
-            blend: Some(wgpu::BlendState::REPLACE),
-            write_mask: wgpu::ColorWrites::ALL,
-        }),
+        Some(banger_gbuffer_color_target_state()),
         Some(banger_gbuffer_color_target_state()),
         Some(banger_gbuffer_color_target_state()),
         Some(banger_gbuffer_color_target_state()),
@@ -6172,7 +6388,7 @@ fn create_banger_first_scene_pipeline(
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format,
+                format: wgpu::TextureFormat::Rgba16Float,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -6234,7 +6450,7 @@ fn create_banger_first_scene_pipeline(
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format,
+                format: wgpu::TextureFormat::Rgba16Float,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -6533,7 +6749,7 @@ fn create_banger_first_scene_pipeline(
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        format: wgpu::TextureFormat::Rgba16Float,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -6646,7 +6862,7 @@ fn create_banger_first_scene_pipeline(
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format,
+                format: wgpu::TextureFormat::Rgba16Float,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -6664,36 +6880,155 @@ fn create_banger_first_scene_pipeline(
         mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
-    let bloom_present_shader_source = banger_emissive_bloom_present_wgsl();
-    let bloom_present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("banger-native-emissive-bloom-present-wgsl"),
-        source: wgpu::ShaderSource::Wgsl(bloom_present_shader_source.into()),
+    let bloom_chain_shader_source = banger_bloom_chain_wgsl();
+    let bloom_chain_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-bloom-chain-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(bloom_chain_shader_source.into()),
     });
-    let bloom_present_bind_group_layout =
+    let bloom_sample_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("banger-native-emissive-bloom-present-bind-group-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            label: Some("banger-native-bloom-chain-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
-    let bloom_present_pipeline_layout =
+    let bloom_chain_pipeline_layout =
         device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("banger-native-emissive-bloom-present-pipeline-layout"),
-            bind_group_layouts: &[Some(&bloom_present_bind_group_layout)],
+            label: Some("banger-native-bloom-chain-pipeline-layout"),
+            bind_group_layouts: &[Some(&bloom_sample_bind_group_layout)],
             immediate_size: 0,
         });
-    let bloom_present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("banger-native-emissive-bloom-present-pipeline"),
-        layout: Some(&bloom_present_pipeline_layout),
+    let banger_bloom_pipeline = |label: &'static str, entry_point: &'static str, additive: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&bloom_chain_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &bloom_chain_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &bloom_chain_shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(if additive {
+                        wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }
+                    } else {
+                        wgpu::BlendState::REPLACE
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let bloom_prefilter_pipeline =
+        banger_bloom_pipeline("banger-native-bloom-prefilter-pipeline", "fs_prefilter", false);
+    let bloom_downsample_pipeline =
+        banger_bloom_pipeline("banger-native-bloom-downsample-pipeline", "fs_downsample", false);
+    let bloom_upsample_pipeline =
+        banger_bloom_pipeline("banger-native-bloom-upsample-pipeline", "fs_upsample", true);
+    let bloom_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("banger-native-bloom-chain-sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let tonemap_shader_source = banger_hdr_tonemap_present_wgsl();
+    let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-hdr-tonemap-present-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(tonemap_shader_source.into()),
+    });
+    let tonemap_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-hdr-tonemap-present-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let tonemap_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("banger-native-hdr-tonemap-present-pipeline-layout"),
+            bind_group_layouts: &[Some(&tonemap_bind_group_layout)],
+            immediate_size: 0,
+        });
+    let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-hdr-tonemap-present-pipeline"),
+        layout: Some(&tonemap_pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &bloom_present_shader,
+            module: &tonemap_shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
             buffers: &[],
@@ -6702,32 +7037,28 @@ fn create_banger_first_scene_pipeline(
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &bloom_present_shader,
+            module: &tonemap_shader,
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::Zero,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                }),
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
         multiview_mask: None,
         cache: None,
     });
+    let tonemap_srgb_output = if format.is_srgb() { 1.0 } else { 0.0 };
+    let tonemap_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-hdr-tonemap-params-buffer"),
+        size: 32,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        mapped_at_creation: false,
+    });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_depth_camera_v1",
+            "banger-first-scene-pipeline:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{}:instanced_mesh_hdr_bloom_agx_v1",
             shader_source_hash,
             sha256_hex(sky_present_shader_source.as_bytes()),
             sha256_hex(ssao_present_shader_source.as_bytes()),
@@ -6738,7 +7069,8 @@ fn create_banger_first_scene_pipeline(
             sha256_hex(spectral_ocean_shader_source.as_bytes()),
             sha256_hex(single_layer_water_shader_source.as_bytes()),
             sha256_hex(single_layer_water_present_shader_source.as_bytes()),
-            sha256_hex(bloom_present_shader_source.as_bytes()),
+            sha256_hex(bloom_chain_shader_source.as_bytes()),
+            sha256_hex(tonemap_shader_source.as_bytes()),
             scene_mesh_hash,
             scene_graph_hash,
             format,
@@ -6806,8 +7138,15 @@ fn create_banger_first_scene_pipeline(
         single_layer_water_present_bind_group_layout,
         single_layer_water_present_pipeline,
         single_layer_water_present_sampler,
-        bloom_present_bind_group_layout,
-        bloom_present_pipeline,
+        bloom_sample_bind_group_layout,
+        bloom_prefilter_pipeline,
+        bloom_downsample_pipeline,
+        bloom_upsample_pipeline,
+        bloom_sampler,
+        tonemap_bind_group_layout,
+        tonemap_pipeline,
+        tonemap_params_buffer,
+        tonemap_srgb_output,
         vertex_count: gpu_resource.vertex_count,
         index_count: gpu_resource.index_count,
         instance_count: gpu_resource.instance_count,
@@ -6887,8 +7226,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let rayleigh_blue = vec3<f32>(0.12, 0.30, 0.62) * rayleigh * 0.32;
     let mie_warmth = vec3<f32>(1.0, 0.54, 0.24) * mie * 0.32;
     let sunset_band = vec3<f32>(0.92, 0.38, 0.16) * (1.0 - horizon) * 0.24;
-    let color = mix(lower + sunset_band, upper + rayleigh_blue, horizon) + mie_warmth + vec3<f32>(1.0, 0.74, 0.38) * sun_disk;
-    return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    let color = mix(lower + sunset_band, upper + rayleigh_blue, horizon) + mie_warmth * 2.4 + vec3<f32>(1.0, 0.78, 0.44) * sun_disk * 42.0;
+    return vec4<f32>(max(color, vec3<f32>(0.0)), 1.0);
 }
 "#
 }
@@ -7020,11 +7359,6 @@ struct FragmentOut {
     @location(4) gbuffer_emissive: vec4<f32>,
 };
 
-fn banger_filmic_tonemap(color: vec3<f32>) -> vec3<f32> {
-    let x = max(color - vec3<f32>(0.004), vec3<f32>(0.0));
-    return (x * (6.2 * x + vec3<f32>(0.5))) / (x * (6.2 * x + vec3<f32>(1.7)) + vec3<f32>(0.06));
-}
-
 fn banger_contact_ambient_occlusion(normal: vec3<f32>, world_pos: vec3<f32>, material_kind: f32) -> f32 {
     let upward_access = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     let slope_cavity = pow(1.0 - upward_access, 1.7);
@@ -7081,7 +7415,7 @@ fn banger_environment_radiance(direction: vec3<f32>, roughness: f32) -> vec3<f32
     let sun_dir = normalize(vec3<f32>(0.42, 0.72, 0.48));
     let solar_disc = pow(max(dot(direction, sun_dir), 0.0), mix(96.0, 10.0, roughness));
     let solar_glow = pow(max(dot(direction, sun_dir), 0.0), mix(12.0, 3.0, roughness));
-    return sky_probe + vec3<f32>(1.0, 0.78, 0.46) * solar_disc * (1.2 - roughness) + vec3<f32>(0.28, 0.18, 0.08) * solar_glow;
+    return sky_probe + vec3<f32>(1.0, 0.82, 0.52) * solar_disc * (1.2 - roughness) * 12.0 + vec3<f32>(0.42, 0.27, 0.12) * solar_glow * 1.6;
 }
 
 fn banger_environment_brdf_approx(no_v: f32, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -7255,15 +7589,18 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let clearcoat_direct = banger_clearcoat_direct(normal, view_dir, sun_dir, material_clearcoat_roughness, material_clearcoat) * contact_ao * shadow_visibility;
     let clearcoat_indirect = banger_clearcoat_environment(normal, view_dir, material_clearcoat_roughness, material_clearcoat, indirect_ao);
     let diffuse_light = lambert * contact_ao + 0.12 * indirect_ao;
-    let base_layer = (pbr_direct * (2.45 * contact_ao * shadow_visibility) + pbr_indirect + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao)) * (1.0 - clearcoat_fresnel * 0.45);
-    let lit = base_layer + clearcoat_direct + clearcoat_indirect + vec3<f32>(1.0, 0.72, 0.38) * water_glint + voxel_heat * indirect_ao;
+    let sun_radiance = vec3<f32>(5.6, 5.05, 4.35);
+    let base_layer = (pbr_direct * sun_radiance * (contact_ao * shadow_visibility) + pbr_indirect + base_color * diffuse_light * shadow_visibility + bounced * (0.55 + 0.45 * indirect_ao)) * (1.0 - clearcoat_fresnel * 0.45);
+    let lit = base_layer
+        + clearcoat_direct * sun_radiance
+        + clearcoat_indirect
+        + vec3<f32>(1.0, 0.72, 0.38) * water_glint * 6.0
+        + material_emissive * 4.0
+        + voxel_heat * indirect_ao;
     let fog_color = vec3<f32>(0.11, 0.16, 0.22) + sky * 0.18;
     let fogged = mix(lit, fog_color, smoothstep(0.35, 1.0, view_fade));
-    let exposure = 1.08 + 0.04 * sin(frame.time_seconds * 0.19);
-    let graded = banger_filmic_tonemap(fogged * exposure);
-    let contrast = mix(vec3<f32>(0.5), graded, vec3<f32>(1.08));
     var out: FragmentOut;
-    out.scene_color = vec4<f32>(max(contrast, vec3<f32>(0.015, 0.018, 0.026)), alpha_factor);
+    out.scene_color = vec4<f32>(max(fogged, vec3<f32>(0.0)), alpha_factor);
     out.gbuffer_albedo = vec4<f32>(clamp(base_color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     out.gbuffer_normal = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     out.gbuffer_material = vec4<f32>(in.material_kind, material_roughness, view_fade, water_glint * shadow_visibility);
@@ -7289,7 +7626,7 @@ var gbuffer_normal: texture_2d<f32>;
 @group(0) @binding(2)
 var gbuffer_material: texture_2d<f32>;
 @group(0) @binding(3)
-var water_composite: texture_storage_2d<rgba8unorm, write>;
+var water_composite: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(4)
 var refraction_mask: texture_storage_2d<r32float, write>;
 @group(0) @binding(5)
@@ -7324,7 +7661,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let scattered = params.scattering.rgb * (0.18 + fresnel * 0.62 + material.w * 0.35 + ocean_slope.z * 0.08);
     let water_color = albedo * absorption + scattered;
     let composite = select(albedo, water_color, is_water);
-    textureStore(water_composite, pixel, vec4<f32>(clamp(composite, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
+    textureStore(water_composite, pixel, vec4<f32>(max(composite, vec3<f32>(0.0)), 1.0));
     textureStore(refraction_mask, pixel, vec4<f32>(select(0.0, refract_strength, is_water), 0.0, 0.0, 0.0));
 
     if (is_water) {
@@ -7374,19 +7711,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let color = textureSample(water_composite, water_sampler, in.uv).rgb;
     let sparkle = pow(clamp(mask, 0.0, 1.0), 2.0) * vec3<f32>(0.20, 0.36, 0.45);
     let alpha = smoothstep(0.02, 0.45, mask) * 0.66;
-    return vec4<f32>(clamp(color + sparkle, vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
+    return vec4<f32>(max(color * 1.6 + sparkle, vec3<f32>(0.0)), alpha);
 }
 "#
 }
 
 #[cfg(target_os = "windows")]
-fn banger_emissive_bloom_present_wgsl() -> &'static str {
+fn banger_bloom_chain_wgsl() -> &'static str {
     r#"
 @group(0) @binding(0)
-var gbuffer_emissive: texture_2d<f32>;
+var bloom_source: texture_2d<f32>;
+@group(0) @binding(1)
+var bloom_sampler: sampler;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
 };
 
 @vertex
@@ -7395,36 +7735,182 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let y = f32(vertex_index & 2u);
     var out: VertexOut;
     out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, y);
     return out;
 }
 
-fn banger_emissive_tap(pixel: vec2<i32>, offset: vec2<i32>, extent: vec2<i32>) -> vec3<f32> {
-    let clamped_pixel = clamp(pixel + offset, vec2<i32>(0), extent - vec2<i32>(1));
-    let emissive = textureLoad(gbuffer_emissive, clamped_pixel, 0);
-    let luminance = dot(emissive.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let threshold = smoothstep(0.035, 0.18, luminance);
-    let ao_gate = clamp(emissive.a, 0.35, 1.0);
-    return emissive.rgb * threshold * ao_gate;
+fn banger_bloom_texel() -> vec2<f32> {
+    return 1.0 / vec2<f32>(textureDimensions(bloom_source));
+}
+
+fn banger_bloom_tap(uv: vec2<f32>) -> vec3<f32> {
+    return max(textureSampleLevel(bloom_source, bloom_sampler, uv, 0.0).rgb, vec3<f32>(0.0));
+}
+
+fn banger_bloom_karis_weight(color: vec3<f32>) -> f32 {
+    let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return 1.0 / (1.0 + luma);
+}
+
+fn banger_bloom_soft_threshold(color: vec3<f32>) -> vec3<f32> {
+    let threshold = 1.0;
+    let knee = 0.5;
+    let brightness = max(max(color.r, color.g), color.b);
+    var soft = brightness - threshold + knee;
+    soft = clamp(soft, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 0.0001);
+    let contribution = max(soft, brightness - threshold) / max(brightness, 0.0001);
+    return color * contribution;
+}
+
+@fragment
+fn fs_prefilter(in: VertexOut) -> @location(0) vec4<f32> {
+    let texel = banger_bloom_texel();
+    let a = banger_bloom_tap(in.uv + texel * vec2<f32>(-0.5, -0.5));
+    let b = banger_bloom_tap(in.uv + texel * vec2<f32>(0.5, -0.5));
+    let c = banger_bloom_tap(in.uv + texel * vec2<f32>(-0.5, 0.5));
+    let d = banger_bloom_tap(in.uv + texel * vec2<f32>(0.5, 0.5));
+    let wa = banger_bloom_karis_weight(a);
+    let wb = banger_bloom_karis_weight(b);
+    let wc = banger_bloom_karis_weight(c);
+    let wd = banger_bloom_karis_weight(d);
+    let filtered = (a * wa + b * wb + c * wc + d * wd) / max(wa + wb + wc + wd, 0.0001);
+    return vec4<f32>(banger_bloom_soft_threshold(filtered), 1.0);
+}
+
+@fragment
+fn fs_downsample(in: VertexOut) -> @location(0) vec4<f32> {
+    let texel = banger_bloom_texel();
+    let center = banger_bloom_tap(in.uv);
+    let inner0 = banger_bloom_tap(in.uv + texel * vec2<f32>(-1.0, -1.0));
+    let inner1 = banger_bloom_tap(in.uv + texel * vec2<f32>(1.0, -1.0));
+    let inner2 = banger_bloom_tap(in.uv + texel * vec2<f32>(-1.0, 1.0));
+    let inner3 = banger_bloom_tap(in.uv + texel * vec2<f32>(1.0, 1.0));
+    let outer0 = banger_bloom_tap(in.uv + texel * vec2<f32>(-2.0, -2.0));
+    let outer1 = banger_bloom_tap(in.uv + texel * vec2<f32>(0.0, -2.0));
+    let outer2 = banger_bloom_tap(in.uv + texel * vec2<f32>(2.0, -2.0));
+    let outer3 = banger_bloom_tap(in.uv + texel * vec2<f32>(-2.0, 0.0));
+    let outer4 = banger_bloom_tap(in.uv + texel * vec2<f32>(2.0, 0.0));
+    let outer5 = banger_bloom_tap(in.uv + texel * vec2<f32>(-2.0, 2.0));
+    let outer6 = banger_bloom_tap(in.uv + texel * vec2<f32>(0.0, 2.0));
+    let outer7 = banger_bloom_tap(in.uv + texel * vec2<f32>(2.0, 2.0));
+    var color = center * 0.125;
+    color += (inner0 + inner1 + inner2 + inner3) * 0.125;
+    color += (outer1 + outer3 + outer4 + outer6) * 0.0625;
+    color += (outer0 + outer2 + outer5 + outer7) * 0.03125;
+    return vec4<f32>(color, 1.0);
+}
+
+@fragment
+fn fs_upsample(in: VertexOut) -> @location(0) vec4<f32> {
+    let texel = banger_bloom_texel();
+    var color = banger_bloom_tap(in.uv) * 4.0;
+    color += (banger_bloom_tap(in.uv + texel * vec2<f32>(-1.0, 0.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(1.0, 0.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(0.0, -1.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(0.0, 1.0))) * 2.0;
+    color += banger_bloom_tap(in.uv + texel * vec2<f32>(-1.0, -1.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(1.0, -1.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(-1.0, 1.0))
+        + banger_bloom_tap(in.uv + texel * vec2<f32>(1.0, 1.0));
+    return vec4<f32>(color / 16.0, 0.0);
+}
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn banger_hdr_tonemap_present_wgsl() -> &'static str {
+    r#"
+struct TonemapParams {
+    exposure: f32,
+    bloom_intensity: f32,
+    time_seconds: f32,
+    vignette_strength: f32,
+    srgb_output: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
+};
+
+@group(0) @binding(0)
+var hdr_scene: texture_2d<f32>;
+@group(0) @binding(1)
+var bloom_chain: texture_2d<f32>;
+@group(0) @binding(2)
+var tonemap_sampler: sampler;
+@group(0) @binding(3)
+var<uniform> params: TonemapParams;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    let x = f32((vertex_index << 1u) & 2u);
+    let y = f32(vertex_index & 2u);
+    var out: VertexOut;
+    out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, y);
+    return out;
+}
+
+fn banger_agx_default_contrast(x: vec3<f32>) -> vec3<f32> {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+
+fn banger_agx(color: vec3<f32>) -> vec3<f32> {
+    let agx_mat = mat3x3<f32>(
+        vec3<f32>(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
+        vec3<f32>(0.0784335999999992, 0.878468636469772, 0.0784336),
+        vec3<f32>(0.0792237451477643, 0.0791661274605434, 0.879142973793104),
+    );
+    let min_ev = -12.47393;
+    let max_ev = 4.026069;
+    var value = agx_mat * max(color, vec3<f32>(0.0000000001));
+    value = clamp(log2(value), vec3<f32>(min_ev), vec3<f32>(max_ev));
+    value = (value - vec3<f32>(min_ev)) / (max_ev - min_ev);
+    return banger_agx_default_contrast(value);
+}
+
+fn banger_agx_look_punchy(color: vec3<f32>) -> vec3<f32> {
+    let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let punched = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.18));
+    return vec3<f32>(luma) + (punched - vec3<f32>(luma)) * 1.22;
+}
+
+fn banger_agx_eotf(color: vec3<f32>) -> vec3<f32> {
+    let agx_mat_inv = mat3x3<f32>(
+        vec3<f32>(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
+        vec3<f32>(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
+        vec3<f32>(-0.0990297440797205, -0.0989611768448433, 1.15107367264116),
+    );
+    return clamp(agx_mat_inv * color, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn banger_screen_dither(position: vec2<f32>, time_seconds: f32) -> f32 {
+    let jitter = vec2<f32>(fract(time_seconds * 0.61), fract(time_seconds * 0.83));
+    let noise = fract(sin(dot(position + jitter, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    return (noise - 0.5) / 255.0;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let extent_u = textureDimensions(gbuffer_emissive);
-    let extent = vec2<i32>(i32(extent_u.x), i32(extent_u.y));
-    let pixel = vec2<i32>(i32(in.position.x), i32(in.position.y));
-    let near_glow =
-        banger_emissive_tap(pixel, vec2<i32>(0, 0), extent) * 0.32 +
-        banger_emissive_tap(pixel, vec2<i32>(2, 0), extent) * 0.14 +
-        banger_emissive_tap(pixel, vec2<i32>(-2, 0), extent) * 0.14 +
-        banger_emissive_tap(pixel, vec2<i32>(0, 2), extent) * 0.14 +
-        banger_emissive_tap(pixel, vec2<i32>(0, -2), extent) * 0.14;
-    let wide_glow =
-        banger_emissive_tap(pixel, vec2<i32>(5, 5), extent) * 0.08 +
-        banger_emissive_tap(pixel, vec2<i32>(-5, 5), extent) * 0.08 +
-        banger_emissive_tap(pixel, vec2<i32>(5, -5), extent) * 0.08 +
-        banger_emissive_tap(pixel, vec2<i32>(-5, -5), extent) * 0.08;
-    let bloom = clamp((near_glow + wide_glow) * vec3<f32>(0.45, 0.58, 0.72), vec3<f32>(0.0), vec3<f32>(0.16));
-    return vec4<f32>(bloom, 0.0);
+    let hdr = max(textureSampleLevel(hdr_scene, tonemap_sampler, in.uv, 0.0).rgb, vec3<f32>(0.0));
+    let bloom = max(textureSampleLevel(bloom_chain, tonemap_sampler, in.uv, 0.0).rgb, vec3<f32>(0.0));
+    var color = (hdr + bloom * params.bloom_intensity) * params.exposure;
+    color = banger_agx(color);
+    color = banger_agx_look_punchy(color);
+    color = banger_agx_eotf(color);
+    let centered = in.uv - vec2<f32>(0.5);
+    let vignette = 1.0 - params.vignette_strength * smoothstep(0.22, 0.72, dot(centered, centered));
+    color = color * vignette;
+    color = select(color, pow(color, vec3<f32>(2.2)), params.srgb_output > 0.5);
+    color = clamp(color + vec3<f32>(banger_screen_dither(in.position.xy, params.time_seconds)), vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(color, 1.0);
 }
 "#
 }
@@ -11109,7 +11595,7 @@ mod tests {
         assert!(source.contains("banger_tangent_space_detail_normal"));
         assert!(source.contains("out.normal_hint = world_normal"));
         assert!(source.contains("water_glint"));
-        assert!(source.contains("banger_filmic_tonemap"));
+        assert!(source.contains("sun_radiance"));
         assert!(source.contains("banger_contact_ambient_occlusion"));
         assert!(source.contains("banger_microfacet_brdf"));
         assert!(source.contains("banger_distribution_ggx"));
@@ -11159,7 +11645,7 @@ mod tests {
         assert!(source.contains("banger_material_record_for_kind"));
         assert!(source.contains("contact_ao"));
         assert!(source.contains("material_roughness"));
-        assert!(source.contains("exposure"));
+        assert!(source.contains("out.scene_color = vec4<f32>(max(fogged"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
         assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
@@ -11582,15 +12068,15 @@ mod tests {
     #[test]
     fn sizes_hzb_pyramid_for_child_surface_depth() {
         assert_eq!(banger_hzb_mip_count(1, 1), 1);
-        assert_eq!(banger_hzb_mip_count(1280, 720), 12);
+        assert_eq!(banger_hzb_mip_count(1280, 720), 11);
         assert_eq!(banger_hzb_mip_size(1280, 720, 0), [1280, 720]);
         assert_eq!(banger_hzb_mip_size(1280, 720, 1), [640, 360]);
-        assert_eq!(banger_hzb_mip_size(1280, 720, 11), [1, 1]);
-        assert_eq!(banger_hzb_resource_hash(1280, 720, 12, 1).len(), 64);
-        let consumer_uniform = banger_hzb_consumer_uniform_bytes(1280, 720, 12, 1);
+        assert_eq!(banger_hzb_mip_size(1280, 720, 10), [1, 1]);
+        assert_eq!(banger_hzb_resource_hash(1280, 720, 11, 1).len(), 64);
+        let consumer_uniform = banger_hzb_consumer_uniform_bytes(1280, 720, 11, 1);
         assert_eq!(u32::from_le_bytes(consumer_uniform[0..4].try_into().unwrap()), 1280);
         assert_eq!(u32::from_le_bytes(consumer_uniform[4..8].try_into().unwrap()), 720);
-        assert_eq!(u32::from_le_bytes(consumer_uniform[8..12].try_into().unwrap()), 12);
+        assert_eq!(u32::from_le_bytes(consumer_uniform[8..12].try_into().unwrap()), 11);
         assert_eq!(u32::from_le_bytes(consumer_uniform[12..16].try_into().unwrap()), 1);
         assert_eq!(banger_hzb_consumer_resource_hash(1280, 720, 12, 1).len(), 64);
         assert!(banger_hzb_seed_compute_wgsl().contains("texture_depth_2d"));
@@ -12443,7 +12929,7 @@ mod tests {
         assert!(shader.contains("gbuffer_material"));
         assert!(shader.contains("spectral_displacement"));
         assert!(shader.contains("spectral_slope"));
-        assert!(shader.contains("texture_storage_2d<rgba8unorm, write>"));
+        assert!(shader.contains("texture_storage_2d<rgba16float, write>"));
         assert!(shader.contains("texture_storage_2d<r32float, write>"));
         assert!(shader.contains("refraction_mask"));
         assert!(shader.contains("atomicOr"));
@@ -12452,11 +12938,18 @@ mod tests {
         assert!(present_shader.contains("refraction_mask"));
         assert!(present_shader.contains("smoothstep"));
         assert!(present_shader.contains("discard"));
-        let bloom_shader = banger_emissive_bloom_present_wgsl();
-        assert!(bloom_shader.contains("gbuffer_emissive"));
-        assert!(bloom_shader.contains("banger_emissive_tap"));
-        assert!(bloom_shader.contains("smoothstep"));
-        assert!(bloom_shader.contains("luminance"));
+        let bloom_shader = banger_bloom_chain_wgsl();
+        assert!(bloom_shader.contains("fs_prefilter"));
+        assert!(bloom_shader.contains("fs_downsample"));
+        assert!(bloom_shader.contains("fs_upsample"));
+        assert!(bloom_shader.contains("banger_bloom_karis_weight"));
+        assert!(bloom_shader.contains("banger_bloom_soft_threshold"));
+        let tonemap_shader = banger_hdr_tonemap_present_wgsl();
+        assert!(tonemap_shader.contains("banger_agx"));
+        assert!(tonemap_shader.contains("banger_agx_eotf"));
+        assert!(tonemap_shader.contains("bloom_intensity"));
+        assert!(tonemap_shader.contains("banger_screen_dither"));
+        assert!(tonemap_shader.contains("vignette"));
     }
 
     #[cfg(target_os = "windows")]
