@@ -67,7 +67,7 @@ button {
   --workspace-right: var(--right-panel-gutter);
   --workspace-total-width: calc(100vw - var(--workspace-left) - var(--right-panel-gutter));
   --canvas-files-pane-right: 8px;
-  --canvas-files-pane-width: min(720px, calc(100vw - 32px));
+  --canvas-files-pane-width: clamp(360px, calc(var(--workspace-total-width) * 0.34), 560px);
   --canvas-options-rail-width: clamp(250px, 15vw, 320px);
   --workspace-width: calc(100vw - var(--workspace-left) - var(--workspace-right));
   --chat-width: min(780px, calc(var(--workspace-width) - 64px));
@@ -16004,6 +16004,41 @@ ol.assistantText__list li::before {
   min-width: 0;
 }
 
+.canvasLeadsPane__backGroup {
+  align-items: center !important;
+  gap: 7px !important;
+}
+
+.canvasLeadsPane__back {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--forge-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.canvasLeadsPane__back:hover,
+.canvasLeadsPane__back:focus-visible {
+  color: var(--forge-text);
+  background: var(--forge-overlay-hover);
+  outline: 0;
+}
+
+.canvasLeadsPane__back svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .canvasLeadsPane__header strong {
   color: var(--forge-text);
   font-size: 13px;
@@ -16196,6 +16231,21 @@ ol.assistantText__list li::before {
   padding: 20px 22px 40px;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+.canvasLeadsPane--detail .canvasLeadsPane__search,
+.canvasLeadsPane--detail .canvasLeadsPane__list {
+  display: none;
+}
+
+.canvasLeadsPane--detail .canvasLeadsPane__body {
+  display: block;
+  overflow: hidden;
+}
+
+.canvasLeadsPane--detail .canvasLeadDetail {
+  height: 100%;
+  overflow-y: auto;
 }
 
 .canvasLeadDetail__heading {

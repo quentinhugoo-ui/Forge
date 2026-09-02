@@ -1378,6 +1378,7 @@ function leadMessageText(message: GraphenLeadMessage): string {
 function CanvasLeadsPane({ onClose }: { onClose: () => void }) {
   const [leads, setLeads] = useState<GraphenLead[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [detailOpen, setDetailOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1419,17 +1420,26 @@ function CanvasLeadsPane({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <aside id="canvas-leads-pane" className="canvasLeadsPane" aria-label="Leads Graphen Studio">
+    <aside id="canvas-leads-pane" className={detailOpen ? "canvasLeadsPane canvasLeadsPane--detail" : "canvasLeadsPane"} aria-label="Leads Graphen Studio">
       <div className="canvasLeadsPane__inner">
         <header className="canvasLeadsPane__header">
-          <div>
-            <strong>Leads</strong>
-            <span>{leads.length === 1 ? "1 prise de contact" : `${leads.length} prises de contact`}</span>
-          </div>
+          {detailOpen ? (
+            <div className="canvasLeadsPane__backGroup">
+              <button type="button" className="canvasLeadsPane__back" onClick={() => setDetailOpen(false)} aria-label="Retour à la liste des leads">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" /></svg>
+              </button>
+              <strong>Leads</strong>
+            </div>
+          ) : (
+            <div>
+              <strong>Leads</strong>
+              <span>{leads.length === 1 ? "1 prise de contact" : `${leads.length} prises de contact`}</span>
+            </div>
+          )}
           <div className="canvasLeadsPane__actions">
-            <button type="button" onClick={() => void loadLeads()} disabled={loading} aria-label="Actualiser les leads">
+            {!detailOpen ? <button type="button" onClick={() => void loadLeads()} disabled={loading} aria-label="Actualiser les leads">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.7 6L20 12M4 12l1.3 6A7 7 0 0 0 17.9 15.8" /></svg>
-            </button>
+            </button> : null}
             <button type="button" onClick={onClose} aria-label="Fermer les leads">×</button>
           </div>
         </header>
@@ -1448,7 +1458,10 @@ function CanvasLeadsPane({ onClose }: { onClose: () => void }) {
                 role="listitem"
                 className={lead.id === selectedLead?.id ? "canvasLeadRow canvasLeadRow--active" : "canvasLeadRow"}
                 key={lead.id}
-                onClick={() => setSelectedId(lead.id)}
+                onClick={() => {
+                  setSelectedId(lead.id);
+                  setDetailOpen(true);
+                }}
               >
                 <span className={`canvasLeadRow__status canvasLeadRow__status--${lead.status || "new"}`} aria-hidden="true" />
                 <span className="canvasLeadRow__identity">
