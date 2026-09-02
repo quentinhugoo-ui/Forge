@@ -67,7 +67,7 @@ button {
   --workspace-right: var(--right-panel-gutter);
   --workspace-total-width: calc(100vw - var(--workspace-left) - var(--right-panel-gutter));
   --canvas-files-pane-right: 8px;
-  --canvas-files-pane-width: clamp(360px, calc(var(--workspace-total-width) * 0.34), 560px);
+  --canvas-files-pane-width: min(720px, calc(100vw - 32px));
   --canvas-options-rail-width: clamp(250px, 15vw, 320px);
   --workspace-width: calc(100vw - var(--workspace-left) - var(--workspace-right));
   --chat-width: min(780px, calc(var(--workspace-width) - 64px));
@@ -16267,7 +16267,7 @@ ol.assistantText__list li::before {
 
 .canvasLeadDetail__contact dd {
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   color: var(--forge-text);
   font-size: 10.5px;
   line-height: 1.35;
@@ -16399,6 +16399,36 @@ ol.assistantText__list li::before {
   }
 
   .canvasLeadDetail__contact,
+  .canvasLeadAttachments {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .canvasLeadsPane {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+
+  .canvasLeadsPane__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .canvasLeadsPane__list {
+    max-height: 184px;
+    border-right: 0;
+    border-bottom: 1px solid var(--forge-line);
+  }
+
+  .canvasLeadDetail {
+    padding: 18px 16px 34px;
+  }
+
+  .canvasLeadDetail__contact {
+    grid-template-columns: 1fr;
+  }
+
   .canvasLeadAttachments {
     grid-template-columns: 1fr;
   }
