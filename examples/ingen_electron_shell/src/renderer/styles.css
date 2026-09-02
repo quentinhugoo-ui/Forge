@@ -16226,6 +16226,7 @@ ol.assistantText__list li::before {
 }
 
 .canvasLeadDetail {
+  display: none;
   min-width: 0;
   min-height: 0;
   padding: 20px 22px 40px;
@@ -16244,6 +16245,7 @@ ol.assistantText__list li::before {
 }
 
 .canvasLeadsPane--detail .canvasLeadDetail {
+  display: block;
   height: 100%;
   overflow-y: auto;
 }
@@ -16452,6 +16454,17 @@ ol.assistantText__list li::before {
   .canvasLeadAttachments {
     grid-template-columns: 1fr;
   }
+}
+
+/* Leads uses one focused view at a time: the list fills the pane until a lead is opened. */
+.canvasLeadsPane:not(.canvasLeadsPane--detail) .canvasLeadsPane__body {
+  display: block;
+  overflow: hidden auto;
+}
+
+.canvasLeadsPane:not(.canvasLeadsPane--detail) .canvasLeadsPane__list {
+  height: 100%;
+  border-right: 0;
 }
 
 @media (max-width: 760px) {
