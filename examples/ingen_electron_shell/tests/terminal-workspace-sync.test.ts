@@ -42,7 +42,7 @@ describe("embedded native Windows terminal host", () => {
     expect(appSource).toContain("setCanvasTerminalOpen(false)");
     expect(appSource).toContain('setCanvasActivePane("")');
     expect(appSource).toContain("setCanvasSplitOpen(false)");
-    expect(appSource).toContain("? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen");
+    expect(appSource).toContain("? canvasSplitOpen || canvasFilesOpen || canvasLeadsOpen || canvasTerminalOpen");
   });
 
   it("adds Files and Terminal as tabs instead of replacing the current pane", () => {

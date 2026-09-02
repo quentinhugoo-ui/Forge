@@ -15269,6 +15269,7 @@ function headerSnapshot(): HeaderSnapshot {
     top: [
       ["left-panel", "Toggle left panel", "panel-left", "toggle_left_panel", undefined],
       ["sessions", "Search sessions", "search", "open_sessions_canvas", "sessions"],
+      ["leads-top", "Leads", "world", "toggle_right_panel", "right-panel"],
       ["webexplorer-top", "Open WebExplorer", "globe", "open_webexplorer", "webexplorer"],
       ["banger-top", "Open Banger", "box", "open_banger", "banger"],
       ["trading-top", "Open Trading", "chart", "open_trading", "trading"],
@@ -20437,7 +20438,87 @@ async function submitTradingOrder(request: TradingOrderRequest): Promise<Trading
     return { ...result, proofHash: hashJson({ ...result, proofHash: "" }) };
   }
 }
+
+const GRAPHEN_LEADS_DEFAULT_ORIGIN = "https://www.graphenstudio.com";
+
+function graphenLeadsOrigin(): string {
+  return String(process.env.GRAPHEN_LEADS_ORIGIN || GRAPHEN_LEADS_DEFAULT_ORIGIN).trim().replace(/\/$/, "");
+}
+
+function graphenLeadsToken(): string {
+  return String(process.env.GRAPHEN_LEADS_TOKEN || "").trim();
+}
+
+async function graphenLeadsFetch(pathname: string): Promise<Response> {
+  const token = graphenLeadsToken();
+  if (!token) {
+    throw new Error("L’accès sécurisé aux leads n’est pas encore configuré sur cet ordinateur.");
+  }
+  return net.fetch(`${graphenLeadsOrigin()}${pathname}`, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`
+    },
+    signal: AbortSignal.timeout(15_000)
+  });
+}
+
+async function getGraphenLeads(): Promise<{ leads: unknown[]; error?: string }> {
+  try {
+    const response = await graphenLeadsFetch("/api/admin/leads");
+    const payload = await response.json() as { leads?: unknown[]; error?: string };
+    if (!response.ok) {
+      throw new Error(payload.error || `La récupération des leads a échoué (${response.status}).`);
+    }
+    return { leads: Array.isArray(payload.leads) ? payload.leads : [] };
+  } catch (error) {
+    return {
+      leads: [],
+      error: error instanceof Error ? error.message : "Les leads sont momentanément indisponibles."
+    };
+  }
+}
+
+async function openGraphenLeadAttachment(input: unknown): Promise<{ accepted: boolean; error?: string }> {
+  try {
+    const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
+    const id = String(record.id || "").trim();
+    const requestedName = String(record.filename || "document").trim();
+    if (!/^[a-zA-Z0-9_-]{4,120}$/.test(id)) {
+      throw new Error("La pièce jointe demandée est invalide.");
+    }
+    const response = await graphenLeadsFetch(`/api/admin/files/${encodeURIComponent(id)}`);
+    if (!response.ok) {
+      let message = `La pièce jointe n’a pas pu être récupérée (${response.status}).`;
+      try {
+        const payload = await response.json() as { error?: string };
+        message = payload.error || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const safeName = requestedName.replace(/[^a-zA-Z0-9._ -]+/g, "-").replace(/^\.+/, "").slice(0, 140) || "document";
+    const destination = join(app.getPath("temp"), `graphen-${id}-${safeName}`);
+    await writeFile(destination, Buffer.from(await response.arrayBuffer()));
+    const openError = await shell.openPath(destination);
+    if (openError) throw new Error(openError);
+    return { accepted: true };
+  } catch (error) {
+    return {
+      accepted: false,
+      error: error instanceof Error ? error.message : "La pièce jointe n’a pas pu être ouverte."
+    };
+  }
+}
+
 function installIpc(): void {
+  ipcMain.handle("forge:get-graphen-leads", async (event): Promise<{ leads: unknown[]; error?: string }> => {
+    if (!validateSender(event)) return { leads: [], error: "La demande a été refusée." };
+    return getGraphenLeads();
+  });
+  ipcMain.handle("forge:open-graphen-lead-attachment", async (event, input: unknown): Promise<{ accepted: boolean; error?: string }> => {
+    if (!validateSender(event)) return { accepted: false, error: "La demande a été refusée." };
+    return openGraphenLeadAttachment(input);
+  });
   ipcMain.handle("forge:get-trading-candles", async (event, request: TradingCandlesRequest): Promise<TradingCandlesResult> => {
     if (!validateSender(event)) return getTradingCandlesSnapshot({ ...request, count: 0 });
     return getTradingCandlesSnapshot(request);

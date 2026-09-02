@@ -18,9 +18,43 @@ interface ForgeWindowControlsApi {
   close: () => Promise<boolean>;
 }
 
+interface GraphenLeadAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: number;
+}
+
+interface GraphenLeadMessage {
+  role: "user" | "assistant" | "system";
+  content?: string;
+  text?: string;
+}
+
+interface GraphenLead {
+  id: string;
+  conversationId: string;
+  nameOrCompany: string;
+  phone: string;
+  email: string;
+  siteUrl: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: GraphenLeadMessage[];
+  lastReply: string;
+  attachments: GraphenLeadAttachment[];
+}
+
+interface GraphenLeadsApi {
+  getGraphenLeads: () => Promise<{ leads: GraphenLead[]; error?: string }>;
+  openGraphenLeadAttachment: (id: string, filename: string) => Promise<{ accepted: boolean; error?: string }>;
+}
+
 declare global {
   interface Window {
-    forgeShell?: ForgeShellApi;
+    forgeShell?: ForgeShellApi & GraphenLeadsApi;
     forgeTerminal?: ForgeTerminalApi;
     forgeWindowControls?: ForgeWindowControlsApi;
   }

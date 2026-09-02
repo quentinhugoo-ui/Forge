@@ -45,6 +45,7 @@ function cssTokenStyle(): React.CSSProperties {
 
 function iconClass(control: Pick<HeaderControl, "icon" | "id">): string {
   if (control.id === "plan") return "shellIcon--nav-plan";
+  if (control.id === "leads-top") return "shellIcon--nav-globe";
   if (control.id === "webexplorer-workspace") return "shellIcon--nav-web";
   if (control.id === "right-panel") return "shellIcon--nav-panel";
 
@@ -365,6 +366,7 @@ export function App() {
   const { snapshot: panelsChatSnapshot } = usePanelsChatBottomStore();
   const [canvasSplitOpen, setCanvasSplitOpen] = useState(false);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
+  const [canvasLeadsOpen, setCanvasLeadsOpen] = useState(false);
   const [canvasTerminalOpen, setCanvasTerminalOpen] = useState(false);
   const [canvasActivePane, setCanvasActivePane] = useState<CanvasToolPane | "">("");
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
@@ -495,6 +497,7 @@ export function App() {
   const canvasSurfaceOpen =
     canvasSplitOpen ||
     canvasFilesOpen ||
+    canvasLeadsOpen ||
     canvasTerminalOpen ||
     canvasPlanetsOpen ||
     canvasWebExplorerOpen ||
@@ -670,7 +673,7 @@ export function App() {
     snapshot.leftPanelOpen ? "shell--left-open" : "shell--left-collapsed",
     snapshot.rightPanelOpen ? "shell--right-open" : "shell--right-collapsed",
     canvasSurfaceOpen ? "shell--canvas-split" : "shell--canvas-single",
-    canvasFilesOpen || canvasTerminalOpen ? "shell--canvas-files-open" : "",
+    canvasFilesOpen || canvasLeadsOpen || canvasTerminalOpen ? "shell--canvas-files-open" : "",
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
     canvasWebMediaOpen ? "shell--web-media-canvas-open" : "",
@@ -977,6 +980,9 @@ export function App() {
       if (canvasFilesOpen) {
         setCanvasFilesOpen(false);
       }
+      if (canvasLeadsOpen) {
+        setCanvasLeadsOpen(false);
+      }
       if (canvasTerminalOpen) {
         setCanvasTerminalOpen(false);
       }
@@ -997,7 +1003,7 @@ export function App() {
         setParallelPrompts([""]);
       }
     }
-  }, [canvasActivePane, canvasFilesOpen, canvasMapsOpen, canvasPlanetsOpen, canvasSurfaceOpen, canvasTerminalOpen, canvasWebExplorerOpen, parallelPrompts.length]);
+  }, [canvasActivePane, canvasFilesOpen, canvasLeadsOpen, canvasMapsOpen, canvasPlanetsOpen, canvasSurfaceOpen, canvasTerminalOpen, canvasWebExplorerOpen, parallelPrompts.length]);
 
   const triggerParallelSidebarBirth = useCallback(() => {
     const sessionId = panelsChatSnapshot.activeSessionId || sidebarSnapshot.recentSessionId;
@@ -1023,6 +1029,7 @@ export function App() {
     }
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
@@ -1042,6 +1049,7 @@ export function App() {
       const targetIndex = Math.min(3, Math.max(1, parallelPrompts.length));
       setCanvasSplitOpen(false);
       setCanvasFilesOpen(false);
+      setCanvasLeadsOpen(false);
       setCanvasTerminalOpen(false);
       setCanvasActivePane("");
       setCanvasPlanetsOpen(false);
@@ -1150,6 +1158,7 @@ export function App() {
 
   const openCanvasFiles = useCallback(() => {
     setCanvasSplitOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
     setCodingLivePreview(null);
@@ -1161,6 +1170,7 @@ export function App() {
 
   const openCanvasTerminal = useCallback(() => {
     setCanvasSplitOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
     setCodingLivePreview(null);
@@ -1175,6 +1185,26 @@ export function App() {
     setCanvasActivePane((pane) => (pane === "files" ? (canvasTerminalOpen ? "terminal" : "") : pane));
   }, [canvasTerminalOpen]);
 
+  const openCanvasLeads = useCallback(() => {
+    setCanvasSplitOpen(false);
+    setCanvasFilesOpen(false);
+    setCanvasTerminalOpen(false);
+    setCanvasActivePane("leads");
+    setCanvasPlanetsOpen(false);
+    setCanvasWebExplorerOpen(false);
+    setCanvasWebMediaOpen(false);
+    setCodingLivePreview(null);
+    canvasMapsOpenRef.current = false;
+    setCanvasMapsOpen(false);
+    setParallelPrompts([""]);
+    setCanvasLeadsOpen(true);
+  }, []);
+
+  const closeCanvasLeads = useCallback(() => {
+    setCanvasLeadsOpen(false);
+    setCanvasActivePane((pane) => (pane === "leads" ? "" : pane));
+  }, []);
+
   const closeCanvasTerminal = useCallback(() => {
     setCanvasTerminalOpen(false);
     setCanvasActivePane((pane) => (pane === "terminal" ? (canvasFilesOpen ? "files" : "") : pane));
@@ -1183,6 +1213,7 @@ export function App() {
   const resetNewSessionCanvas = useCallback(() => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
@@ -1206,6 +1237,7 @@ export function App() {
   const openCanvasPlanets = useCallback(() => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasWebExplorerOpen(false);
@@ -1220,6 +1252,7 @@ export function App() {
   const openCanvasWebExplorer = useCallback((parallelSessionIndex = 0, options?: { keepMapsOpen?: boolean }) => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
@@ -1252,6 +1285,7 @@ export function App() {
     setCanvasMapsClosing(false);
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
@@ -1290,6 +1324,7 @@ export function App() {
   const openCodingLivePreview = useCallback((target: Omit<CodingLivePreviewTarget, "revision">) => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasLeadsOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
@@ -1383,6 +1418,17 @@ export function App() {
 
   const dispatch = useCallback(
     async (control: Pick<HeaderControl, "id" | "command" | "route">) => {
+      if (control.id === "leads-top") {
+        if (isFullPageCanvas) {
+          await closeProfileCanvas();
+        }
+        if (canvasLeadsOpen) {
+          closeCanvasLeads();
+          return;
+        }
+        openCanvasLeads();
+        return;
+      }
       if (control.id === "right-panel") {
         if (isFullPageCanvas) {
           await closeProfileCanvas();
@@ -1390,6 +1436,12 @@ export function App() {
         if (canvasFilesOpen || canvasTerminalOpen) {
           setCanvasFilesOpen(false);
           setCanvasTerminalOpen(false);
+          setCanvasActivePane("");
+          setCanvasSplitOpen(false);
+          return;
+        }
+        if (canvasLeadsOpen) {
+          setCanvasLeadsOpen(false);
           setCanvasActivePane("");
           setCanvasSplitOpen(false);
           return;
@@ -1428,7 +1480,7 @@ export function App() {
         );
       }
     },
-    [canvasFilesOpen, canvasMapsClosing, canvasMapsOpen, canvasTerminalOpen, closeCanvasMaps, closeProfileCanvas, isFullPageCanvas, openCanvasPlanets]
+    [canvasFilesOpen, canvasLeadsOpen, canvasMapsClosing, canvasMapsOpen, canvasTerminalOpen, closeCanvasLeads, closeCanvasMaps, closeProfileCanvas, isFullPageCanvas, openCanvasLeads, openCanvasPlanets]
   );
 
   const dispatchWindowControl = useCallback(
@@ -1574,6 +1626,7 @@ export function App() {
       setWidgetMinimizingPhase("");
       setCanvasSplitOpen(false);
       setCanvasFilesOpen(false);
+      setCanvasLeadsOpen(false);
       setCanvasTerminalOpen(false);
       setCanvasActivePane("");
       setCanvasPlanetsOpen(false);
@@ -1606,19 +1659,22 @@ export function App() {
     <main className={shellClassName} style={shellStyleWithWidgetLock(widgetLayoutLock)}>
       <section className="titlebar" aria-label="InGen top controls">
         <div className="titlebar__cluster">
-          {topControls.slice(0, 5).map((control) => {
+          {topControls.slice(0, 6).map((control) => {
+            const selected = control.id === "leads-top" ? canvasLeadsOpen : control.selected;
             return (
               <button
                 type="button"
-                className={control.selected ? "iconButton iconButton--selected" : "iconButton"}
+                className={selected ? "iconButton iconButton--selected" : "iconButton"}
                 aria-controls={
                   control.command === "toggle_left_panel"
                     ? "left-panel"
+                    : control.id === "leads-top"
+                      ? "canvas-leads-pane"
                     : control.command === "open_sessions_canvas"
                       ? "sessions-menu"
                       : undefined
                 }
-                aria-expanded={control.command === "toggle_left_panel" ? snapshot.leftPanelOpen : undefined}
+                aria-expanded={control.id === "leads-top" ? canvasLeadsOpen : control.command === "toggle_left_panel" ? snapshot.leftPanelOpen : undefined}
                 key={control.id}
                 onClick={() => void dispatch(control)}
               >
@@ -1774,7 +1830,7 @@ export function App() {
               control.id === "plan"
                 ? snapshot.rightPanelOpen
                 : control.id === "right-panel"
-                  ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
+                  ? canvasSplitOpen || canvasFilesOpen || canvasLeadsOpen || canvasTerminalOpen
                   : control.id === "webexplorer-workspace"
                     ? canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing
                   : control.selected;
@@ -1794,7 +1850,7 @@ export function App() {
                   control.id === "plan"
                     ? snapshot.rightPanelOpen
                     : control.id === "right-panel"
-                      ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
+                      ? canvasSplitOpen || canvasFilesOpen || canvasLeadsOpen || canvasTerminalOpen
                       : control.id === "webexplorer-workspace"
                         ? canvasPlanetsOpen || canvasMapsOpen || canvasMapsClosing
                       : undefined
@@ -1878,6 +1934,7 @@ export function App() {
           tradingMode={isTradingPage}
           actionsOpen={canvasSplitOpen}
           filesOpen={canvasFilesOpen}
+          leadsOpen={canvasLeadsOpen}
           terminalOpen={canvasTerminalOpen}
           activePane={canvasActivePane}
           planetsOpen={canvasPlanetsOpen}
@@ -1900,11 +1957,11 @@ export function App() {
           sessionName={activeSessionName}
           onFilesOpen={openCanvasFiles}
           onFilesClose={closeCanvasFiles}
+          onLeadsOpen={openCanvasLeads}
+          onLeadsClose={closeCanvasLeads}
           onTerminalOpen={openCanvasTerminal}
           onTerminalClose={closeCanvasTerminal}
           onActivePaneChange={setCanvasActivePane}
-          onPlanetsOpen={openCanvasPlanets}
-          onPlanetsClose={() => setCanvasPlanetsOpen(false)}
           onWebExplorerOpen={openCanvasWebExplorer}
           onWebExplorerClose={closeCanvasWebExplorer}
           onWebMediaClose={() => setCanvasWebMediaOpen(false)}

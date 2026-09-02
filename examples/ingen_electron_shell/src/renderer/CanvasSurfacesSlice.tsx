@@ -37,7 +37,7 @@ interface PaneTabsProps {
   onTradingHeaderTabChange?: (tab: TradingOrderPaneTab) => void;
 }
 
-export type CanvasToolPane = "files" | "terminal";
+export type CanvasToolPane = "files" | "terminal" | "leads";
 type FileKindFilter = "all" | "web_search" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
 const BLOOMBERG_NATIVE_HOME_URL = "https://www.bloomberg.com/europe";
@@ -1354,6 +1354,162 @@ function TradingOrderPane({ activePane, openPanes, draft, onActivatePane, onClos
     </aside>
   );
 }
+function leadDate(value: number): string {
+  if (!Number.isFinite(value)) return "Date inconnue";
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function leadFileSize(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 Ko";
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} Ko`;
+  return `${(value / (1024 * 1024)).toFixed(1).replace(".", ",")} Mo`;
+}
+
+function leadMessageText(message: GraphenLeadMessage): string {
+  return String(message.content || message.text || "").trim();
+}
+
+function CanvasLeadsPane({ onClose }: { onClose: () => void }) {
+  const [leads, setLeads] = useState<GraphenLead[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [attachmentError, setAttachmentError] = useState("");
+
+  const loadLeads = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await globalThis.window?.forgeShell?.getGraphenLeads?.();
+      const nextLeads = Array.isArray(result?.leads) ? result.leads : [];
+      setLeads(nextLeads);
+      setSelectedId((current) => nextLeads.some((lead) => lead.id === current) ? current : (nextLeads[0]?.id || ""));
+      if (result?.error) setError(result.error);
+    } catch (reason) {
+      setLeads([]);
+      setError(reason instanceof Error ? reason.message : "Les leads sont momentanément indisponibles.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLeads();
+  }, [loadLeads]);
+
+  const visibleLeads = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return leads;
+    return leads.filter((lead) => `${lead.nameOrCompany} ${lead.email} ${lead.phone} ${lead.siteUrl}`.toLowerCase().includes(normalized));
+  }, [leads, query]);
+  const selectedLead = leads.find((lead) => lead.id === selectedId) || visibleLeads[0];
+  const conversation = (selectedLead?.messages || []).filter((message) => message.role !== "system" && leadMessageText(message));
+
+  const openAttachment = async (attachment: GraphenLeadAttachment) => {
+    setAttachmentError("");
+    const result = await globalThis.window?.forgeShell?.openGraphenLeadAttachment?.(attachment.id, attachment.filename);
+    if (result?.accepted === false) setAttachmentError(result.error || "La pièce jointe n’a pas pu être ouverte.");
+  };
+
+  return (
+    <aside id="canvas-leads-pane" className="canvasLeadsPane" aria-label="Leads Graphen Studio">
+      <div className="canvasLeadsPane__inner">
+        <header className="canvasLeadsPane__header">
+          <div>
+            <strong>Leads</strong>
+            <span>{leads.length === 1 ? "1 prise de contact" : `${leads.length} prises de contact`}</span>
+          </div>
+          <div className="canvasLeadsPane__actions">
+            <button type="button" onClick={() => void loadLeads()} disabled={loading} aria-label="Actualiser les leads">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.7 6L20 12M4 12l1.3 6A7 7 0 0 0 17.9 15.8" /></svg>
+            </button>
+            <button type="button" onClick={onClose} aria-label="Fermer les leads">×</button>
+          </div>
+        </header>
+        <label className="canvasLeadsPane__search">
+          <span className="shellIcon shellIcon--search" aria-hidden="true" />
+          <input type="search" value={query} placeholder="Rechercher un contact" onChange={(event) => setQuery(event.currentTarget.value)} />
+        </label>
+        <div className="canvasLeadsPane__body">
+          <div className="canvasLeadsPane__list" role="list">
+            {loading ? <div className="canvasLeadsPane__state">Chargement des prises de contact…</div> : null}
+            {!loading && error ? <div className="canvasLeadsPane__state canvasLeadsPane__state--error"><strong>Connexion impossible</strong><span>{error}</span></div> : null}
+            {!loading && !error && visibleLeads.length === 0 ? <div className="canvasLeadsPane__state"><strong>Aucun lead</strong><span>Les prochaines prises de contact apparaîtront ici.</span></div> : null}
+            {!loading && !error ? visibleLeads.map((lead) => (
+              <button
+                type="button"
+                role="listitem"
+                className={lead.id === selectedLead?.id ? "canvasLeadRow canvasLeadRow--active" : "canvasLeadRow"}
+                key={lead.id}
+                onClick={() => setSelectedId(lead.id)}
+              >
+                <span className={`canvasLeadRow__status canvasLeadRow__status--${lead.status || "new"}`} aria-hidden="true" />
+                <span className="canvasLeadRow__identity">
+                  <strong>{lead.nameOrCompany || lead.email || "Contact sans nom"}</strong>
+                  <small>{lead.email || lead.phone || "Coordonnées non précisées"}</small>
+                </span>
+                <time dateTime={new Date(lead.updatedAt).toISOString()}>{leadDate(lead.updatedAt)}</time>
+              </button>
+            )) : null}
+          </div>
+          <article className="canvasLeadDetail">
+            {selectedLead && !error ? (
+              <>
+                <header className="canvasLeadDetail__heading">
+                  <div>
+                    <span className="canvasLeadDetail__eyebrow">Prise de contact</span>
+                    <h2>{selectedLead.nameOrCompany || "Contact sans nom"}</h2>
+                    <time dateTime={new Date(selectedLead.createdAt).toISOString()}>{leadDate(selectedLead.createdAt)}</time>
+                  </div>
+                  <span className={`canvasLeadDetail__status canvasLeadDetail__status--${selectedLead.status || "new"}`}>{selectedLead.status || "nouveau"}</span>
+                </header>
+                <dl className="canvasLeadDetail__contact">
+                  <div><dt>E-mail</dt><dd>{selectedLead.email || "Non renseigné"}</dd></div>
+                  <div><dt>Téléphone</dt><dd>{selectedLead.phone || "Non renseigné"}</dd></div>
+                  <div><dt>Site</dt><dd>{selectedLead.siteUrl || "Non renseigné"}</dd></div>
+                  <div><dt>Référence</dt><dd>{selectedLead.conversationId}</dd></div>
+                </dl>
+                <section className="canvasLeadDetail__section">
+                  <h3>Conversation</h3>
+                  <div className="canvasLeadConversation">
+                    {conversation.length ? conversation.map((message, index) => (
+                      <div className={`canvasLeadMessage canvasLeadMessage--${message.role}`} key={`${selectedLead.id}-${index}`}>
+                        <span>{message.role === "user" ? "Client" : "little graphen"}</span>
+                        <p>{leadMessageText(message)}</p>
+                      </div>
+                    )) : <p className="canvasLeadDetail__empty">Aucun message enregistré.</p>}
+                  </div>
+                </section>
+                <section className="canvasLeadDetail__section">
+                  <h3>Pièces jointes <span>{selectedLead.attachments.length}</span></h3>
+                  {selectedLead.attachments.length ? (
+                    <div className="canvasLeadAttachments">
+                      {selectedLead.attachments.map((attachment) => (
+                        <button type="button" key={attachment.id} onClick={() => void openAttachment(attachment)}>
+                          <span className="shellIcon shellIcon--assets" aria-hidden="true" />
+                          <span><strong>{attachment.filename}</strong><small>{leadFileSize(attachment.size)}</small></span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : <p className="canvasLeadDetail__empty">Aucun fichier transmis.</p>}
+                  {attachmentError ? <p className="canvasLeadDetail__fileError">{attachmentError}</p> : null}
+                </section>
+              </>
+            ) : null}
+          </article>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function CanvasFilesPane({
   sessionName,
   files,
@@ -1677,6 +1833,7 @@ export function CanvasSurfacesSlice({
   tradingMode = false,
   actionsOpen,
   filesOpen,
+  leadsOpen,
   terminalOpen,
   activePane,
   planetsOpen,
@@ -1698,11 +1855,11 @@ export function CanvasSurfacesSlice({
   sessionName,
   onFilesOpen,
   onFilesClose,
+  onLeadsOpen,
+  onLeadsClose,
   onTerminalOpen,
   onTerminalClose,
   onActivePaneChange,
-  onPlanetsOpen,
-  onPlanetsClose,
   onWebExplorerOpen,
   onWebExplorerClose,
   onWebMediaClose,
@@ -1715,6 +1872,7 @@ export function CanvasSurfacesSlice({
   tradingMode?: boolean;
   actionsOpen: boolean;
   filesOpen: boolean;
+  leadsOpen: boolean;
   terminalOpen: boolean;
   activePane: CanvasToolPane | "";
   planetsOpen: boolean;
@@ -1737,11 +1895,11 @@ export function CanvasSurfacesSlice({
   sessionName: string;
   onFilesOpen: () => void;
   onFilesClose: () => void;
+  onLeadsOpen: () => void;
+  onLeadsClose: () => void;
   onTerminalOpen: () => void;
   onTerminalClose: () => void;
   onActivePaneChange: (pane: CanvasToolPane) => void;
-  onPlanetsOpen: () => void;
-  onPlanetsClose: () => void;
   onWebExplorerOpen: () => void;
   onWebExplorerClose: () => void;
   onWebMediaClose: () => void;
@@ -1761,6 +1919,7 @@ export function CanvasSurfacesSlice({
   const parallelOpen = parallelPrompts.length > 1;
   const openToolPanes = [
     filesOpen ? "files" : "",
+    leadsOpen ? "leads" : "",
     terminalOpen ? "terminal" : ""
   ].filter(Boolean) as CanvasToolPane[];
   const activeToolPane: CanvasToolPane | "" = activePane && openToolPanes.includes(activePane)
@@ -1771,6 +1930,10 @@ export function CanvasSurfacesSlice({
   const closeToolPane = (pane: CanvasToolPane) => {
     if (pane === "files") {
       onFilesClose();
+      return;
+    }
+    if (pane === "leads") {
+      onLeadsClose();
       return;
     }
     onTerminalClose();
@@ -1803,6 +1966,7 @@ export function CanvasSurfacesSlice({
     tradingMode ? "canvasSurfaces--tradingMode" : "",
     actionsOpen ? "canvasSurfaces--actionsOpen" : "",
     filesOpen ? "canvasSurfaces--filesOpen" : "",
+    leadsOpen ? "canvasSurfaces--leadsOpen" : "",
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
     parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen || codingLivePreviewOpen || webMediaCanvasOpen ? "canvasSurfaces--parallelOpen" : "",
     activeWebExplorerSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
@@ -2177,10 +2341,10 @@ export function CanvasSurfacesSlice({
             <strong>Parallel Conversation</strong>
             <small>Start a parallel conversation</small>
           </button>
-          <button type="button" className="canvasSplitCard" onClick={onPlanetsOpen} aria-expanded={planetsOpen}>
+          <button type="button" className="canvasSplitCard" onClick={onLeadsOpen} aria-expanded={leadsOpen} aria-controls="canvas-leads-pane">
             <span className="shellIcon shellIcon--nav-web" aria-hidden="true" />
-            <strong>3D Planets</strong>
-            <small>Open planetary globe views</small>
+            <strong>Leads</strong>
+            <small>Review website enquiries</small>
           </button>
           <button type="button" className="canvasSplitCard" onClick={onWebExplorerOpen} aria-expanded={webExplorerOpen}>
             <span className="shellIcon shellIcon--google" aria-hidden="true" />
@@ -2223,6 +2387,7 @@ export function CanvasSurfacesSlice({
           />
         )
       ) : null}
+      {activeToolPane === "leads" ? <CanvasLeadsPane onClose={onLeadsClose} /> : null}
       {activeToolPane === "terminal" ? (
         <CanvasTerminalPane
           sessionName={sessionName}
@@ -2237,4 +2402,33 @@ export function CanvasSurfacesSlice({
       ) : null}
     </section>
   );
+}
+
+interface GraphenLeadAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: number;
+}
+
+interface GraphenLeadMessage {
+  role: "user" | "assistant" | "system";
+  content?: string;
+  text?: string;
+}
+
+interface GraphenLead {
+  id: string;
+  conversationId: string;
+  nameOrCompany: string;
+  phone: string;
+  email: string;
+  siteUrl: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: GraphenLeadMessage[];
+  lastReply: string;
+  attachments: GraphenLeadAttachment[];
 }

@@ -47,6 +47,10 @@ try {
   $env:INGEN_ELECTRON_USER_DATA_DIR = $UserData
   $env:GRAPHEN_APP_ICON = $AppIcon
   $env:OANDA_TOKEN_FILE = $OandaTokenFile
+  $GraphenLeadsToken = [Environment]::GetEnvironmentVariable("GRAPHEN_LEADS_TOKEN", "User")
+  if ($GraphenLeadsToken) {
+    $env:GRAPHEN_LEADS_TOKEN = $GraphenLeadsToken
+  }
 
   if ($DryRun) {
     [pscustomobject]@{

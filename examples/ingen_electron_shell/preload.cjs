@@ -52,6 +52,12 @@ const forgeShell = {
   getSessionFilesSnapshot() {
     return ipcRenderer.invoke("forge:get-session-files-snapshot");
   },
+  getGraphenLeads() {
+    return ipcRenderer.invoke("forge:get-graphen-leads");
+  },
+  openGraphenLeadAttachment(id, filename) {
+    return ipcRenderer.invoke("forge:open-graphen-lead-attachment", { id, filename });
+  },
   onLlmProviderEvent(listener) {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("forge:llm-provider-event", handler);
