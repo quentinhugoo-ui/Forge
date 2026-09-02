@@ -11,7 +11,7 @@ $Backend = Join-Path $RepoRoot ".codex-targets\ingen-electron-shortcut\debug\ing
 $TaskbarHelper = Join-Path $RepoRoot ".codex-targets\ingen-electron-shortcut\debug\ingen_windows_taskbar_helper.exe"
 $UserData = Join-Path $env:APPDATA "InGenRuntime"
 $OandaTokenFile = Join-Path $RepoRoot "TOKEN OANDA.txt"
-$DefaultGraphenIcon = "C:\Users\Quentin\Documents\graphen-studio\assets\graphen.ico"
+$DefaultGraphenIcon = Join-Path $ShellRoot "public\shell-assets\graphen-cube-icon.ico"
 $AppIcon = if ($env:GRAPHEN_APP_ICON) { $env:GRAPHEN_APP_ICON } else { $DefaultGraphenIcon }
 $LogPath = "C:\tmp\graphen-launch.log"
 
