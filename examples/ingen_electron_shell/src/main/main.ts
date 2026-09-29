@@ -4506,6 +4506,71 @@ async function readCodexLocalAuth(): Promise<CodexLocalAuth | undefined> {
   };
 }
 
+// Same public OAuth client and endpoint as the Codex CLI (codex-rs/login), so the rotated
+// tokens written back to ~/.codex/auth.json stay valid for Codex itself.
+const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
+const CODEX_ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60_000;
+let codexAuthRefreshInFlight: Promise<CodexLocalAuth | undefined> | undefined;
+
+function jwtExpiryMs(token: string): number | undefined {
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown };
+    return typeof claims.exp === "number" ? claims.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function refreshCodexLocalAuth(): Promise<CodexLocalAuth | undefined> {
+  const home = forgeHomeDir();
+  if (!home) {
+    return undefined;
+  }
+  const authPath = join(home, ".codex", "auth.json");
+  const root = JSON.parse(await readFile(authPath, "utf8")) as Record<string, unknown>;
+  const tokens = root.tokens && typeof root.tokens === "object" ? (root.tokens as Record<string, unknown>) : {};
+  const refreshToken = typeof tokens.refresh_token === "string" ? tokens.refresh_token.trim() : "";
+  if (!refreshToken) {
+    throw new Error("Codex OAuth session expired and no refresh token is available. Reconnect OpenAI in LLM Provider.");
+  }
+  const response = await net.fetch(CODEX_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ client_id: CODEX_OAUTH_CLIENT_ID, grant_type: "refresh_token", refresh_token: refreshToken }),
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!response.ok) {
+    const rawText = await response.text();
+    throw new Error(`Codex OAuth refresh HTTP ${response.status}: ${rawText.slice(0, 240)}. Reconnect OpenAI in LLM Provider.`);
+  }
+  const refreshed = await response.json() as { id_token?: unknown; access_token?: unknown; refresh_token?: unknown };
+  for (const key of ["id_token", "access_token", "refresh_token"] as const) {
+    if (typeof refreshed[key] === "string" && refreshed[key]) {
+      tokens[key] = refreshed[key];
+    }
+  }
+  root.tokens = tokens;
+  root.last_refresh = new Date().toISOString();
+  const tempPath = `${authPath}.forge-${process.pid}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+  await rename(tempPath, authPath);
+  return readCodexLocalAuth();
+}
+
+async function readFreshCodexLocalAuth(force = false): Promise<CodexLocalAuth | undefined> {
+  const auth = await readCodexLocalAuth();
+  const expiry = auth?.accessToken ? jwtExpiryMs(auth.accessToken) : undefined;
+  const stale = !auth?.accessToken || (expiry !== undefined && expiry - Date.now() < CODEX_ACCESS_TOKEN_REFRESH_WINDOW_MS);
+  if (!auth || (!force && !stale)) {
+    return auth;
+  }
+  codexAuthRefreshInFlight ??= refreshCodexLocalAuth().finally(() => {
+    codexAuthRefreshInFlight = undefined;
+  });
+  return codexAuthRefreshInFlight;
+}
+
 function fallbackCodexDesktopModels(): string[] {
   return [...CODEX_DESKTOP_MODELS];
 }
@@ -6912,7 +6977,7 @@ async function runCodexOAuthDirect(
   transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
   liveSink?: ProviderLiveTextSink
 ): Promise<ProviderTextRun> {
-  const auth = await readCodexLocalAuth();
+  let auth = await readFreshCodexLocalAuth();
   if (!auth) {
     throw new Error("No local Codex OAuth credentials found. Connect OpenAI in LLM Provider first.");
   }
@@ -6940,11 +7005,11 @@ async function runCodexOAuthDirect(
     tool_choice: "none",
     parallel_tool_calls: false
   };
-  const response = await net.fetch("https://chatgpt.com/backend-api/codex/responses", {
+  const postCodexResponse = (credentials: CodexLocalAuth) => net.fetch("https://chatgpt.com/backend-api/codex/responses", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${auth.accessToken}`,
-      "ChatGPT-Account-ID": auth.accountId,
+      Authorization: `Bearer ${credentials.accessToken}`,
+      "ChatGPT-Account-ID": credentials.accountId,
       "OpenAI-Beta": "responses=experimental",
       Origin: "https://chatgpt.com",
       Referer: "https://chatgpt.com/",
@@ -6956,6 +7021,14 @@ async function runCodexOAuthDirect(
     },
     body: JSON.stringify(payload)
   });
+  let response = await postCodexResponse(auth);
+  if (response.status === 401) {
+    await response.text().catch(() => "");
+    auth = await readFreshCodexLocalAuth(true);
+    if (auth?.accessToken) {
+      response = await postCodexResponse(auth);
+    }
+  }
   if (!response.ok) {
     const rawText = await response.text();
     throw new Error(`Codex OAuth direct HTTP ${response.status}: ${rawText.slice(0, 360)}`);
@@ -7496,6 +7569,13 @@ function friendlyAssistantErrorText(params: {
   const unsupportedCodexModel = /The '([^']+)' model is not supported when using Codex with a ChatGPT account/i.exec(message);
   if (unsupportedCodexModel) {
     return `${unsupportedCodexModel[1] || model || "Selected model"} is not available for this ChatGPT Codex account. Select one of the listed Codex models.`;
+  }
+  if (/usage_limit_reached/i.test(message)) {
+    const resetsAt = Number(/"resets_at"\s*:\s*(\d+)/.exec(message)?.[1]);
+    const resetText = resetsAt > 0
+      ? ` Resets ${new Date(resetsAt * 1000).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}.`
+      : "";
+    return `${params.providerLabel} usage limit reached for this ChatGPT plan.${resetText} Switch provider or model to keep working.`;
   }
   if (/biscuit_baker_service_me_circuit_open|Service Unavailable|server had an error processing/i.test(message)) {
     return `${params.providerLabel} is temporarily unavailable for ${model || "the selected model"}. Retry with GPT-5.6-Sol or a lower reasoning level.`;
