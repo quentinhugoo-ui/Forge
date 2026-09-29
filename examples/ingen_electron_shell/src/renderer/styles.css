@@ -264,7 +264,7 @@ button {
   inset: 0 0 auto 0;
   z-index: 10000;
   display: grid;
-  grid-template-columns: 222px minmax(0, 1fr) minmax(360px, 560px) 14px 138px;
+  grid-template-columns: max-content minmax(0, 1fr) minmax(360px, 560px) 14px 138px;
   align-items: center;
   height: 38px;
   background: transparent;
@@ -15615,7 +15615,7 @@ ol.assistantText__list li::before {
   }
 
   .titlebar {
-    grid-template-columns: 222px minmax(32px, 1fr) 212px 8px 138px;
+    grid-template-columns: max-content minmax(32px, 1fr) 212px 8px 138px;
   }
 
   .workspaceHeader {
